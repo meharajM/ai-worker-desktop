@@ -1,0 +1,12 @@
+{
+  "build": {
+    "frontendDist": "static-proof",
+    "beforeBuildCommand": "npm run web:proof-build",
+    "beforeDevCommand": "npm run web:proof-build"
+  },
+  "app": {
+    "security": {
+      "capabilities": ["proof"]
+    }
+  }
+}

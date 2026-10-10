@@ -6,6 +6,8 @@ This document provides a comprehensive overview of the AI-Worker application arc
 
 > **M03a proof transport:** `src-tauri/src/native_proof.rs`, command registration, and AppManifest command grants are enabled only with Cargo feature `proof`. Fixed SSE scripts emit typed `Channel` events; active runs are capped at four and removed on completion, error, cancellation, or channel failure. Default capability still grants only `status`. SDK and WebView compatibility remain unverified.
 
+> **M03b proof harness:** The opt-in `tauri:proof` command selects `tauri.proof.conf.json`, `capabilities/proof.json`, and a separate `static-proof` Vite output. The adapter in `src/renderer/src/proof/proof-transport.ts` converts typed Channel byte arrays into a bounded `ReadableStream`; AI SDK Core 7.0.137 and `@ai-sdk/openai-compatible` 3.0.67 own SSE parsing and tool calls. Default assets and `main` capability remain status-only. Actual native WebView behavior is pending M03c.
+
 ---
 
 ## Table of Contents

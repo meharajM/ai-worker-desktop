@@ -46,9 +46,11 @@
         "build": "electron-vite build",
         "preview": "electron-vite preview",
         "tauri:dev": "tauri dev",
+        "tauri:proof": "tauri dev --features proof --config src-tauri/tauri.proof.conf.json",
         "tauri:build": "tauri build",
         "web:typecheck": "tsc --noEmit --project tsconfig.web.json",
         "web:build": "vite build --config vite.tauri.config.ts",
+        "web:proof-build": "vite build --config vite.proof.config.ts",
         "typecheck": "tsc --noEmit",
         "lint": "eslint src/",
         "lint:fix": "eslint src/ --fix",
@@ -104,6 +106,8 @@
         "@electron-toolkit/preload": "^3.0.0",
         "@electron-toolkit/utils": "^3.0.0",
         "@mlc-ai/web-llm": "^0.2.80",
+        "@ai-sdk/openai-compatible": "3.0.67",
+        "ai": "7.0.137",
         "@modelcontextprotocol/sdk": "^1.0.1",
         "@modelcontextprotocol/server-memory": "^2025.11.25",
         "@playwright/mcp": "^0.0.53",
@@ -135,6 +139,7 @@
         "vosk-browser": "^0.0.8",
         "ws": "^8.20.0",
         "yup": "^1.7.1",
+        "zod": "4.2.1",
         "zustand": "^5.0.9"
     },
     "devDependencies": {
