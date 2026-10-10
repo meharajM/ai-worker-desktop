@@ -29,7 +29,7 @@ function ProofApp() {
   }
 
   return <main style={{ fontFamily: 'system-ui, sans-serif', margin: '2rem auto', maxWidth: 760, padding: '0 1rem' }}>
-    <h1>M03 SDK and Tauri proof</h1>
+    <h1>M03 LangChain and LangGraph proof</h1>
     <p>Runs fixed local fixtures. No network or credentials.</p>
     <button type="button" onClick={() => void run()} disabled={running} aria-describedby="proof-status">
       {running ? 'Running proof…' : 'Run proof'}

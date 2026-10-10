@@ -1,15 +1,28 @@
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core'
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 
+/**
+ * proof-transport.ts — adapts fixed Tauri proof commands to browser byte streams.
+ *
+ * Responsibilities: define the fixture DTOs, invoke native proof commands, and
+ * expose their bytes as a bounded Fetch Response for the provider adapter.
+ * Design decision: wait for native start acknowledgement before cancellation so
+ * cancel cannot race ahead of producer registration.
+ * Consumed by: proof-provider.ts and the focused transport check page.
+ */
+
+/** Fixed native response scripts available to the isolated proof harness. */
 export type ProofScenario = 'normal' | 'error' | 'abort' | 'tool_calls'
+/** Closed action set exposed by the native proof fixture. */
 export type ProofAction = 'first' | 'second'
 
+/** Typed Channel payloads emitted by the native fixture producer. */
 export type ProofEvent =
   | { event: 'chunk'; data: { runId: string; bytes: number[] } }
   | { event: 'complete'; data: { runId: string } }
   | { event: 'failed'; data: { runId: string; message: string } }
   | { event: 'aborted'; data: { runId: string } }
 
+/** Small command surface shared by Tauri bridge and generic transport checks. */
 export type ProofBridge = {
   stream: (runId: string, scenario: ProofScenario, onEvent: (event: ProofEvent) => void) => Promise<void>
   cancel: (runId: string) => Promise<boolean>
@@ -18,6 +31,7 @@ export type ProofBridge = {
 
 const MAX_STREAM_BYTES = 4096
 
+/** Tauri-backed bridge; browser preview fails closed before any fixture command. */
 export const nativeProofBridge: ProofBridge = {
   stream: (runId, scenario, onEvent) => {
     if (!isTauri()) return Promise.reject(new Error('Native bridge unavailable in browser preview'))
@@ -29,6 +43,13 @@ export const nativeProofBridge: ProofBridge = {
   action: (action) => invoke<string>('proof_fixture_action', { action }),
 }
 
+/**
+ * Builds a custom Fetch implementation over typed Channel byte events.
+ * @param bridge - Native or focused-check fixture bridge.
+ * @param scenarios - One fixed scenario per provider request.
+ * @param onFirstChunk - Optional raw-byte hook used to trigger cancellation.
+ * @returns Fetch-compatible function returning a bounded SSE Response.
+ */
 export function proofFetch(bridge: ProofBridge, scenarios: ProofScenario[], onFirstChunk?: () => void) {
   let requestIndex = 0
   return async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -116,13 +137,4 @@ export function proofFetch(bridge: ProofBridge, scenarios: ProofScenario[], onFi
     }, { highWaterMark: 1 })
     return new Response(stream, { headers: { 'content-type': 'text/event-stream' } })
   }
-}
-
-export function proofModel(bridge: ProofBridge, scenarios: ProofScenario[], onFirstChunk?: () => void) {
-  const provider = createOpenAICompatible({
-    name: 'm03-proof',
-    baseURL: 'http://proof.invalid/v1',
-    fetch: proofFetch(bridge, scenarios, onFirstChunk),
-  })
-  return provider.chatModel('fixture')
 }

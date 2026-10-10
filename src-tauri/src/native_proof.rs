@@ -12,6 +12,8 @@ use tauri::{ipc::Channel, State};
 
 const MAX_RUNS: usize = 4;
 const MAX_RUN_ID: usize = 64;
+// LangGraph merges message updates by provider message ID, so each fixture response
+// uses its already validated native run ID to keep separate assistant turns distinct.
 const NORMAL: &[&[u8]] = &[
     b"data: {\"id\":\"proof\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"caf\xc3",
     b"\xa9\"},\"finish_reason\":null}]}\n\n",
@@ -45,6 +47,7 @@ pub enum FixtureAction {
 
 #[derive(Serialize)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum ProofEvent {
     Chunk {
         run_id: String,
@@ -173,7 +176,7 @@ fn produce(
         }
         if send(ProofEvent::Chunk {
             run_id: id.to_owned(),
-            bytes: bytes.to_vec(),
+            bytes: with_response_id(bytes, id),
         })
         .is_err()
         {
@@ -214,6 +217,22 @@ fn produce(
     if let Some(terminal) = terminal {
         let _ = send(terminal);
     }
+}
+
+fn with_response_id(template: &[u8], run_id: &str) -> Vec<u8> {
+    const MARKER: &[u8] = b"\"id\":\"proof\"";
+    let Some(start) = template
+        .windows(MARKER.len())
+        .position(|window| window == MARKER)
+    else {
+        return template.to_vec();
+    };
+    let id_start = start + b"\"id\":\"".len();
+    let mut chunk = Vec::with_capacity(template.len() + run_id.len());
+    chunk.extend_from_slice(&template[..id_start]);
+    chunk.extend_from_slice(run_id.as_bytes());
+    chunk.extend_from_slice(&template[id_start + b"proof".len()..]);
+    chunk
 }
 
 fn valid_run_id(id: &str) -> bool {
@@ -290,6 +309,63 @@ mod tests {
         assert!(script.contains("\\\"action\\\":\\\"second\\\""));
         assert!(script.contains("\"finish_reason\":\"tool_calls\""));
         assert!(script.ends_with("data: [DONE]\n\n"));
+    }
+
+    #[test]
+    fn response_ids_are_unique_per_run_without_changing_split_utf8() {
+        let state = ProofState::default();
+        let first = run(&state, "turn-first", ProofScenario::ToolCalls, false, false);
+        let second = run(&state, "turn-second", ProofScenario::Normal, false, false);
+        let first_bytes: Vec<u8> = first
+            .into_iter()
+            .filter_map(|event| match event {
+                ProofEvent::Chunk { bytes, .. } => Some(bytes),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let second_bytes: Vec<u8> = second
+            .into_iter()
+            .filter_map(|event| match event {
+                ProofEvent::Chunk { bytes, .. } => Some(bytes),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert!(first_bytes
+            .windows(b"\"id\":\"turn-first\"".len())
+            .any(|window| window == b"\"id\":\"turn-first\""));
+        assert!(second_bytes
+            .windows(b"\"id\":\"turn-second\"".len())
+            .any(|window| window == b"\"id\":\"turn-second\""));
+        assert!(second_bytes
+            .windows(5)
+            .any(|window| window == b"caf\xc3\xa9"));
+    }
+
+    #[test]
+    fn channel_event_fields_match_the_renderer_camel_case_contract() {
+        let events = [
+            ProofEvent::Chunk {
+                run_id: "run-1".into(),
+                bytes: vec![1],
+            },
+            ProofEvent::Complete {
+                run_id: "run-1".into(),
+            },
+            ProofEvent::Failed {
+                run_id: "run-1".into(),
+                message: "failed",
+            },
+            ProofEvent::Aborted {
+                run_id: "run-1".into(),
+            },
+        ];
+        for event in events {
+            let value = serde_json::to_value(event).unwrap();
+            assert_eq!(value["data"]["runId"], "run-1");
+            assert!(value["data"].get("run_id").is_none());
+        }
     }
 
     #[test]
