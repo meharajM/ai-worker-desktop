@@ -1,4 +1,4 @@
-import { invoke, isTauri } from '@tauri-apps/api/core'
+import { Channel, invoke, isTauri } from '@tauri-apps/api/core'
 
 const PROTOCOL_VERSION = 1
 const OWNER_ID = 'main'
@@ -59,8 +59,35 @@ export type DesktopPreferencesReply = {
 type Identity = { protocolVersion: number; ownerId: string; sessionId: string; requestId: string }
 type OpenRequest = Omit<Identity, 'sessionId'>
 type NativeRequest = OpenRequest | Identity | (Identity & { preferences: DesktopPreferences })
-type NativeCommand = 'bridge_open_session' | 'bridge_get_status' | 'bridge_get_preferences' | 'bridge_update_preferences'
-type Invoke = <T>(command: NativeCommand, args: { request: NativeRequest }) => Promise<T>
+type NativeCommand = 'bridge_open_session' | 'bridge_get_status' | 'bridge_get_preferences' | 'bridge_update_preferences' | 'model_catalog' | 'model_import' | 'model_cancel_import'
+type Invoke = <T>(command: NativeCommand, args: { request: NativeRequest; onProgress?: Channel<ModelImportProgress>; importRequestId?: string }) => Promise<T>
+
+export type ModelCandidate = {
+  id: string
+  name: string
+  status: string
+  source: string
+  license: string
+  artifactSize: number
+  artifactSha256: string
+  templateSha256: string
+  runtimeSha256: string
+  diskRequired: number
+  installed: boolean
+}
+
+export type ModelCatalog = {
+  certifiedProfiles: string[]
+  developerCandidate: ModelCandidate | null
+}
+
+export type ModelImportProgress = {
+  requestId: string
+  state: 'progress' | 'completed' | 'cancelled' | 'failed'
+  copied: number
+  total: number
+  message: string | null
+}
 
 export function createDesktopBridgeClient(platform: { isTauri: () => boolean; invoke: Invoke }) {
   let requestSequence = 0
@@ -120,6 +147,7 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
     command: Exclude<NativeCommand, 'bridge_open_session'>,
     preferences: DesktopPreferences | undefined,
     validate: (reply: unknown, identity: Identity) => T,
+    extraArgs: { onProgress?: Channel<ModelImportProgress>; importRequestId?: string } = {},
   ): Promise<T> {
     if (!platform.isTauri()) throw new DesktopBridgeError('unavailable')
     if (preferences !== undefined && !validPreferences(preferences)) throw new DesktopBridgeError('invalid_request')
@@ -128,7 +156,7 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
     const request: NativeRequest = preferences === undefined ? identity : { ...identity, preferences }
     let reply: unknown
     try {
-      reply = await platform.invoke(command, { request })
+      reply = await platform.invoke(command, { request, ...extraArgs })
     } catch (error) {
       const failure = nativeError(error)
       if (failure.code === 'stale_session') opening = undefined
@@ -174,6 +202,46 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
         if (!samePreferences(preferences, reply.preferences)) throw new DesktopBridgeError('protocol_error')
         return reply
       })
+    },
+    getModelCatalog(): Promise<ModelCatalog & Identity> {
+      return correlatedRequest('model_catalog', undefined, (value, identity) => {
+        const reply = validateIdentity(value, identity)
+        const candidate = reply.developerCandidate
+        if (!Array.isArray(reply.certifiedProfiles) || reply.certifiedProfiles.length !== 0 ||
+          (candidate !== null && (!object(candidate) || typeof candidate.id !== 'string' ||
+            typeof candidate.name !== 'string' || typeof candidate.status !== 'string' ||
+            typeof candidate.source !== 'string' || typeof candidate.license !== 'string' ||
+            !Number.isSafeInteger(candidate.artifactSize) || typeof candidate.artifactSha256 !== 'string' ||
+            typeof candidate.templateSha256 !== 'string' || typeof candidate.runtimeSha256 !== 'string' ||
+            !Number.isSafeInteger(candidate.diskRequired) || typeof candidate.installed !== 'boolean'))) {
+          throw new DesktopBridgeError('protocol_error')
+        }
+        return reply as ModelCatalog & Identity
+      })
+    },
+    importModel(onProgress: (progress: ModelImportProgress) => void): Promise<{ requestId: string; started: boolean } & Identity> {
+      const channel = new Channel<ModelImportProgress>()
+      channel.onmessage = (progress) => {
+        if (!object(progress) || typeof progress.requestId !== 'string' ||
+          !['progress', 'completed', 'cancelled', 'failed'].includes(String(progress.state)) ||
+          !Number.isSafeInteger(progress.copied) || !Number.isSafeInteger(progress.total) ||
+          (progress.message !== null && typeof progress.message !== 'string')) return
+        onProgress(progress as ModelImportProgress)
+      }
+      return correlatedRequest('model_import', undefined, (value, identity) => {
+        const reply = validateIdentity(value, identity)
+        if (typeof reply.started !== 'boolean') throw new DesktopBridgeError('protocol_error')
+        return reply as { requestId: string; started: boolean } & Identity
+      }, { onProgress: channel })
+    },
+    cancelModelImport(importRequestId: string): Promise<void> {
+      if (!validId(importRequestId)) return Promise.reject(new DesktopBridgeError('invalid_request'))
+      return correlatedRequest('model_cancel_import', undefined, (value, identity) => {
+        const reply = validateIdentity(value, identity)
+        if (Object.keys(reply).sort().join(',') !== 'ownerId,protocolVersion,requestId,sessionId,started') {
+          throw new DesktopBridgeError('protocol_error')
+        }
+      }, { importRequestId })
     },
   }
 }

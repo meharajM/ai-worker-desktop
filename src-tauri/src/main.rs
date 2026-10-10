@@ -2,6 +2,7 @@ use tauri::Manager;
 
 mod bridge;
 mod model_runtime;
+mod model_setup;
 mod preferences;
 
 #[tauri::command]
@@ -27,8 +28,10 @@ fn main() {
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(bridge::BridgeState::default())
         .manage(model_runtime::ModelRuntime::default())
+        .manage(model_setup::ModelSetup::default())
         .manage(preferences::PreferenceState::default())
         .setup(move |_app| {
             #[cfg(feature = "proof")]
@@ -55,6 +58,9 @@ fn main() {
             bridge::bridge_get_status,
             bridge::bridge_get_preferences,
             bridge::bridge_update_preferences,
+            model_setup::model_catalog,
+            model_setup::model_import,
+            model_setup::model_cancel_import,
             #[cfg(feature = "proof")]
             native_proof::proof_stream,
             #[cfg(feature = "proof")]

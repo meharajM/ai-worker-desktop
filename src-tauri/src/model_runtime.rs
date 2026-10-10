@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -15,10 +15,18 @@ use std::{
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, Runtime};
 
-const SERVER_SHA256: &str = "93c9a6ddd5870fae262f728f54be710b5d3c5436b8980f4ab684bba87b5c34f7";
-const MODEL_NAME: &str = "Qwen3-1.7B-Q4_K_M.gguf";
-const MODEL_SIZE: u64 = 1_107_408_544;
-const MODEL_SHA256: &str = "228fb5627f7510b8b3516cdb6435e4b0d2a2bf330fe5b0ab19284a3570a8bb1f";
+pub(crate) const SERVER_SHA256: &str =
+    "93c9a6ddd5870fae262f728f54be710b5d3c5436b8980f4ab684bba87b5c34f7";
+pub(crate) const MODEL_NAME: &str = "Qwen3-1.7B-Q4_K_M.gguf";
+pub(crate) const MODEL_SIZE: u64 = 1_107_408_544;
+pub(crate) const MODEL_SHA256: &str =
+    "228fb5627f7510b8b3516cdb6435e4b0d2a2bf330fe5b0ab19284a3570a8bb1f";
+pub(crate) const MODEL_SOURCE: &str =
+    "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/tree/7fb011e9aee6e4dc7adf8430df9ea8de6a466aa3";
+// M10a extracted this template from the exact GGUF; the pinned artifact digest binds it without another parser.
+pub(crate) const TEMPLATE_SHA256: &str =
+    "57f1fd00f0013a2be96aa79b857391f27e23df5b5f847072b524c897e24d0361";
+pub(crate) const MODEL_DISK_REQUIREMENT: u64 = MODEL_SIZE * 2;
 const START_TIMEOUT: Duration = Duration::from_secs(60);
 const STOP_GRACE: Duration = Duration::from_millis(2_500);
 const STOP_KILL_WAIT: Duration = Duration::from_secs(2);
@@ -86,8 +94,43 @@ impl ModelRuntime {
     #[allow(dead_code)]
     pub fn start<R: Runtime>(&self, app: &AppHandle<R>) -> Result<u16, &'static str> {
         let generation = self.cancel_generation.load(Ordering::SeqCst);
+        if let Some(port) = self.live_server_port(generation)? {
+            return Ok(port);
+        }
         let assets = resolve_assets(app)?;
         self.start_assets_at_generation(assets, None, generation)
+    }
+
+    fn live_server_port(&self, generation: u64) -> Result<Option<u16>, &'static str> {
+        if self.cancel_generation.load(Ordering::SeqCst) != generation {
+            return Err("runtime start cancelled");
+        }
+        let mut current = self
+            .server
+            .lock()
+            .map_err(|_| "runtime state unavailable")?;
+        if self.cancel_generation.load(Ordering::SeqCst) != generation {
+            return Err("runtime start cancelled");
+        }
+        let Some(server) = current.as_mut() else {
+            return Ok(None);
+        };
+        match server
+            .child
+            .try_wait()
+            .map_err(|_| "runtime status unavailable")?
+        {
+            None => {
+                if self.cancel_generation.load(Ordering::SeqCst) != generation {
+                    return Err("runtime start cancelled");
+                }
+                Ok(Some(server.port))
+            }
+            Some(_) => {
+                stop_owned(&mut current);
+                Ok(None)
+            }
+        }
     }
 
     pub fn stop(&self) {
@@ -110,10 +153,12 @@ impl ModelRuntime {
         forced_port: Option<u16>,
         generation: u64,
     ) -> Result<u16, &'static str> {
-        if self.cancel_generation.load(Ordering::SeqCst) != generation {
-            return Err("runtime start cancelled");
+        if let Some(port) = self.live_server_port(generation)? {
+            return Ok(port);
         }
-        verify_assets(&assets)?;
+        verify_runtime_assets(&assets)?;
+        let (model_file, model_argument) =
+            open_verified_model(&assets.model, &self.cancel_generation, generation)?;
         if self.cancel_generation.load(Ordering::SeqCst) != generation {
             return Err("runtime start cancelled");
         }
@@ -145,7 +190,7 @@ impl ModelRuntime {
         let mut command = Command::new(&assets.executable);
         command
             .arg("-m")
-            .arg(&assets.model)
+            .arg(model_argument)
             .args(["--offline", "--host", "127.0.0.1", "--port"])
             .arg(port.to_string())
             .arg("--api-key-file")
@@ -185,6 +230,28 @@ impl ModelRuntime {
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
+        }
+
+        #[cfg(target_os = "macos")]
+        if let Some(model_file) = model_file.as_ref() {
+            use std::os::{fd::AsRawFd, unix::process::CommandExt};
+            let model_fd = model_file.as_raw_fd();
+            unsafe extern "C" {
+                fn fcntl(fd: i32, command: i32, flags: i32) -> i32;
+            }
+            // Clear close-on-exec only in the child so llama-server reads the same inode that was hashed.
+            unsafe {
+                command.pre_exec(move || {
+                    const F_GETFD: i32 = 1;
+                    const F_SETFD: i32 = 2;
+                    const FD_CLOEXEC: i32 = 1;
+                    let flags = fcntl(model_fd, F_GETFD, 0);
+                    if flags < 0 || fcntl(model_fd, F_SETFD, flags & !FD_CLOEXEC) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
         }
 
         let child = command.spawn().map_err(|_| {
@@ -236,13 +303,70 @@ fn resolve_assets<R: Runtime>(app: &AppHandle<R>) -> Result<Assets, &'static str
     })
 }
 
+#[cfg(test)]
 fn verify_assets(assets: &Assets) -> Result<(), &'static str> {
-    verify_file(&assets.executable, None, SERVER_SHA256)?;
+    verify_runtime_assets(assets)?;
     verify_file(&assets.model, Some(MODEL_SIZE), MODEL_SHA256)?;
+    Ok(())
+}
+
+fn verify_runtime_assets(assets: &Assets) -> Result<(), &'static str> {
+    verify_file(&assets.executable, None, SERVER_SHA256)?;
     for (name, digest) in RUNTIME_LIBRARIES {
         verify_file(&assets.library_dir.join(name), None, digest)?;
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn open_verified_model(
+    path: &Path,
+    cancel_generation: &AtomicU64,
+    generation: u64,
+) -> Result<(Option<File>, PathBuf), &'static str> {
+    let mut file = File::open(path).map_err(|_| "verified model runtime assets unreadable")?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "verified model runtime assets unreadable")?;
+    if !metadata.is_file() || metadata.len() != MODEL_SIZE {
+        return Err("verified model runtime assets invalid");
+    }
+    let mut digest = Sha256::new();
+    let mut buffer = [0; 1024 * 1024];
+    loop {
+        if cancel_generation.load(Ordering::SeqCst) != generation {
+            return Err("runtime start cancelled");
+        }
+        let read = file
+            .read(&mut buffer)
+            .map_err(|_| "verified model runtime assets unreadable")?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    if format!("{:x}", digest.finalize()) != MODEL_SHA256 {
+        return Err("verified model runtime digest mismatch");
+    }
+    file.seek(SeekFrom::Start(0))
+        .map_err(|_| "verified model runtime assets unreadable")?;
+    use std::os::fd::AsRawFd;
+    let model_argument = PathBuf::from(format!("/dev/fd/{}", file.as_raw_fd()));
+    Ok((Some(file), model_argument))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_verified_model(
+    path: &Path,
+    cancel_generation: &AtomicU64,
+    generation: u64,
+) -> Result<(Option<File>, PathBuf), &'static str> {
+    if cancel_generation.load(Ordering::SeqCst) != generation {
+        return Err("runtime start cancelled");
+    }
+    // shortcut: Windows uses path-based opening until a native inherited-handle equivalent is added.
+    verify_file(path, Some(MODEL_SIZE), MODEL_SHA256)?;
+    Ok((None, path.to_path_buf()))
 }
 
 fn verify_file(path: &Path, size: Option<u64>, expected: &str) -> Result<(), &'static str> {
@@ -487,6 +611,46 @@ mod tests {
         unrelated.kill().unwrap();
         unrelated.wait().unwrap();
         assert!(!private_dir.exists(), "owned temporary directory removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn start_reuses_live_server_before_verifying_large_assets() {
+        use std::os::unix::process::CommandExt;
+
+        let runtime = ModelRuntime::default();
+        let private_dir = std::env::temp_dir().join(format!(
+            "m12-live-fast-path-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&private_dir).unwrap();
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("60")
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = command.spawn().unwrap();
+        *runtime.server.lock().unwrap() = Some(OwnedServer {
+            child,
+            port: 43210,
+            auth: String::new(),
+            private_dir: private_dir.clone(),
+        });
+
+        let assets = Assets {
+            executable: PathBuf::from("/missing/llama-server"),
+            model: PathBuf::from("/missing/1.1-gb-model.gguf"),
+            library_dir: PathBuf::from("/missing/libs"),
+        };
+        assert_eq!(runtime.start_assets(assets, None), Ok(43210));
+        runtime.stop();
+        assert!(!private_dir.exists());
     }
 
     #[cfg(unix)]

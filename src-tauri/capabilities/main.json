@@ -1,13 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Local main window with status, session, and fixed preference bridge commands",
+  "description": "Local main window with status, session, preferences, and explicit model setup commands",
   "windows": ["main"],
   "permissions": [
     "allow-status",
     "allow-bridge-open-session",
     "allow-bridge-get-status",
     "allow-bridge-get-preferences",
-    "allow-bridge-update-preferences"
+    "allow-bridge-update-preferences",
+    "allow-model-catalog",
+    "allow-model-import",
+    "allow-model-cancel-import"
   ]
 }

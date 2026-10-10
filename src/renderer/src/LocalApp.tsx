@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './components/primitives/Button'
 import { TextArea } from './components/input/TextArea'
-import { DesktopBridgeError, desktopBridge, type DesktopPreferences } from './desktop-bridge'
+import { DesktopBridgeError, desktopBridge, type DesktopPreferences, type ModelCatalog, type ModelImportProgress } from './desktop-bridge'
 
 type View = 'chat' | 'settings'
 type PreferencePreset = DesktopPreferences['resourcePreset']
@@ -31,6 +31,11 @@ export function LocalApp() {
   const [preferenceError, setPreferenceError] = useState('')
   const [saveNotice, setSaveNotice] = useState('')
   const [saving, setSaving] = useState(false)
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalog>()
+  const [modelSetupState, setModelSetupState] = useState<'idle' | 'loading' | 'picking' | 'importing' | 'completed' | 'cancelled' | 'failed'>('idle')
+  const [modelProgress, setModelProgress] = useState<ModelImportProgress>()
+  const [modelRequestId, setModelRequestId] = useState<string>()
+  const [modelError, setModelError] = useState('')
   const saveBusy = useRef(false)
   const preferencesGeneration = useRef(0)
   const checkGeneration = useRef(0)
@@ -101,6 +106,66 @@ export function LocalApp() {
     }
   }, [preferenceLoadState, selectedPreset])
 
+  const loadModelCatalog = useCallback(async () => {
+    if (!desktopBridge.isAvailable()) return
+    setModelSetupState((current) => current === 'idle' ? 'loading' : current)
+    try {
+      const result = await desktopBridge.getModelCatalog()
+      if (!mounted.current) return
+      setModelCatalog(result)
+      setModelSetupState((current) => current === 'loading' ? 'idle' : current)
+    } catch (error) {
+      if (!mounted.current) return
+      setModelError(safeError(error))
+      setModelSetupState('failed')
+    }
+  }, [])
+
+  const onModelProgress = useCallback((progress: ModelImportProgress) => {
+    if (modelRequestId && progress.requestId !== modelRequestId) return
+    setModelRequestId(progress.requestId)
+    setModelProgress(progress)
+    if (progress.state === 'completed') {
+      setModelSetupState('completed')
+      setModelError('')
+      void loadModelCatalog()
+    } else if (progress.state === 'cancelled') {
+      setModelSetupState('cancelled')
+      setModelError(progress.message ?? 'Import canceled.')
+    } else if (progress.state === 'failed') {
+      setModelSetupState('failed')
+      setModelError(progress.message ?? 'Model import failed.')
+    }
+  }, [loadModelCatalog, modelRequestId])
+
+  const importModel = useCallback(async () => {
+    setModelError('')
+    setModelProgress(undefined)
+    setModelRequestId(undefined)
+    setModelSetupState('picking')
+    try {
+      const result = await desktopBridge.importModel(onModelProgress)
+      if (!result.started) {
+        setModelSetupState('idle')
+        return
+      }
+      setModelRequestId(result.requestId)
+      setModelSetupState((current) => ['completed', 'cancelled', 'failed'].includes(current) ? current : 'importing')
+    } catch (error) {
+      setModelError(safeError(error))
+      setModelSetupState('failed')
+    }
+  }, [onModelProgress])
+
+  const cancelModelImport = useCallback(async () => {
+    if (!modelRequestId) return
+    try {
+      await desktopBridge.cancelModelImport(modelRequestId)
+    } catch (error) {
+      setModelError(safeError(error))
+    }
+  }, [modelRequestId])
+
   function saveDraft() {
     if (!text.trim()) return
     setDraft(text)
@@ -122,10 +187,11 @@ export function LocalApp() {
       return
     }
     void loadPreferences()
+    void loadModelCatalog()
     return () => {
       preferencesGeneration.current += 1
     }
-  }, [loadPreferences, view])
+  }, [loadModelCatalog, loadPreferences, view])
 
   return (
     <main className="flex min-h-screen bg-[var(--color-bg-dark)] text-[var(--color-text-primary)]">
@@ -205,10 +271,38 @@ export function LocalApp() {
             <div className="mx-auto w-full max-w-3xl p-8">
               <section aria-labelledby="model-heading" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
                 <h3 id="model-heading" className="font-semibold">Local model</h3>
-                <p className="mt-2 text-sm text-[var(--color-text-secondary)]">Not configured</p>
-                <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
-                  Model selection and setup will appear here when local inference support is available.
-                </p>
+                <p className="mt-2 text-sm text-[var(--color-text-secondary)]">No certified model profiles are available.</p>
+                {modelCatalog?.developerCandidate && (
+                  <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
+                    <h4 className="font-medium">{modelCatalog.developerCandidate.name}</h4>
+                    <p className="mt-1 text-sm text-amber-200">{modelCatalog.developerCandidate.status}</p>
+                    <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
+                      <div><dt className="text-[var(--color-text-secondary)]">License</dt><dd>{modelCatalog.developerCandidate.license}</dd></div>
+                      <div><dt className="text-[var(--color-text-secondary)]">Artifact size</dt><dd>{modelCatalog.developerCandidate.artifactSize.toLocaleString()} bytes</dd></div>
+                      <div className="sm:col-span-2"><dt className="text-[var(--color-text-secondary)]">Source (pinned revision)</dt><dd className="break-all">{modelCatalog.developerCandidate.source}</dd></div>
+                      <div className="sm:col-span-2"><dt className="text-[var(--color-text-secondary)]">GGUF SHA-256</dt><dd className="break-all font-mono">{modelCatalog.developerCandidate.artifactSha256}</dd></div>
+                      <div className="sm:col-span-2"><dt className="text-[var(--color-text-secondary)]">Chat template SHA-256</dt><dd className="break-all font-mono">{modelCatalog.developerCandidate.templateSha256}</dd></div>
+                      <div className="sm:col-span-2"><dt className="text-[var(--color-text-secondary)]">llama-server binary SHA-256</dt><dd className="break-all font-mono">{modelCatalog.developerCandidate.runtimeSha256}</dd></div>
+                      <div><dt className="text-[var(--color-text-secondary)]">Import disk space</dt><dd>{(modelCatalog.developerCandidate.diskRequired / 1_000_000_000).toFixed(2)} GB minimum</dd></div>
+                      <div><dt className="text-[var(--color-text-secondary)]">Model file</dt><dd>{modelCatalog.developerCandidate.installed ? 'Present; hash is checked before use' : 'Not imported'}</dd></div>
+                    </dl>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button type="button" variant="secondary" onClick={() => void importModel()} disabled={modelSetupState === 'picking' || modelSetupState === 'importing'}>
+                        {modelSetupState === 'picking' ? 'Choose a GGUF file…' : modelSetupState === 'importing' ? 'Importing…' : modelSetupState === 'failed' || modelSetupState === 'cancelled' ? 'Retry import' : modelCatalog.developerCandidate.installed ? 'Replace with verified GGUF' : 'Import and verify GGUF'}
+                      </Button>
+                      {modelSetupState === 'importing' && <Button type="button" variant="ghost" onClick={() => void cancelModelImport()}>Cancel import</Button>}
+                    </div>
+                    {modelProgress?.state === 'progress' && (
+                      <div className="mt-3" role="status" aria-live="polite">
+                        <p className="text-xs">Verifying and importing: {modelProgress.copied.toLocaleString()} / {modelProgress.total.toLocaleString()} bytes</p>
+                        <progress className="mt-1 w-full" max={modelProgress.total} value={modelProgress.copied} aria-label="Model import progress" />
+                      </div>
+                    )}
+                  </div>
+                )}
+                {modelError && <p role="alert" className="mt-3 text-sm text-red-300">{modelError}</p>}
+                {!modelCatalog && modelSetupState === 'loading' && <p role="status" className="mt-3 text-sm">Loading model catalog…</p>}
+                {modelCatalog && !modelCatalog.developerCandidate && <p className="mt-3 text-sm text-[var(--color-text-secondary)]">No model candidate is exposed in this build.</p>}
               </section>
               <section aria-labelledby="preferences-heading" aria-busy={preferenceLoadState === 'loading' || saving} className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
                 <h3 id="preferences-heading" className="font-semibold">Chat preferences</h3>

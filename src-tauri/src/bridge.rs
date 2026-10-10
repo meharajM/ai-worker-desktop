@@ -190,6 +190,24 @@ fn validate_request(payload_bytes: usize) -> Result<(), BridgeError> {
 }
 
 impl BridgeState {
+    pub(crate) fn authorize_model_request(
+        &self,
+        window: &WebviewWindow,
+        request: &StatusRequest,
+    ) -> Result<(), BridgeError> {
+        let caller = Caller::from_window(window)?;
+        self.authorize(
+            &caller,
+            &request.owner_id,
+            &request.session_id,
+            &request.request_id,
+            serde_json::to_vec(request)
+                .map_err(|_| BridgeError::invalid())?
+                .len(),
+            request.protocol_version,
+        )
+    }
+
     fn open(
         &self,
         caller: &Caller,
