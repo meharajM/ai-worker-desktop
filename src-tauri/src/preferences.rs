@@ -171,6 +171,7 @@ mod tests {
         test::{mock_builder, mock_context, noop_assets},
         Manager,
     };
+    use tauri_plugin_store::StoreExt;
 
     struct TestDirectory(PathBuf);
 
@@ -206,6 +207,7 @@ mod tests {
     fn official_store_defaults_reload_and_reject_bad_source_without_rewrite() {
         let (app, _directory) = app();
         assert_eq!(get(app.handle()).unwrap(), Preferences::default());
+        assert!(app.handle().get_store(STORE_FILE).is_none());
         assert!(!store_path(&app).exists());
 
         let balanced = Preferences {
@@ -214,14 +216,19 @@ mod tests {
             ..Preferences::default()
         };
         update(app.handle(), &Preferences::default()).unwrap();
+        assert!(app.handle().get_store(STORE_FILE).is_none());
         assert_eq!(get(app.handle()).unwrap(), Preferences::default());
+        assert!(app.handle().get_store(STORE_FILE).is_none());
         update(app.handle(), &balanced).unwrap();
+        assert!(app.handle().get_store(STORE_FILE).is_none());
         assert_eq!(get(app.handle()).unwrap(), balanced);
+        assert!(app.handle().get_store(STORE_FILE).is_none());
         let bytes = fs::read(store_path(&app)).unwrap();
         assert!(bytes.len() <= MAX_STORE_BYTES as usize);
         let mut invalid = balanced.clone();
         invalid.selected_profile_id = Some("unverified".into());
         assert!(update(app.handle(), &invalid).is_err());
+        assert!(app.handle().get_store(STORE_FILE).is_none());
         assert_eq!(fs::read(store_path(&app)).unwrap(), bytes);
 
         #[cfg(unix)]
@@ -233,6 +240,7 @@ mod tests {
             unreadable.set_mode(0);
             fs::set_permissions(&path, unreadable).unwrap();
             assert!(get(app.handle()).is_err());
+            assert!(app.handle().get_store(STORE_FILE).is_none());
             fs::set_permissions(&path, original).unwrap();
 
             let original = fs::metadata(&path).unwrap().permissions();
@@ -240,9 +248,11 @@ mod tests {
             unwritable.set_mode(0o444);
             fs::set_permissions(&path, unwritable).unwrap();
             assert!(update(app.handle(), &Preferences::default()).is_err());
+            assert!(app.handle().get_store(STORE_FILE).is_none());
             fs::set_permissions(&path, original).unwrap();
             assert_eq!(fs::read(&path).unwrap(), bytes);
             assert_eq!(get(app.handle()).unwrap(), balanced);
+            assert!(app.handle().get_store(STORE_FILE).is_none());
         }
 
         for source in [
@@ -257,12 +267,18 @@ mod tests {
         ] {
             fs::write(store_path(&app), source).unwrap();
             assert!(get(app.handle()).is_err());
+            assert!(app.handle().get_store(STORE_FILE).is_none());
+            assert!(update(app.handle(), &Preferences::default()).is_err());
+            assert!(app.handle().get_store(STORE_FILE).is_none());
             assert_eq!(fs::read(store_path(&app)).unwrap(), source);
         }
 
         let too_large = vec![b' '; MAX_STORE_BYTES as usize + 1];
         fs::write(store_path(&app), &too_large).unwrap();
         assert!(get(app.handle()).is_err());
+        assert!(app.handle().get_store(STORE_FILE).is_none());
+        assert!(update(app.handle(), &Preferences::default()).is_err());
+        assert!(app.handle().get_store(STORE_FILE).is_none());
         assert_eq!(fs::read(store_path(&app)).unwrap(), too_large);
 
         #[cfg(unix)]
@@ -274,6 +290,9 @@ mod tests {
             fs::write(&source, b"source bytes").unwrap();
             symlink(&source, &path).unwrap();
             assert!(get(app.handle()).is_err());
+            assert!(app.handle().get_store(STORE_FILE).is_none());
+            assert!(update(app.handle(), &Preferences::default()).is_err());
+            assert!(app.handle().get_store(STORE_FILE).is_none());
             assert_eq!(fs::read(source).unwrap(), b"source bytes");
         }
     }
