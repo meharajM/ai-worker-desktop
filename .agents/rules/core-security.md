@@ -1,11 +1,15 @@
 ---
 trigger: always_on
-description: Electron security rules that apply to every task, regardless of what you are working on.
+description: Security rules for current Electron code and the planned Tauri host; apply the matching host rules without weakening the shared trust-boundary requirements.
 ---
 
 # Core Security Rules (Always Active)
 
-These rules apply to **every change** in this project. Breaking any of them creates a real security vulnerability in the shipped application.
+These rules apply to **every change** in this project. Electron remains the current runnable host; Tauri guidance below describes the target boundary and does not claim a port exists. Never weaken validation or OS authority when translating between hosts.
+
+## Current Electron Host
+
+Keep the Electron rules below for changes to the existing app until a migration card replaces that host. Do not make Electron-only behavior a Tauri requirement.
 
 ## BrowserWindow Security Defaults
 
@@ -63,3 +67,10 @@ if (ALLOWED_SCHEMES.includes(new URL(url).protocol)) {
 // BAD — arbitrary user-supplied URL passed directly
 shell.openExternal(userInput); // could be file://, javascript:, etc.
 ```
+
+## Planned Tauri Host
+
+- Treat the WebView as untrusted. Expose native actions only through the narrow frontend bridge and registered Rust commands; never give frontend code direct filesystem, shell, credential, or process authority.
+- Keep capabilities least-privilege and explicit per window/WebView. Permissions decide which commands may be invoked; scopes constrain allowed resources, but Rust command/service code must still validate every payload and enforce scope before OS access.
+- Put filesystem, process, credential, and other privileged work in native services. Never pass unvalidated frontend arguments to OS APIs or treat a capability declaration as input validation.
+- Preserve app data and published credential sanitization during migration. Do not broaden permissions to make a port work; document unsupported operations and stop at the compatibility gate.

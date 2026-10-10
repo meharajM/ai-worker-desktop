@@ -2,6 +2,8 @@
 
 This document provides a comprehensive overview of the AI-Worker application architecture, including system design, component relationships, data flow, and integration patterns.
 
+> **Migration status (M00):** The runnable desktop host remains Electron. The standalone Rust operation-journal crate and dependency-free TypeScript bridge exist; neither is integrated into the desktop app. No Tauri host, commands, or capabilities exist yet. Tauri diagrams and boundaries belong in this map only as implemented; see [migration baseline](./plans/reports/migration-baseline.md) for measured facts and unverified target assumptions.
+
 ---
 
 ## Table of Contents

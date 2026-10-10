@@ -1,9 +1,11 @@
 ---
 trigger: model_decision
-description: Load when working on src/main/, src/preload/, IPC handlers, or main-process services. Defines how the main process, preload, and IPC layer must be structured.
+description: Load when working on Electron main/preload code or adapting native-service and command boundaries for Tauri. Defines current Electron structure and target Tauri structure.
 ---
 
 # Process Architecture Rules
+
+The repository currently runs on Electron. Keep its architecture below intact while the old app remains supported. Tauri guidance is a migration target only; do not add a Tauri host or claim these paths exist until its implementation card.
 
 ## The Fundamental Principle
 
@@ -127,6 +129,20 @@ Both the preload and IPC handlers import from this file. A typo in a channel nam
 ```
 renderer  →  preload  →  main  →  services  →  (OS / DB / network)
 ```
+
+## Tauri Migration Target
+
+Translate the same boundary into the Tauri host without moving native authority into the WebView:
+
+```
+React WebView → typed desktop bridge → validated Tauri command → native service → OS / DB / network
+```
+
+- Tauri commands are narrow transport adapters: validate untrusted arguments, delegate to a native service, and return typed results. Keep business logic and OS access in native services.
+- Keep the bridge surface minimal. Configure explicit least-privilege capabilities/scopes per WebView, and enforce validation and authorization in Rust even when a capability already limits access.
+- Keep existing Electron runnable until migration acceptance. Do not replace Electron paths in place as a shortcut or imply a Tauri runtime exists before implementation.
+- Preserve the `IAgentClient` seam so the UI stays independent of agent implementation. Keep all agent tool dispatch behind one `ToolBroker` seam; migrate current `executeToolCall` behavior into it rather than introducing parallel dispatch paths.
+- Preserve workspace confirmation, native authority, data protection, and cancellation/error behavior through the bridge. No production tool-capability bypass.
 
 This must never be reversed. In particular:
 - **Never import renderer or preload modules from main.**

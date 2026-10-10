@@ -5,6 +5,8 @@ description: Load when working on the AI agent subsystem — AgentRuntime,IAgent
 
 # AI Agent Architecture Rules
 
+These rules apply to current Electron code and the planned Tauri host. Keep `IAgentClient` as the agent implementation seam; the frontend bridge/native services are a separate host boundary and must not couple the UI to Rust or Tauri commands.
+
 ## The Interface Seam — `IAgentClient`
 
 The most important architectural rule in the agent subsystem: **the UI hook must only hold a reference typed as `IAgentClient`**, never as `AgentRuntime` or any concrete class.

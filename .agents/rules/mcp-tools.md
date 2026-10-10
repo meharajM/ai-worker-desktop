@@ -7,7 +7,7 @@ description: Load when working on MCP integration, executeToolCall, tool schema 
 
 ## Single Execution Abstraction
 
-**All tool calls must go through `executeToolCall(name, args)`** — the single choke point for all MCP interactions.
+**All tool calls must go through one execution abstraction** — `executeToolCall(name, args)` in the current app and the single `ToolBroker` seam in the Tauri target. The migration must carry its validation, approval, cancellation, limits, and result handling forward; do not add a second dispatch path.
 
 This function is the only place that:
 - Routes the call to the correct MCP server.
