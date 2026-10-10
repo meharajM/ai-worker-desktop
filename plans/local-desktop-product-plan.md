@@ -220,6 +220,22 @@ No `clean:state`/`dev:clean`, global package upgrades, model acquisition on ordi
 
 Begin M00–M03. The first demo is an offline Tauri UI with an SDK stream through the native bridge and measured payload cost. Then build real local chat before broad tool work. This order reduces speculative rewrites and exposes compatibility issues early.
 
-Still unverified: target machine RAM/CPU/GPU details, exact GGUF/template/engine quality, combined SDK bundle cost, native idle memory, command-specific containment and clean-machine Windows/macOS packaging. User-confirmed direction does not establish those measurements.
+### Remaining development gates
 
-Only planning artifacts changed in this turn. No source implementation, dependency installation, model download or runtime tests were performed.
+The current development Mac is arm64 with 16 GiB RAM (read on 10 October 2026).
+First-release minimum RAM and whether Intel Macs are included still need a product
+decision. These questions do not block the minimal Tauri scaffold.
+
+| Unknown | Resolution | Gate |
+| --- | --- | --- |
+| Supported CPU architectures and minimum RAM | Confirm release scope; name reference machines and Windows hardware access. | M00 baseline, before model tuning/support claims |
+| SDK/native streaming compatibility and adapter cost | Prove streaming, tool turns and cancellation in actual system WebViews; lock compatible versions. | M01–M03, before broad service porting |
+| Exact model/runtime/template quality and license | Verify artifacts and benchmark intended text/tool tasks under memory/CPU limits. Unknown capabilities remain disabled. | M10, M16, M32, before promoting capabilities |
+| Actual app size, idle RAM and responsiveness | Measure complete Tauri/WebView/native artifacts and workloads; the small TS journal alone is not an app footprint result. | M03, M33–M34, before release budget claims |
+| Native approval, process ownership and crash reconciliation | Wire journal into host policy; prove scopes, stale approvals, cancellation and uncertain file/CLI outcomes on each OS. | J01–J04, M17–M27, before privileged workflows |
+| Clean installs, supported OS versions and signing | Verify macOS/Windows prerequisites, runtime libraries, offline setup and distribution identity. | M35–M37, before supported release/publication |
+
+Source status: standalone journal and TypeScript bridge are implemented and checked
+locally on macOS; application integration and Tauri migration remain unimplemented.
+Their [local evidence and integration cards](./operation-journal-integration.md)
+record what has actually been verified. No model has been downloaded or benchmarked.
