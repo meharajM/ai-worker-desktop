@@ -21,6 +21,7 @@ dependencies = [
 name = "ai-worker-tauri"
 version = "0.1.2"
 dependencies = [
+ "serde",
  "tauri",
  "tauri-build",
 ]

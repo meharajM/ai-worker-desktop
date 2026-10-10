@@ -4,6 +4,8 @@ This document provides a comprehensive overview of the AI-Worker application arc
 
 > **Migration status (M02):** Electron remains the existing runnable host. Tauri now builds its separate React 18 view with Vite into `src-tauri/static/`; the view invokes only the permission-scoped Rust `status` command. Browser preview visibly reports an unavailable native bridge. No chat runtime or optional integrations are loaded. See [migration baseline](./plans/reports/migration-baseline.md) for measured facts and unverified target assumptions.
 
+> **M03a proof transport:** `src-tauri/src/native_proof.rs`, command registration, and AppManifest command grants are enabled only with Cargo feature `proof`. Fixed SSE scripts emit typed `Channel` events; active runs are capped at four and removed on completion, error, cancellation, or channel failure. Default capability still grants only `status`. SDK and WebView compatibility remain unverified.
+
 ---
 
 ## Table of Contents

@@ -6,8 +6,12 @@ authors = ["AI-Worker Team"]
 edition = "2021"
 rust-version = "1.90"
 
+[features]
+proof = []
+
 [build-dependencies]
 tauri-build = { version = "=2.7.1", features = [] }
 
 [dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
 tauri = { version = "=2.12.2", features = [] }
