@@ -2,7 +2,7 @@
 
 This document provides a comprehensive overview of the AI-Worker application architecture, including system design, component relationships, data flow, and integration patterns.
 
-> **Migration status (M02):** Electron remains the existing runnable host. Tauri now builds its separate React 18 view with Vite into `src-tauri/static/`; the view invokes only the permission-scoped Rust `status` command. Browser preview visibly reports an unavailable native bridge. No chat runtime or optional integrations are loaded. See [migration baseline](./plans/reports/migration-baseline.md) for measured facts and unverified target assumptions.
+> **Migration status (M04):** Electron remains the existing runnable host. Tauri builds its separate React 18 local core UI with Vite into `src-tauri/static/`; `LocalApp` provides Chat/Settings navigation, an in-memory unsent draft composer, and a permission-scoped native status check. Browser preview reports bridge unavailability; native command failures remain distinct. Model setup is explicitly unavailable, and no inference or optional integrations load. See [migration baseline](./plans/reports/migration-baseline.md) for measured facts and unverified target assumptions.
 
 > **M03a proof transport:** `src-tauri/src/native_proof.rs`, command registration, and AppManifest command grants are enabled only with Cargo feature `proof`. Fixed SSE scripts emit typed `Channel` events; active runs are capped at four and removed on completion, error, cancellation, or channel failure. Default capability still grants only `status`. SDK and WebView compatibility remain unverified.
 
@@ -70,7 +70,7 @@ The migration host is an independent target; Electron scripts and sources remain
 
 ```mermaid
 graph LR
-    TauriWindow[Local WebView<br/>Vite React assets] --> LocalApp[LocalApp<br/>native status view]
+    TauriWindow[Local WebView<br/>Vite React assets] --> LocalApp[LocalApp<br/>offline core UI]
     LocalApp -->|allow-status only| StatusCommand[Rust status command]
     TauriConfig[Explicit main capability] --> TauriWindow
 ```
