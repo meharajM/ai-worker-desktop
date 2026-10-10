@@ -168,6 +168,7 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
       return correlatedRequest('bridge_get_preferences', undefined, validatePreferencesReply)
     },
     updatePreferences(preferences: DesktopPreferences): Promise<DesktopPreferencesReply> {
+      if (!validPreferences(preferences)) return Promise.reject(new DesktopBridgeError('invalid_request'))
       return correlatedRequest('bridge_update_preferences', preferences, (value, identity) => {
         const reply = validatePreferencesReply(value, identity)
         if (!samePreferences(preferences, reply.preferences)) throw new DesktopBridgeError('protocol_error')

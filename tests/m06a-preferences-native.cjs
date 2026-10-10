@@ -258,11 +258,26 @@ main().catch((error) => {
     output(`CLEANUP exactOwnedBuildPid=${ownedPid} stopped=${!buildProcess}`)
   }
   if (app && !appExited) {
-    const ownedPid = app.pid
-    app.kill('SIGTERM')
-    await Promise.race([new Promise((resolve) => app.once('exit', resolve)), new Promise((resolve) => setTimeout(resolve, 5000))])
-    if (!appExited) app.kill('SIGKILL')
-    output(`CLEANUP exactOwnedAppPid=${ownedPid} forcedTermination=${!appExited}`)
+    const ownedApp = app
+    const ownedPid = ownedApp.pid
+    let resolveExit
+    const exited = new Promise((resolve) => { resolveExit = resolve })
+    ownedApp.once('exit', () => {
+      appExited = true
+      resolveExit()
+    })
+    ownedApp.kill('SIGTERM')
+    const stoppedAfterTerm = await Promise.race([
+      exited.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 5000)),
+    ])
+    let forcedTermination = false
+    if (!stoppedAfterTerm) {
+      forcedTermination = true
+      ownedApp.kill('SIGKILL')
+      await exited
+    }
+    output(`CLEANUP exactOwnedAppPid=${ownedPid} forcedTermination=${forcedTermination} stopped=${appExited}`)
     if (!appExited) process.exitCode = 1
   }
   if (temp && temp.startsWith(`${artifactRoot}${path.sep}`)) await rm(temp, { recursive: true, force: true })

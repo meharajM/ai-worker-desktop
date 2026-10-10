@@ -141,6 +141,7 @@ test('preferences reject malformed input before invocation and malformed replies
     },
   })
   for (const invalid of [
+    undefined,
     { ...lowImpact, selectedProfileId: 'profile-1' },
     { ...lowImpact, resourcePreset: 'balanced' },
     { ...lowImpact, idlePolicy: 'shortIdle' },
