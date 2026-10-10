@@ -6,7 +6,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{ipc::Channel, State};
 
@@ -185,7 +185,9 @@ fn produce(
         }
         if abort_after_first {
             let mut cancellation_observed = false;
-            for _ in 0..10 {
+            // Safety guard for async WebView IPC settling; not a production cancellation latency claim.
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while Instant::now() < deadline {
                 if stopped.load(Ordering::Acquire) {
                     cancellation_observed = true;
                     break;
