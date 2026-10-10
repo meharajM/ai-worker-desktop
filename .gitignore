@@ -1,0 +1,66 @@
+# General
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependencies
+node_modules/
+
+# Editor directories and files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.swp
+*.swo
+
+# Typscript
+*.tsbuildinfo
+
+# Build Output
+out/
+dist/
+build/Release
+# Test artifacts
+tests/temp-storage-test/
+tests/temp-user-data/
+tests/temp-user-data-leaks/
+tests/screenshots/
+test-results/
+playwright-report/
+blob-report/
+
+# Python (Vosk Bridge)
+__pycache__/
+*.pyc
+
+# Project Specific
+# Vosk Models (Downloaded at runtime)
+public/models/vosk-model*
+public/models/*.zip
+
+# Native Speech Binaries (Compiled)
+resources/speech/speech_macos
+
+# Environment files (NEVER commit these!)
+.env
+.env.*
+!.env.example
+!.env.r2.example
+
+# Logs
+# No redundant log entry here (already above)
+
+# Editor / IDE
+# consolidated above
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.tsbuildinfo
+.env.r2

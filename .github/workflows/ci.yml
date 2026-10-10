@@ -1,0 +1,48 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ main, prod ]
+  pull_request:
+    branches: [ main, prod ]
+    types: [opened, synchronize]
+
+jobs:
+  test:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prod'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install System Dependencies (Xvfb & Playwright deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgbm1
+          npx playwright install chromium
+          npx playwright install-deps chromium
+
+      - name: Lint and Typecheck
+        run: |
+          npm run lint
+          npm run typecheck
+
+      - name: Prebuild Checks
+        run: npm run check:prebuild
+
+      - name: Fix libsignal package name
+        run: npm run prebuild:electron
+
+      - name: Build for Testing
+        run: npm run build
+
+      - name: Run E2E Mock Tests
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" npm run test:mock
