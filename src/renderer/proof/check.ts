@@ -61,7 +61,7 @@ async function run() {
     const [restored] = restoreProofHistory(serializeProofHistory([normalized]))
     assert(normalized instanceof AIMessage && stored.data !== undefined, 'official mapper omitted AI message data')
     assert(restored instanceof AIMessage && restored.id === 'fixture-response' && restored.name === 'fixture', 'message identity was lost')
-    assert(restored.tool_calls[0]?.id === 'call_a' && restored.tool_calls[0]?.args.action === 'first', 'tool call was lost')
+    assert(restored.tool_calls?.[0]?.id === 'call_a' && restored.tool_calls?.[0]?.args.action === 'first', 'tool call was lost')
     assert(restored.additional_kwargs.marker === 'kept' && restored.response_metadata.marker === 'kept', 'message metadata was lost')
     assert(restored.usage_metadata?.total_tokens === 2, 'usage metadata was lost')
   })
@@ -138,6 +138,7 @@ async function run() {
     let acknowledge!: () => void
     let cancelCalls = 0
     const cancelResults: boolean[] = []
+    const cancellations = () => cancelCalls
     const ack = new Promise<void>((resolve) => { acknowledge = resolve })
     const bridge = bridgeFor((runId, _scenario, callback) => {
       activeRunId = runId
@@ -153,7 +154,7 @@ async function run() {
     assert(cancelCalls === 0, 'cancel sent before native start acknowledgement')
     acknowledge()
     await pause()
-    assert(cancelCalls === 1, `expected one transport cancel, got ${cancelCalls}`)
+    assert(cancellations() === 1, `expected one transport cancel, got ${cancellations()}`)
     assert(cancelResults[0] === true, 'accepted cancellation result was not observable')
   })
 

@@ -21,14 +21,18 @@ const SCENARIO_DEADLINE_MS = 8000
 const NATIVE_ABORT_DEADLINE_MS = 2500
 
 /** Checks fixture calls against their exact results; ToolNode may resolve results concurrently. */
-export function hasExpectedFixtureToolPairs(calls: AIMessage['tool_calls'], results: ToolMessage[]): boolean {
+export function hasExpectedFixtureToolPairs(
+  calls: (NonNullable<AIMessage['tool_calls']>[number] | undefined)[] | undefined,
+  results: ToolMessage[],
+): boolean {
+  const definedCalls = calls?.filter((call) => call !== undefined) ?? []
   const expected = [
     { id: 'call_a', action: 'first', content: 'fixture:first' },
     { id: 'call_b', action: 'second', content: 'fixture:second' },
   ]
-  return calls.length === expected.length && results.length === expected.length && expected.every(({ id, action, content }) =>
-    calls.filter((call) => call.id === id).length === 1 &&
-    calls.some((call) => call.id === id && call.name === 'proof_fixture_action' && call.args.action === action) &&
+  return calls !== undefined && calls.length === expected.length && definedCalls.length === calls.length && results.length === expected.length && expected.every(({ id, action, content }) =>
+    definedCalls.filter((call) => call.id === id).length === 1 &&
+    definedCalls.some((call) => call.id === id && call.name === 'proof_fixture_action' && call.args.action === action) &&
     results.filter((result) => result.tool_call_id === id).length === 1 &&
     results.some((result) => result.tool_call_id === id && result.content === content))
 }
@@ -282,8 +286,8 @@ export async function runM03bAssertions(
     const toolResults = firstTurn.messages.filter((message): message is ToolMessage => message instanceof ToolMessage)
     const finalText = [...firstTurn.messages].reverse().find((message) => message instanceof AIMessage)?.content
     const messageTypes = firstTurn.messages.map((message) => message.getType()).join(',')
-    const callIds = assistantCalls.map((call) => call.id).join(',')
-    const callDetails = assistantCalls.map((call) => `${call.id}:${call.name}:${JSON.stringify(call.args)}`).join(',')
+    const callIds = assistantCalls.map((call) => call?.id ?? '<missing>').join(',')
+    const callDetails = assistantCalls.map((call) => call ? `${call.id}:${call.name}:${JSON.stringify(call.args)}` : '<missing>').join(',')
     const resultDetails = toolResults.map((message) => `${message.tool_call_id}:${String(message.content)}`).join(',')
     record('two native calls/results route through graph before final text',
       hasExpectedFixtureToolPairs(assistantCalls, toolResults) &&
@@ -311,7 +315,7 @@ export async function runM03bAssertions(
     const restoredCalls = restored.filter((message) => message instanceof AIMessage)
       .flatMap((message) => message.tool_calls)
     const restoredResults = restored.filter((message) => message instanceof ToolMessage)
-    const restoredCallDetails = restoredCalls.map((call) => `${call.id}:${call.name}:${JSON.stringify(call.args)}`).join(',')
+    const restoredCallDetails = restoredCalls.map((call) => call ? `${call.id}:${call.name}:${JSON.stringify(call.args)}` : '<missing>').join(',')
     const restoredResultDetails = restoredResults.map((message) => `${message.tool_call_id}:${String(message.content)}`).join(',')
     record('bounded canonical history restores both tool results and feeds next graph turn',
       canonicalHistoryMatches && restoredCalls.length === 2 && restoredResults.length === 2 && restored.length === firstTurnMessages.length && nextText === 'café',
