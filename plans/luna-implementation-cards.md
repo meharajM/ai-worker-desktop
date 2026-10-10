@@ -58,7 +58,7 @@ Reuse the reviewed-clean native fixture transport and isolated proof configurati
 
 #### M03b — Prove LangChain/LangGraph in the WebView
 
-Treat the AI SDK harness from `b9d6de3` as unchecked and obsolete. Pin verified compatible exact versions of `@langchain/core`, `@langchain/openai`, and `@langchain/langgraph`; import only required public modules. Prove fake local SSE → typed Channel → bounded web stream → LangChain model output, then structured tool call/result → final text through explicit LangGraph graph primitives. Use harmless native fixture action. See [LangChain/LangGraph migration decision](./langchain-langgraph-migration.md) for the proof packet.
+Treat the AI SDK harness from `b9d6de3` as unchecked and obsolete. Pin verified compatible exact versions of `@langchain/core`, `@langchain/openai`, and `@langchain/langgraph`; import only required public modules. Prove fake local SSE → typed Channel → bounded web stream → LangChain model output, then reuse the native fixture's sequence to make two distinct native tool calls and receive both native results through explicit LangGraph routing before final text. One call/result is insufficient. Give each new AI, bridge, fixture and proof module one clear responsibility and explicit export contract; use short module/export comments plus targeted comments for non-obvious graph, trust/limit, cancel and history invariants. See [LangChain/LangGraph migration decision](./langchain-langgraph-migration.md) for the proof packet.
 
 **Check:** actual WKWebView is a hard gate; then WebView2 where available. Cover split UTF-8/frames, error, abort, tool history and native cleanup. Record browser support source, imported package graph, exact pins, JS gzip/native size and required adapters in `plans/reports/stack-proof.md`; initial JS gzip target remains ≤750 KiB. Document unavailable target hardware without claiming proof. No Node shims, cloud gateway/default tracing, secret in UI, custom SSE parser, automatic Rig/SDK fallback, or two agent frameworks. A compatibility/size failure requires a reviewed decision before implementation proceeds.
 
@@ -158,7 +158,7 @@ Entry: proposed local-agent-client, `IAgentClient`, provider transport, graph ad
 
 **Depends:** M14. **Stories:** U3, U4.
 
-Entry: useAgent/new small hook adapter, chatStore/transient streaming and message controls. Render session/request-correlated deltas with batching; persist a terminal turn once. Stop cancels SDK, native task/HTTP and future tool steps. Reject late events after cancellation/navigation/unmount and clearly label partial/canceled output.
+Entry: useAgent/new small hook adapter, chatStore/transient streaming and message controls. Render session/request-correlated deltas with batching; persist a terminal turn once. Stop cancels provider work, native task/HTTP and future graph/tool steps. Reject late events after cancellation/navigation/unmount and clearly label partial/canceled output.
 
 **Check:** two sessions, switching sessions, Stop before start/during/between steps, repeated Stop, failure after partial text and quit. Native compute-stop timing requires M33 real evidence; closing UI text alone is insufficient.
 

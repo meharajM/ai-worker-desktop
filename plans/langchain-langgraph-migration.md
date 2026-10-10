@@ -25,13 +25,13 @@ Reuse the reviewed-clean native fixture transport and isolated Tauri proof confi
 
 ### M03b — LangChain/LangGraph WebView proof (replacement)
 
-Add only an isolated proof harness. Verify current package metadata, browser support and official public APIs before selecting exact compatible pins for `@langchain/core`, `@langchain/openai` and `@langchain/langgraph`; do not install packages or assume support as part of this planning task. Import only required modules. Avoid Node polyfills and custom SSE parsers.
+Add only an isolated proof harness. Verify current package metadata, browser support and official public APIs before selecting exact compatible pins for `@langchain/core`, `@langchain/openai` and `@langchain/langgraph`; do not install packages or assume support as part of this planning task. Import only required modules. Keep every new AI, bridge, fixture and proof module focused on one responsibility with an explicit export contract; add short module/export comments and targeted comments for non-obvious graph routing, trust/limits, cancellation and history invariants. Avoid Node polyfills and custom SSE parsers.
 
 Prove this real chain in actual WKWebView:
 
 1. Synthetic local SSE response, delivered through the existing typed Tauri Channel transport, including UTF-8 split across chunks and multiple frames.
 2. LangChain model receives the bounded stream and surfaces text, provider errors and abort.
-3. Explicit LangGraph graph routes a structured tool call through the harmless native fixture broker and returns its result to the model for final text.
+3. Reuse the native fixture's two-call sequence: explicit LangGraph routing must make two distinct native tool calls and receive both native results through the graph before returning final text. Preserve both calls/results in the proof report; one call/result is insufficient.
 4. Complete canonical messages survive save/reload; cancellation releases stream/controller/listener/native fixture state and suppresses late events.
 
 Then run WebView2 when hardware is available. If unavailable, record missing hardware and leave that gate pending. Record exact package versions, imports, browser support source, imported package graph, JS gzip and native size, adapter details, and each pass/fail in `plans/reports/stack-proof.md`. Keep the initial JS gzip target at or below 750 KiB. Failed or unavailable evidence is not a pass. Continue only after a reviewed decision if compatibility or size fails.
@@ -40,7 +40,7 @@ Then run WebView2 when hardware is available. If unavailable, record missing har
 
 Keep change focused across provider transport, graph adapter, history translation, `IAgentClient`, and the UI stream/stop adapter only where required. Use explicit LangGraph graph primitives (for example `StateGraph` with conditional routing); use an official prebuilt agent only if it adds no second graph/runtime and preserves the same module boundaries. Do not implement another hand-written agent loop.
 
-Required explanatory comments: module/export contract and only the non-obvious graph transitions, native trust boundary, and cancellation order. Keep comments short and tied to why the invariant exists; avoid narrating each statement.
+Required for every new AI-layer, bridge, fixture and proof module from this point onward: one clear responsibility, explicit export contract, and short module/export comments. Add targeted comments only where code does not explain non-obvious graph transitions, native trust/limit boundaries, cancellation order, or canonical history invariants. Keep comments tied to why the invariant exists; avoid narrating each statement.
 
 Focused checks: multiple tool calls/results, malformed calls, history round trip, empty final output, provider failure, abort before/during/after tool dispatch, late events, task identity, native cleanup and proof-asset isolation. Confirm no cloud tracing/checkpointer and no SDK-to-Rig/provider fallback.
 
