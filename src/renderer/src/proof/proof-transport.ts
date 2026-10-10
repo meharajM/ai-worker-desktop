@@ -30,6 +30,8 @@ export type ProofBridge = {
 }
 
 const MAX_STREAM_BYTES = 4096
+// Fixture silence is a failed proof; bound it and cancel native work.
+const STREAM_DEADLINE_MS = 5000
 
 /** Tauri-backed bridge; browser preview fails closed before any fixture command. */
 export const nativeProofBridge: ProofBridge = {
@@ -55,7 +57,7 @@ export function proofFetch(bridge: ProofBridge, scenarios: ProofScenario[], onFi
   return async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const scenario = scenarios[Math.min(requestIndex++, scenarios.length - 1)]
     if (!scenario) throw new Error('No proof scenario configured')
-    const signal = init?.signal
+    const signal = init?.signal ?? (_input instanceof Request ? _input.signal : undefined)
     if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
 
     const runId = crypto.randomUUID()
@@ -66,6 +68,7 @@ export function proofFetch(bridge: ProofBridge, scenarios: ProofScenario[], onFi
     let cancellationSent = false
     let firstChunkSeen = false
     let receivedBytes = 0
+    let deadline: ReturnType<typeof setTimeout> | undefined
     const cancelNative = () => {
       cancelRequested = true
       if (started && !cancellationSent) {
@@ -75,6 +78,7 @@ export function proofFetch(bridge: ProofBridge, scenarios: ProofScenario[], onFi
     }
     const cleanup = () => {
       settled = true
+      if (deadline) clearTimeout(deadline)
       signal?.removeEventListener('abort', abort)
     }
     const abort = () => {
@@ -87,6 +91,11 @@ export function proofFetch(bridge: ProofBridge, scenarios: ProofScenario[], onFi
     const stream = new ReadableStream<Uint8Array>({
       start(streamController) {
         controller = streamController
+        deadline = setTimeout(() => {
+          cleanup()
+          controller?.error(new Error(`Native proof stream timed out after ${STREAM_DEADLINE_MS}ms`))
+          cancelNative()
+        }, STREAM_DEADLINE_MS)
         signal?.addEventListener('abort', abort, { once: true })
         if (signal?.aborted) {
           abort()

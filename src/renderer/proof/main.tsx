@@ -18,8 +18,10 @@ function ProofApp() {
         setMessage('Native bridge unavailable in browser preview.')
         return
       }
-      const next = await runM03bAssertions(nativeProofBridge)
-      setResults(next)
+      const next = await runM03bAssertions(nativeProofBridge, localStorage, (progress, result) => {
+        setMessage(progress)
+        if (result) setResults((current) => [...current, result])
+      })
       setMessage(next.every((result) => result.passed) ? 'All shared proof assertions passed.' : 'Some proof assertions failed.')
     } catch (error) {
       setMessage(`Proof bridge unavailable: ${String(error)}`)

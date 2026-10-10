@@ -53,6 +53,37 @@ Built one proof `.app` using `--features proof`, the separate `tauri.proof.conf.
 
 The app was quit using its native app menu (`Quit M03c LangChain Proof …`, action `terminate:`). Owned app PID `21433` was absent immediately afterward; no process remained with its unique app executable path. No code or Tauri source/config was changed to mask the failure. This hard gate needs a fresh bounded diagnostic/fix pass before a framework decision.
 
+## M03d bounded native diagnostic
+
+Base checkout: `codex/tauri-web-migration`, exact pre-change HEAD `c52be7307bb2c191b319c20c1ad7ed4b52729c7b`. No native source or Tauri capability/config changed. The proof harness now exposes progress and completed rows immediately, bounds native stream silence at 5 seconds, and bounds each model/graph case at 8 seconds with an AbortSignal. A fixed-byte preflight uses the same `proofFetch` → `proof_stream` typed Channel path as the provider. The fetch adapter also accepts `Request.signal`; the OpenAI SDK source check confirmed version 7.32.0 calls configured fetch with URL plus init carrying `controller.signal`.
+
+Context7 docs looked up current Tauri v2 Channel usage and LangChain.js `ChatOpenAI` streaming APIs. Exact installed package source was checked under `node_modules/openai/src/client.ts` and `node_modules/@langchain/openai/dist/chat_models/completions.js.map`: OpenAI SDK `fetchWithTimeout` composes an abort controller and calls the configured fetch with `(url, fetchOptions)`; LangChain awaits `completionWithRetry()` and iterates the returned OpenAI stream before yielding model chunks.
+
+The actual proof used one final isolated optimized release `.app`: product `M03d LangChain Proof mdxjh0`, bundle ID `com.aiworker.m03dfinal2.mdxjh0`, copied to `/tmp/m03d-langchain-final2.mDXJh0/M03d LangChain Proof mDXJh0.app`. It used normal `HOME`, no `dataStoreIdentifier`, and a unique private `appDirectoriesOverride` under `/tmp/m03d-langchain-final2.mDXJh0`. The app executable is arm64 Mach-O, 8,908,384 bytes, SHA-256 `d9fd4d9e49908db6ee191ae8ec16b23d54663210dae8c09c02055a57b82d30a2`. Final proof JavaScript asset inventory before the source-only cancellation-observer correction: 1,601,521 raw bytes / 423,553 bytes gzip (per-file gzip level 9, `mtime=0`); main chunk SHA-256 `7b6f7feecc6fe73e3f01c0fea01447e878a513fd2d584d07b5403057727c20ba`.
+
+The same built app was run once with **Run proof**. Its incremental native WKWebView results:
+
+| Assertion | Observed result |
+|---|---|
+| Native Channel byte preflight reaches fixed fixture | PASS; 172 decoded bytes included split-UTF-8 `café` and `[DONE]` |
+| Normal split UTF-8/SSE → ChatOpenAI text | PASS; `café` |
+| Provider errors reach LangChain caller | PASS; `fixture stream failed` |
+| Abort before start skips native registration | PASS |
+| Mid-stream abort awaits native cancel and matching Aborted event | **FAIL in the built UI** because the observer snapshotted the cancel promise before deferred native start acknowledgement caused `proof_cancel`; same-run Aborted arrived, and instrumentation recorded exactly one cancel call and a successful `true` result. The observer now waits on a promise created before streaming; the deferred-ack covering check passes in the browser page. This source-only correction was not rerun in WKWebView. |
+| Abort drops late bytes and prevents later tool actions | PASS; zero late chunks/actions |
+| Abort cleans native state and next native run succeeds | PASS; follow-up `café`; second cancel returned false after producer cleanup |
+| Restored history rejects unregistered tool calls | PASS |
+| Two native calls/results route through graph before final text | **FAIL** after 8s deadline; no calls/results completed |
+| Bounded canonical history restores both tool results and feeds next graph turn | Not reached; first graph turn did not complete |
+
+The decisive graph trace was `tool_calls:started > tool_calls:chunk > tool_calls:invoke-returned > tool_calls:chunk > tool_calls:chunk > tool_calls:chunk > tool_calls:complete`. No `action:*` entry or second `normal` provider request occurred before the graph deadline. Thus all four native fixture SSE payloads and terminal completion arrived; the pending work is after Channel delivery and before the graph invokes the broker tool. This trace alone does not distinguish ChatOpenAI stream completion from graph node completion or routing.
+
+Source inspection found a likely cause, not yet confirmed on the native path: installed `@langchain/openai` 1.6.2 `ChatOpenAICompletions._generate()` drains the stream and then awaits estimated prompt/output token counts. Installed `@langchain/core` 1.2.17 `dist/utils/tiktoken.js` lazily fetches `https://tiktoken.pages.dev/js/${encoding}.json` through a separate `AsyncCaller` with its default retries. That fetch bypasses the proof provider's custom Fetch, conflicts with the offline fixture, and can continue after the stream's terminal event. The graph trace is consistent with this path, but no native network request or SDK call stack was instrumented; treat this as a source-grounded hypothesis. The next focused packet should exercise official `ChatOpenAI.stream()` chunk aggregation inside the existing LangGraph node, and verify two native broker actions without adding a parser, tokenizer fetch allowance, encoding dictionary, usage override, or fallback. No framework compatibility pass is claimed, and no provider fallback or weakened assertion was added.
+
+The built app was quit via its native menu. Exact owned PID `26514` was absent afterward. The static transport check page initially could not open through `file:`; it then passed in Brave over a disposable HTTP server bound only to `127.0.0.1:62163`. All nine checks passed, including `Request.signal`, deferred native start acknowledgement with accepted cancellation, and silent-producer deadline/cancel. Exact server PID `28413` was stopped and verified absent. Final source `npm run web:typecheck` and `npm run web:proof-build` passed after the cancellation-observer correction; Vite retained its existing >500 kB chunk warning. The generated proof JS total remains below 750 KiB. WebView2 remains unavailable on this macOS host.
+
+Detailed command, CUA observation and change record: ignored `.superpowers/sdd/M03d-report.md`.
+
 ## Other gates and prior checks
 
 - Actual macOS WKWebView was used; this is a failed/incomplete runtime attempt, not a pass.

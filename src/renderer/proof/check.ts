@@ -48,6 +48,19 @@ async function run() {
     }
   })
 
+  await test('pre-aborted Request.signal does not register native work', async () => {
+    let starts = 0
+    const bridge = bridgeFor(async () => { starts++ })
+    const controller = new AbortController()
+    controller.abort()
+    try {
+      await proofFetch(bridge, ['normal'])(new Request('https://fixture.invalid', { signal: controller.signal }))
+      throw new Error('request unexpectedly started')
+    } catch (error) {
+      assert((error as DOMException).name === 'AbortError' && starts === 0, 'Request.signal did not stop native work')
+    }
+  })
+
   await test('abort before start acknowledgement cancels once after ack and ignores late events', async () => {
     let onEvent: ((event: ProofEvent) => void) | undefined
     let activeRunId = ''
@@ -74,6 +87,31 @@ async function run() {
     assert(error instanceof DOMException && error.name === 'AbortError', 'read did not reject as AbortError')
     onEvent!({ event: 'chunk', data: { runId: activeRunId, bytes: [1] } })
     assert(cancellations() === 1, 'late event caused another cancellation')
+  })
+
+  await test('first-byte abort waits for deferred start ack and records accepted cancel', async () => {
+    let onEvent: ((event: ProofEvent) => void) | undefined
+    let activeRunId = ''
+    let acknowledge!: () => void
+    let cancelCalls = 0
+    const cancelResults: boolean[] = []
+    const ack = new Promise<void>((resolve) => { acknowledge = resolve })
+    const bridge = bridgeFor((runId, _scenario, callback) => {
+      activeRunId = runId
+      onEvent = callback
+      return ack
+    })
+    bridge.cancel = async () => { cancelCalls++; cancelResults.push(true); return true }
+    const controller = new AbortController()
+    await proofFetch(bridge, ['normal'], () => controller.abort())(
+      new Request('https://fixture.invalid', { signal: controller.signal }),
+    )
+    onEvent!({ event: 'chunk', data: { runId: activeRunId, bytes: [1] } })
+    assert(cancelCalls === 0, 'cancel sent before native start acknowledgement')
+    acknowledge()
+    await pause()
+    assert(cancelCalls === 1, `expected one transport cancel, got ${cancelCalls}`)
+    assert(cancelResults[0] === true, 'accepted cancellation result was not observable')
   })
 
   await test('reader cancellation releases native producer once and drops late bytes', async () => {
@@ -118,6 +156,16 @@ async function run() {
     const error = await response.body!.getReader().read().catch((reason: unknown) => reason)
     await pause()
     assert(error instanceof Error && String(error).includes('exceeded 4 KiB') && cancellations() === 1, String(error))
+  })
+
+  await test('silent native producer times out and is cancelled', async () => {
+    let cancelCalls = 0
+    const bridge = bridgeFor(async () => undefined)
+    bridge.cancel = async () => { cancelCalls++; return true }
+    const response = await proofFetch(bridge, ['normal'])(new Request('https://fixture.invalid'), {})
+    const error = await response.body!.getReader().read().catch((reason: unknown) => reason)
+    assert(error instanceof Error && String(error).includes('timed out after 5000ms') && cancelCalls === 1,
+      `error=${String(error)}, cancels=${cancelCalls}`)
   })
 }
 
