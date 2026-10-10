@@ -1,10 +1,10 @@
 # Luna cards: Tauri web migration
 
-Reusable `local-operation-journal` Rust crate and portable TypeScript bridge are available locally. Use the [journal integration cards](./operation-journal-integration.md) within M13/M21–M23/M26–M27; application integration and the Tauri migration remain pending.
+Reusable `local-operation-journal` Rust crate and portable TypeScript bridge are available locally. Use the [journal integration cards](./operation-journal-integration.md) for native host/task ownership when the first agentic capability starts after M15, and for side effects in M21–M23/M26–M27. Chat transport in M13 does not use the journal.
 
 Revision 3, 10 October 2026. Planned work only. [Product plan](./local-desktop-product-plan.md) · [replacement audit](./custom-code-alternatives-audit.md) · [LangChain/LangGraph migration decision](./langchain-langgraph-migration.md).
 
-The LangChain/LangGraph decision supersedes earlier AI SDK Core selections and proof instructions until the product plan is consolidated. Existing AI SDK proof code remains historical evidence only; do not extend or treat it as a passed gate.
+The LangChain/LangGraph decision supersedes earlier AI SDK Core selections and proof instructions until the product plan is consolidated. Existing AI SDK proof code remains historical evidence only; do not extend or treat it as a passed gate. User steering: first deliver real local chat for verified 8 GiB and 16 GiB profiles; add agent capabilities progressively afterward. macOS first, Windows next. All development turns use `gpt-6-luna`.
 
 Execution base: clean `ai-worker-desktop` history from `e56f8d2`. Archived T00–T36 Electron cards are obsolete. Current IDs are M00–M41. macOS first, Windows next; offline bundled UI; CLI confirmation required.
 
@@ -62,7 +62,7 @@ Treat the AI SDK harness from `b9d6de3` as unchecked and obsolete. Pin verified 
 
 **Check:** actual WKWebView is a hard gate; then WebView2 where available. Cover split UTF-8/frames, error, abort, tool history and native cleanup. Record browser support source, imported package graph, exact pins, JS gzip/native size and required adapters in `plans/reports/stack-proof.md`; initial JS gzip target remains ≤750 KiB. Document unavailable target hardware without claiming proof. No Node shims, cloud gateway/default tracing, secret in UI, custom SSE parser, automatic Rig/SDK fallback, or two agent frameworks. A compatibility/size failure requires a reviewed decision before implementation proceeds.
 
-## Phase 1 — Lean UI and migration
+## Phase 1 — Lean UI and chat foundation
 
 ### M04 — Open only local core UI
 
@@ -80,103 +80,129 @@ Entry: `desktop-bridge.ts`, native command manifest/capabilities and proposed sh
 
 **Check:** malformed/oversized payload, unknown window, remote navigation and unprivileged command attempts fail. Missing bridge never returns mocked MCP success. Review boundary; update architecture map for actual commands.
 
-### M06 — Persist preferences and bounded chat history
+### M06 — Persist minimum chat preferences and bounded history
 
-**Depends:** M05. **Stories:** U1, U9.
+**Depends:** M05c. **Stories:** U1, U9.
 
-Entry: chatStore/chat-storage adapter and native preferences module. Use IndexedDB for chats and fixed-path official Tauri store for whitelisted preferences. Separate transient streaming state from terminal persistence; define schema version, bounded pages/retention/export and storage failure UX. Do not add a graph memory server or write all chats every token.
+Split into two small cards so model setup does not wait on history UX:
 
-**Check:** restart, schema migration, unavailable/full storage, multiple sessions and large-history paging. Production origin remains stable; preference fields cannot grant tools or arbitrary file paths. Source data never deleted as an automatic repair.
+#### M06a — Persist fixed, whitelisted preferences
+
+Persist only settings needed for setup and chat: selected verified profile ID, approved resource preset, and bounded idle policy. Use the official Tauri store at a fixed app path. Validate schema and defaults; preferences cannot contain paths, grants, tool permissions, credentials or arbitrary runtime flags. No generic settings/storage project.
+
+**Check:** restart, malformed/old settings, store unavailable, and attempts to inject paths/authority. Do not erase or migrate source data.
+
+#### M06b — Persist bounded chat history
+
+Use IndexedDB through the existing chat store/adapter. Separate transient streaming from terminal turns; persist each completed/canceled turn once. Add schema versioning and bounded history paging/retention sufficient for the first chat milestone. Keep export/import and legacy migration in M08/M09 after first chat works.
+
+**Check:** restart, multiple chats, canceled/partial turn, storage failure/full, and large-history paging with synthetic data. Never write history per token or auto-delete source data.
+
+## Phase 2 — Local chat
+
+### M10 — Verify exact runtime and model profiles for 8 GiB and 16 GiB
+
+**Depends:** M03. **Stories:** U2, U3.
+
+Deliver `plans/reports/native-runtime-proof.md` and a pinned, reviewed profile manifest for both RAM tiers. For each tier, verify exact runtime release/libraries, GGUF identity/hash/provenance/license, chat template/hash, backend compatibility, and bounded context/output/thread/idle settings. Choose no model by name or estimate alone: select candidates only after artifact, license, template and real-run evidence. The catalog may recommend a candidate from detected memory, but setup remains explicit.
+
+**Check:** run the complete artifact on actual macOS target hardware for each tier and verify prompt/stream/cancel plus runtime flags. Record machine RAM/OS/chip, exact artifact hashes and unavailable hardware. Current 16 GiB Apple silicon is available; physical 8 GiB hardware is not. Injected-spec tests are useful UI checks, not hardware proof. Windows is a later actual-platform gate. Never download `latest`, claim unmeasured performance, or treat cross-compilation as proof.
+
+### M11 — Own one lazy native model process
+
+**Depends:** M05c, M10 passes for the profile and target OS. **Stories:** U1, U4.
+
+Entry: native runtime module, app lifecycle and pinned resource resolver. Spawn without a shell, on app-owned loopback, with one slot/model, minimized environment and native-only ephemeral auth. Disable runtime UI, built-in tools, agent/MCP proxy and acquisition. Track PID/ownership and bounded startup, crash, cancellation and quit cleanup. No model process at app boot.
+
+**Check:** port conflict, wrong asset/digest, failed startup, crash, repeated open/quit and unrelated process. Verify all libraries and that quit removes only the owned process and descendants. Chat capability profile has no filesystem, CLI or MCP authority.
+
+### M12 — Explicit verified model setup/import
+
+**Depends:** M06a, M11. **Stories:** U2.
+
+Entry: native model module, small setup view and bridge methods. Show exact verified candidate, license/source, artifact hashes and disk requirements; support explicit download or local GGUF import, progress/cancel/retry. Verify all artifact/template/runtime identities before use. Bound download buffers and preserve resumable/partial state safely. No worker boot or automatic model download.
+
+**Check:** canceled/mismatched/partial artifact, disk shortage, unsupported profile, retry and successful import. Unknown identity/capability stays chat-only. Do not make first real acquisition an automatic test dependency.
+
+### M13 — Enforce native chat tasks and local model transport
+
+**Depends:** M05c, M11. **Stories:** U3, U4.
+
+Entry: native chat task policy/queue and local transport command; extend the M03 bridge. Native owns selected verified profile, bounded payload, endpoint, auth, task/request identity, deadlines, cancellation and process ownership. Stream over Channels; allow one active inference and at most ten queued tasks. Only selected local chat endpoint; no generic URL proxy. Do not integrate the operation journal for chat; reserve it for later side-effecting agent capabilities.
+
+**Check:** direct IPC tampering, queued cancel, overflow, redirect/remote model rejection, backend failure, wrong owner, late frames and sender destruction. Controllers/listeners release, and client cannot raise profile limits or call outside an active task.
+
+### M16 — Bound chat resources and prove early responsiveness
+
+Split this card into a pre-chat policy packet and a first-chat evidence packet.
+
+#### M16a — Enforce verified chat resource envelopes
+
+**Depends:** M10, M11, M12. **Stories:** U4.
+
+Native policy binds each verified 8 GiB/16 GiB profile to its context, output, thread, admission and idle settings. Renderer cannot increase limits or select an unverified profile. Refuse unsupported settings visibly; no silent model switch/download or CPU guarantee from thread count.
+
+**Check:** low-memory/unsupported setting, renderer limit tampering, pressure/refusal state and changing profile while active. Use exact runtime controls from M10.
+
+#### M16b — Measure real chat responsiveness and owned cleanup
+
+**Depends:** M13, M15. **Stories:** U4.
+
+Measure startup/load, controls while streaming, first token, Stop-to-compute-stop, idle release, quit cleanup and repeated chat/cancel cycles for both profiles on actual named macOS machines. Record app/WebView/helper/inference memory and pressure separately. This is a first-chat gate; M33 later covers broader workload and platform measurements.
+
+**Check:** apply project targets where measurable (UI usable ≤2 s, controls ≤100 ms, Stop feedback ≤250 ms, compute stop ≤2 s or documented owned-process escalation). Missing 8 GiB machine evidence leaves the 8 GiB tier unverified, not passed.
+
+### M14 — Run chat through the selected LangGraph client
+
+**Depends:** M12, M13, M16a. **Stories:** U3.
+
+Entry: existing `IAgentClient`, LangChain provider transport and one explicit LangGraph chat graph. The first-chat graph has one model node and no tools, ToolBroker, filesystem, CLI, MCP or approval path. Preserve native task/profile authority and canonical validated `BaseMessage` history; use the official serializer only on app-owned validated records. Keep the existing module/export boundaries and brief why-comments. Add agent/tool graph nodes only in their later capability milestones; no custom loop, custom proxy, generic storage or second framework.
+
+**Check:** real prompt/stream, complete bounded history round trip, empty output, provider error and cancellation before/during streaming. No cloud tracing/checkpointer or automatic fallback.
+
+### M15 — Connect streamed UI, persistence and actual Stop
+
+**Depends:** M06b, M14. **Stories:** U3, U4.
+
+Entry: existing useAgent/chat UI, chatStore transient streaming state and message controls. Render session/request-correlated deltas with batching; persist terminal output once. Stop cancels provider work, native task/HTTP and future graph steps. Reject late events after cancellation/navigation/unmount and label partial/canceled output.
+
+**Check:** two sessions, switching sessions, Stop before/during inference, repeated Stop, partial output failure, next turn after Stop, restart with bounded history and normal quit. Observe that actual native inference ceases; hiding/closing UI is insufficient. Repeat with both real profiles.
+
+## Phase 2a — Post-chat continuity and migration
+
+Run only after M15 chat works. These cards no longer block the chat-first milestone.
 
 ### M07 — Replace Electron attachment/path assumptions
 
-**Depends:** M05, M06. **Stories:** U5.
+**Depends:** M05c, M06b, M15. **Stories:** U5.
 
-Entry: useFileDragDrop/text attachment UI and DesktopBridge. Use native selection/drop metadata only through explicit grant creation. Browser uploads are bounded bytes, not authority-bearing OS paths; remove `.path`/filename-as-path assumptions from new UI. Workspace execution remains disabled until M17 implements the native grant policy.
+Entry: existing attachment UI and DesktopBridge. Use native selection/drop metadata only through explicit grant creation. Browser uploads are bounded bytes, not authority-bearing OS paths; remove `.path`/filename-as-path assumptions from new UI. Workspace execution remains disabled until M17. This adds chat input only; it grants no agent filesystem access.
 
 **Check:** duplicate names, Windows path spelling, canceled dialog, oversized upload and browser-only preview. Selection UI preserves keyboard/accessibility. No guessed path or clipboard fallback silently grants a directory.
 
 ### M08 — Add a versioned legacy Electron export
 
-**Depends:** M06. **Stories:** U9.
+**Depends:** M06b, M15. **Stories:** U9.
 
-Entry: existing legacy settings UI, chat/settings serialization helper and export action. Export a versioned bounded JSON snapshot of chats/non-secret settings with explicit user action. Old paths remain informational; strip credential and approval authority fields. Capture pending changes only as unapproved drafts if available, never as approved operations.
+Entry: existing legacy settings UI, bounded chat/settings serializer and export action. Export chats/non-secret settings with explicit user action. Strip credentials, grants and approval authority. Old paths remain informational; pending changes remain unapproved drafts.
 
-**Check:** representative synthetic legacy profiles, Unicode, malformed fields and canceled/failed export. Old profile remains intact and old Electron still starts. No raw LevelDB parsing, safeStorage decryption or credential output.
+**Check:** synthetic legacy profiles, Unicode, malformed fields and canceled/failed export. Old profile remains intact and legacy Electron still starts. No raw LevelDB parsing, safeStorage decryption or credential output.
 
 ### M09 — Import/export safely in Tauri
 
-**Depends:** M06, M08. **Stories:** U9.
+**Depends:** M06b, M08, M15. **Stories:** U9.
 
-Entry: native file picker/import boundary, storage adapter and settings UI. Validate export version/size/schema, preview imported counts, preserve existing chats and use a repeatable migration marker. Keep a distinct new namespace and rollback/export path. Imported workspace/auto-approval values never become live grants.
+Entry: native file picker/import boundary, chat storage adapter and settings UI. Validate version/size/schema, preview counts, preserve current chats and use a repeatable migration marker. Keep a distinct app namespace and rollback/export path. Imported workspace/auto-approval values never become grants.
 
-**Check:** import twice, conflict/duplicate identity, future version, partial failure, storage full and rollback. Verify exact imported messages without touching original profile. No secret import or unapproved file apply.
-
-## Phase 2 — Local chat
-
-### M10 — Verify runtime, GGUF and tool template artifacts
-
-**Depends:** M03. **Stories:** U2, U3.
-
-Deliver `plans/reports/native-runtime-proof.md` and pinned candidate manifest. Inspect complete llama-server macOS/Windows releases, required libraries/backends, provenance/license and exact model/template identity. Verify chat/stream/native tool roundtrip against the selected SDK configuration before writing broad runtime management. Real model setup is explicit and separate from mock checks.
-
-**Check:** launch intended distribution without system runtime on actual target OS; inspect flags/version and record missing hardware. Never download from `latest`, assume one binary includes its libraries, or substitute a different template silently. Failed compatibility revises one selected profile/runtime choice.
-
-### M11 — Own one lazy native process
-
-**Depends:** M05, M10 passes for the active target. **Stories:** U1, U4.
-
-Entry: proposed native runtime module, app lifecycle and pinned resource resolver. Spawn without a shell, on loopback/app-controlled port, with one slot/model, minimized environment and native-only ephemeral auth. Disable runtime UI/tools/agent/MCP proxy and unrequested network acquisition. Track PID/ownership and bounded startup/crash/quit cleanup.
-
-**Check:** port conflict, wrong asset/digest, failed startup, crash, repeated open/quit and unrelated process. No model process at app boot and no shared/system daemon termination. Test complete library resolution, not just spawn success.
-
-### M12 — Explicit verified model setup/import
-
-**Depends:** M06, M11. **Stories:** U2.
-
-Entry: native model module, small setup view and bridge methods. Show exact candidate/license/source, download and disk requirements; support explicit download or local GGUF import, progress/cancel/retry. Verify checksums/identity/template/runtime compatibility before use. Bound streaming download buffers and preserve resumable/partial state safely.
-
-**Check:** canceled/mismatched/partial artifact, disk shortage, unsupported profile, retry and successful import. No automatic setup on launch or shell installer. Unknown identity/capability stays chat-only; first real acquisition is not an automatic unit-test dependency.
-
-### M13 — Enforce native tasks and local model transport
-
-**Depends:** M05, M11. **Stories:** U3, U4.
-
-Entry: native task policy/queue and local transport command; extend the M03 bridge. Integrate journal host ownership via J01; persistent task identity does not confer a live grant. Native owns profile/limits/endpoints/auth and task/request ownership. Validate bounded chat payload, stream bytes over Channels, one active task/inference, max ten queued tasks, deadlines and cancellation. Only approved chat endpoint; no generic URL proxy. Split queue/transport if needed.
-
-**Check:** direct IPC tampering, queued cancel, overflow, redirect/remote model rejection, backend failure, wrong owner, late frames and sender destruction. Controllers/promises/listeners released; client cannot raise limits or execute a request outside an active grant.
-
-### M14 — Replace custom execution with one LangGraph agent client
-
-**Depends:** M12, M13. **Stories:** U3.
-
-Entry: proposed local-agent-client, `IAgentClient`, provider transport, graph adapter and small history boundary. Use `@langchain/openai` against the explicit native-approved local endpoint and `@langchain/langgraph` explicit graph primitives; no second custom loop. Keep modules understandable with short module/export contract comments and targeted comments for graph routing, trust boundary and cancellation ordering where the code alone is unclear. Graph may call only the in-process ToolBroker; it never owns permission approvals, replay, OS effects or durable journal state. Bound model→native ToolBroker→model cycles and persist canonical LangChain `BaseMessage` turns using the official serializer. Native operation journal remains durable side-effect source; do not add graph checkpointer/workflow DB by default. Keep `IAgentClient`, Tauri/native transport and UI contracts; old `AgentRuntime` remains on legacy build only.
-
-**Check:** two tool calls/results, malformed calls, complete persisted/reloaded message history, empty final turn, provider error, cancellation before/during/after tool dispatch, late event suppression and native cleanup. Verify any official message deserialization path is restricted to app-owned validated storage; never load untrusted user data into class constructors. No cloud checkpointer/tracing/default network, custom protocol repair or automatic provider/framework fallback. Exact module and API usage must match M03 proof pins and current official docs.
-
-### M15 — Connect streamed UI and actual Stop
-
-**Depends:** M14. **Stories:** U3, U4.
-
-Entry: useAgent/new small hook adapter, chatStore/transient streaming and message controls. Render session/request-correlated deltas with batching; persist a terminal turn once. Stop cancels provider work, native task/HTTP and future graph/tool steps. Reject late events after cancellation/navigation/unmount and clearly label partial/canceled output.
-
-**Check:** two sessions, switching sessions, Stop before start/during/between steps, repeated Stop, failure after partial text and quit. Native compute-stop timing requires M33 real evidence; closing UI text alone is insufficient.
-
-### M16 — Apply resource presets and idle release
-
-**Depends:** M12, M15. **Stories:** U4.
-
-Entry: native resource/task policy, model lifecycle and preset UI. Enforce context/output/thinking/thread settings, admission/pressure/refusal states and owned idle release. No model unload between tool turns; review waiting does not retain inference indefinitely. Low impact task-end release/Balanced short idle policy use only verified runtime controls.
-
-**Check:** low-memory/unsupported setting, OOM/error, fake clock, active vs idle task, selection change, retained queue state and reopen. Display estimates honestly; no CPU percentage guarantee from thread count or silent model switch/download.
+**Check:** import twice, conflict/duplicate identity, future version, partial failure, storage full and rollback. Verify exact messages with synthetic data; never touch/delete the original profile.
 
 ## Phase 3 — Files
 
 ### M17 — Issue canonical native workspace grants
 
-**Depends:** M05, M13. **Stories:** U5, U6.
+**Depends:** M05c, M13, M15. **Stories:** U5, U6.
 
-Entry: proposed native workspace module, dialog command and bridge/UI grant state. Native picker issues owner-bound root/file IDs. Canonicalize actual paths/case/junctions/nearest existing parents; reject traversal/sibling-prefix/root substitution/revoked grants. Revalidate at I/O and document residual race limitations.
+Entry: proposed native workspace module, dialog command and bridge/UI grant state. Start J01 journal host/task ownership here, with read-only grants still separate from effect authority. Native picker issues owner-bound root/file IDs. Canonicalize actual paths/case/junctions/nearest existing parents; reject traversal/sibling-prefix/root substitution/revoked grants. Revalidate at I/O and document residual race limitations.
 
 **Check:** actual temp symlinks, root replacement, `../`, case and Windows junction cases on Windows. Restored/model paths cannot grant scope. Review native boundary; no broad home-directory capability.
 
@@ -306,7 +332,7 @@ Deliver a reproducible 40-case synthetic suite/report: ten chat/extraction, ten 
 
 ### M33 — Measure model and complete application responsiveness
 
-**Depends:** M16, M32. **Stories:** U4.
+**Depends:** M16b, M32. **Stories:** U4.
 
 Record cold boot/load, warm chat, read/write/CLI/MCP task, review wait, cancellation/idle/quit and 20 cycles on named macOS and Windows machines. Separate app/WebView/helper/inference memory, shared memory, pressure/swap, throughput/first token and foreground responsiveness. No heavy permanent polling.
 
@@ -396,6 +422,6 @@ Update README/metadata/issues/CI to ai-worker-desktop; document actual supported
 
 ## Ready sequence
 
-M00–M03 prove stack → M04–M09 lean UI/migration → M10–M16 local chat → M17–M24 files → M25–M31 CLI/MCP → M32–M34 evidence → M35–M37 macOS/Windows → M38–M41 prune/release. Some independent prerequisites can be prepared earlier, but each card remains a single bounded turn.
+M00–M03 stack proof → M04–M05 bridge → M06a/M06b chat foundation → M10/M11/M12 verified setup → M13/M16a native chat policy → M14/M15 real chat → M16b 8/16 GiB responsiveness gate → M07–M09 continuity/migration → M17–M20 read-only workspace → M21–M24 approved file changes → M25–M28 confirmed CLI → M29–M31 optional MCP → M32–M34 evidence → M35–M37 macOS then Windows → M38–M41 prune/release. M11 requires actual M05c proof. Each Luna turn stays one bounded card/subcard.
 
-First milestone: M03 compatibility proof. First real-model demo: M15. Useful file pilot: M24 in isolated evaluation. Confirmed CLI/MCP pilot: M31. Shipping tool capabilities require M32; consumer release requires M41.
+First chat gate: offline UI opens with no optional process/network at boot → detect machine specs and recommend only a verified matching 8 GiB or 16 GiB candidate → user explicitly imports/downloads exact verified artifacts → real prompt streams → Stop ends native compute → next turn succeeds → bounded history survives restart → quit cleans up owned process. M16b must prove both RAM tiers on actual macOS machines before claiming both. The current 16 GiB Mac can supply only that tier; physical 8 GiB evidence remains open. Windows actual proof remains next platform milestone. First agent capability: read-only workspace; then approved file changes with journal, confirmed CLI, optional MCP. Shipping tool capabilities require M32; consumer release requires M41.
