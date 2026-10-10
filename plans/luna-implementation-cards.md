@@ -1,6 +1,6 @@
 # Luna cards: Tauri web migration
 
-Reusable `local-operation-journal` Rust crate and portable TypeScript bridge are available locally. Use the [journal integration cards](./operation-journal-integration.md) for native host/task ownership when the first agentic capability starts after M15, and for side effects in M21–M23/M26–M27. Chat transport in M13 does not use the journal.
+Reusable `local-operation-journal` Rust crate and portable TypeScript bridge are available locally. Use the [journal integration cards](./operation-journal-integration.md) for native host/task ownership at the start of M21, the first effects phase, then for side effects in M21–M23/M26–M27. M13 chat and M17–M20 read-only work do not use the journal.
 
 Revision 3, 10 October 2026. Planned work only. [Product plan](./local-desktop-product-plan.md) · [replacement audit](./custom-code-alternatives-audit.md) · [LangChain/LangGraph migration decision](./langchain-langgraph-migration.md).
 
@@ -104,13 +104,13 @@ Use IndexedDB through the existing chat store/adapter. Separate transient stream
 
 **Depends:** M03. **Stories:** U2, U3.
 
-Deliver `plans/reports/native-runtime-proof.md` and a pinned, reviewed profile manifest for both RAM tiers. For each tier, verify exact runtime release/libraries, GGUF identity/hash/provenance/license, chat template/hash, backend compatibility, and bounded context/output/thread/idle settings. Choose no model by name or estimate alone: select candidates only after artifact, license, template and real-run evidence. The catalog may recommend a candidate from detected memory, but setup remains explicit.
+Deliver `plans/reports/native-runtime-proof.md` and a pinned, reviewed profile manifest for both RAM tiers. For each tier, verify exact runtime release/libraries, GGUF identity/hash/provenance/license, chat template/hash, backend compatibility, and bounded context/output/thread/idle settings. Record candidate verification separately from physical certification: an 8 GiB envelope/artifact check on the available 16 GiB machine can qualify a candidate for later hardware evaluation, but cannot certify 8 GiB fit or responsiveness. Complete and use the verified 16 GiB profile independently while physical 8 GiB evidence is pending. The catalog may recommend only a verified candidate for detected memory; setup remains explicit.
 
-**Check:** run the complete artifact on actual macOS target hardware for each tier and verify prompt/stream/cancel plus runtime flags. Record machine RAM/OS/chip, exact artifact hashes and unavailable hardware. Current 16 GiB Apple silicon is available; physical 8 GiB hardware is not. Injected-spec tests are useful UI checks, not hardware proof. Windows is a later actual-platform gate. Never download `latest`, claim unmeasured performance, or treat cross-compilation as proof.
+**Check:** run and record prompt/stream/cancel plus runtime flags on the actual 16 GiB macOS target, including machine RAM/OS/chip and exact hashes. For 8 GiB, verify candidate compatibility and bounded settings; if evaluated on 16 GiB hardware, label results candidate-only. Physical 8 GiB certification remains pending until the complete artifact passes on actual 8 GiB macOS hardware. Injected-spec tests are UI checks, not hardware proof. Windows is a later actual-platform gate. Never download `latest`, claim unmeasured performance, or treat cross-compilation as proof.
 
 ### M11 — Own one lazy native model process
 
-**Depends:** M05c, M10 passes for the profile and target OS. **Stories:** U1, U4.
+**Depends:** M05c and M10 candidate verification for the profile/target OS; actual-machine evidence is required to use/certify that profile, not to continue implementation for another verified profile. **Stories:** U1, U4.
 
 Entry: native runtime module, app lifecycle and pinned resource resolver. Spawn without a shell, on app-owned loopback, with one slot/model, minimized environment and native-only ephemeral auth. Disable runtime UI, built-in tools, agent/MCP proxy and acquisition. Track PID/ownership and bounded startup, crash, cancellation and quit cleanup. No model process at app boot.
 
@@ -118,7 +118,7 @@ Entry: native runtime module, app lifecycle and pinned resource resolver. Spawn 
 
 ### M12 — Explicit verified model setup/import
 
-**Depends:** M06a, M11. **Stories:** U2.
+**Depends:** M06a, M11 for the profile being enabled. Keep profile status scoped; setup for 16 GiB may proceed while 8 GiB remains unverified. **Stories:** U2.
 
 Entry: native model module, small setup view and bridge methods. Show exact verified candidate, license/source, artifact hashes and disk requirements; support explicit download or local GGUF import, progress/cancel/retry. Verify all artifact/template/runtime identities before use. Bound download buffers and preserve resumable/partial state safely. No worker boot or automatic model download.
 
@@ -126,7 +126,7 @@ Entry: native model module, small setup view and bridge methods. Show exact veri
 
 ### M13 — Enforce native chat tasks and local model transport
 
-**Depends:** M05c, M11. **Stories:** U3, U4.
+**Depends:** M05c, M11 for the profile being enabled. **Stories:** U3, U4.
 
 Entry: native chat task policy/queue and local transport command; extend the M03 bridge. Native owns selected verified profile, bounded payload, endpoint, auth, task/request identity, deadlines, cancellation and process ownership. Stream over Channels; allow one active inference and at most ten queued tasks. Only selected local chat endpoint; no generic URL proxy. Do not integrate the operation journal for chat; reserve it for later side-effecting agent capabilities.
 
@@ -138,9 +138,9 @@ Split this card into a pre-chat policy packet and a first-chat evidence packet.
 
 #### M16a — Enforce verified chat resource envelopes
 
-**Depends:** M10, M11, M12. **Stories:** U4.
+**Depends:** M10, M11, M12 for the profile being enabled. **Stories:** U4.
 
-Native policy binds each verified 8 GiB/16 GiB profile to its context, output, thread, admission and idle settings. Renderer cannot increase limits or select an unverified profile. Refuse unsupported settings visibly; no silent model switch/download or CPU guarantee from thread count.
+Native policy binds each candidate profile to its context, output, thread, admission and idle settings. A candidate may be implemented profile-scoped; renderer cannot increase limits or select an unverified profile. Label 8 GiB settings evaluated on 16 GiB hardware as candidate-only. Refuse unsupported settings visibly; no silent model switch/download or CPU guarantee from thread count.
 
 **Check:** low-memory/unsupported setting, renderer limit tampering, pressure/refusal state and changing profile while active. Use exact runtime controls from M10.
 
@@ -148,25 +148,25 @@ Native policy binds each verified 8 GiB/16 GiB profile to its context, output, t
 
 **Depends:** M13, M15. **Stories:** U4.
 
-Measure startup/load, controls while streaming, first token, Stop-to-compute-stop, idle release, quit cleanup and repeated chat/cancel cycles for both profiles on actual named macOS machines. Record app/WebView/helper/inference memory and pressure separately. This is a first-chat gate; M33 later covers broader workload and platform measurements.
+Measure startup/load, controls while streaming, first token, Stop-to-compute-stop, idle release, quit cleanup and repeated chat/cancel cycles for each profile on actual named macOS machines. The 16 GiB profile may complete independently; 8 GiB remains uncertified until actual 8 GiB hardware evidence exists. Record app/WebView/helper/inference memory and pressure separately. This both-profile gate is required for first-chat release; M33 later covers broader workload and platform measurements.
 
-**Check:** apply project targets where measurable (UI usable ≤2 s, controls ≤100 ms, Stop feedback ≤250 ms, compute stop ≤2 s or documented owned-process escalation). Missing 8 GiB machine evidence leaves the 8 GiB tier unverified, not passed.
+**Check:** apply project targets where measurable (UI usable ≤2 s, controls ≤100 ms, Stop feedback ≤250 ms, compute stop ≤2 s or documented owned-process escalation). Record each profile's result separately and leave this aggregate gate open until both profiles pass on actual hardware. Missing 8 GiB machine evidence leaves the 8 GiB tier unverified and blocks first-chat release; it does not block 16 GiB profile implementation. No injected-spec or 16 GiB candidate result counts as physical 8 GiB evidence.
 
 ### M14 — Run chat through the selected LangGraph client
 
-**Depends:** M12, M13, M16a. **Stories:** U3.
+**Depends:** M12, M13, M16a for the selected verified profile. **Stories:** U3.
 
 Entry: existing `IAgentClient`, LangChain provider transport and one explicit LangGraph chat graph. The first-chat graph has one model node and no tools, ToolBroker, filesystem, CLI, MCP or approval path. Preserve native task/profile authority and canonical validated `BaseMessage` history; use the official serializer only on app-owned validated records. Keep the existing module/export boundaries and brief why-comments. Add agent/tool graph nodes only in their later capability milestones; no custom loop, custom proxy, generic storage or second framework.
 
-**Check:** real prompt/stream, complete bounded history round trip, empty output, provider error and cancellation before/during streaming. No cloud tracing/checkpointer or automatic fallback.
+**Check:** real prompt/stream, complete bounded history round trip, empty output, provider error and cancellation before/during streaming for the profile under implementation. This profile-scoped check does not satisfy M16b's both-profile release gate. No cloud tracing/checkpointer or automatic fallback.
 
 ### M15 — Connect streamed UI, persistence and actual Stop
 
-**Depends:** M06b, M14. **Stories:** U3, U4.
+**Depends:** M06b, M14 for the profile under implementation. **Stories:** U3, U4.
 
 Entry: existing useAgent/chat UI, chatStore transient streaming state and message controls. Render session/request-correlated deltas with batching; persist terminal output once. Stop cancels provider work, native task/HTTP and future graph steps. Reject late events after cancellation/navigation/unmount and label partial/canceled output.
 
-**Check:** two sessions, switching sessions, Stop before/during inference, repeated Stop, partial output failure, next turn after Stop, restart with bounded history and normal quit. Observe that actual native inference ceases; hiding/closing UI is insufficient. Repeat with both real profiles.
+**Check:** two sessions, switching sessions, Stop before/during inference, repeated Stop, partial output failure, next turn after Stop, restart with bounded history and normal quit. Observe that actual native inference ceases; hiding/closing UI is insufficient. Run per verified profile; M16b still requires actual 8 GiB and 16 GiB evidence before release.
 
 ## Phase 2a — Post-chat continuity and migration
 
@@ -202,7 +202,7 @@ Entry: native file picker/import boundary, chat storage adapter and settings UI.
 
 **Depends:** M05c, M13, M15. **Stories:** U5, U6.
 
-Entry: proposed native workspace module, dialog command and bridge/UI grant state. Start J01 journal host/task ownership here, with read-only grants still separate from effect authority. Native picker issues owner-bound root/file IDs. Canonicalize actual paths/case/junctions/nearest existing parents; reject traversal/sibling-prefix/root substitution/revoked grants. Revalidate at I/O and document residual race limitations.
+Entry: proposed native workspace module, dialog command and bridge/UI grant state. Keep read-only grants separate from effect authority; do not integrate the operation journal in M17–M20. Native picker issues owner-bound root/file IDs. Canonicalize actual paths/case/junctions/nearest existing parents; reject traversal/sibling-prefix/root substitution/revoked grants. Revalidate at I/O and document residual race limitations.
 
 **Check:** actual temp symlinks, root replacement, `../`, case and Windows junction cases on Windows. Restored/model paths cannot grant scope. Review native boundary; no broad home-directory capability.
 
@@ -232,9 +232,9 @@ Entry: existing scope/attachment/message presentation and small agent UI adapter
 
 ### M21 — Stage immutable bounded file proposals
 
-**Depends:** M17, M20. **Stories:** U6.
+**Depends:** M17, M20. **Stories:** U6. Start this first effects phase with J01 host/task ownership, then complete J02 immutable intent binding before proposal staging.
 
-Entry: proposed native proposal module, workspace ToolBroker and FileChangeReview contract. Use J02 and journal immutable intents, not a new proposal database. Only stage create/edit proposals with target/base/proposed hashes, task/grant identity and bounded text. Ignore model/renderer auto-approval fields. Internal bookkeeping is a trusted separate operation, never an AI filename exception.
+Entry: proposed native proposal module, workspace ToolBroker and FileChangeReview contract. After J01 and J02, use journal immutable intents, not a new proposal database. Only stage create/edit proposals with target/base/proposed hashes, task/grant identity and bounded text. Ignore model/renderer auto-approval fields. Internal bookkeeping is a trusted separate operation, never an AI filename exception.
 
 **Check:** original unchanged, expected-absence/new-parent validation, repeated proposals and fake auto-approve flag. Proposal IDs cannot substitute different contents/path; canceled tasks stop new staging.
 
@@ -422,6 +422,6 @@ Update README/metadata/issues/CI to ai-worker-desktop; document actual supported
 
 ## Ready sequence
 
-M00–M03 stack proof → M04–M05 bridge → M06a/M06b chat foundation → M10/M11/M12 verified setup → M13/M16a native chat policy → M14/M15 real chat → M16b 8/16 GiB responsiveness gate → M07–M09 continuity/migration → M17–M20 read-only workspace → M21–M24 approved file changes → M25–M28 confirmed CLI → M29–M31 optional MCP → M32–M34 evidence → M35–M37 macOS then Windows → M38–M41 prune/release. M11 requires actual M05c proof. Each Luna turn stays one bounded card/subcard.
+M00–M03 stack proof → M04–M05 bridge → M06a/M06b chat foundation → M10/M11/M12 verified setup → M13/M16a native chat policy → M14/M15 real chat → M16b per-profile evidence and both-profile release gate → M07–M09 continuity/migration → M17–M20 read-only workspace → M21 starts with J01 then J02 before approved file changes through M24 → M25–M28 confirmed CLI → M29–M31 optional MCP → M32–M34 evidence → M35–M37 macOS then Windows → M38–M41 prune/release. M11 requires actual M05c proof. A completed 16 GiB profile can progress while 8 GiB evidence is pending; M16b stays open and no 16 GiB-only first-chat release or automatic agent promotion follows. Each Luna turn stays one bounded card/subcard.
 
-First chat gate: offline UI opens with no optional process/network at boot → detect machine specs and recommend only a verified matching 8 GiB or 16 GiB candidate → user explicitly imports/downloads exact verified artifacts → real prompt streams → Stop ends native compute → next turn succeeds → bounded history survives restart → quit cleans up owned process. M16b must prove both RAM tiers on actual macOS machines before claiming both. The current 16 GiB Mac can supply only that tier; physical 8 GiB evidence remains open. Windows actual proof remains next platform milestone. First agent capability: read-only workspace; then approved file changes with journal, confirmed CLI, optional MCP. Shipping tool capabilities require M32; consumer release requires M41.
+First chat gate: offline UI opens with no optional process/network at boot → detect machine specs and recommend only a verified matching 8 GiB or 16 GiB candidate → user explicitly imports/downloads exact verified artifacts → real prompt streams → Stop ends native compute → next turn succeeds → bounded history survives restart → quit cleans up owned process. Record M16b evidence per profile; both RAM tiers must pass on actual macOS machines before first-chat release or any claim of both-tier support. The current 16 GiB Mac can supply only that tier; physical 8 GiB evidence remains open. Windows actual proof remains next platform milestone. First agent capability: read-only workspace; then approved file changes with journal, confirmed CLI, optional MCP. Shipping tool capabilities require M32; consumer release requires M41.

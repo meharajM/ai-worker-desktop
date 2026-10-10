@@ -40,9 +40,9 @@ Dispatch sequentially; each card has one entry point and at most three productio
 files. Split a card again if caller integration exceeds that size. Read the crate
 README contract before coding. Native policy remains independent of journal IDs.
 
-### J01 — Own the journal inside the native host (within M13)
+### J01 — Own the journal inside the native host (start of M21)
 
-**Depends:** M00–M05, M13 native policy skeleton.
+**Depends:** M00–M05, M17 grants and M20 read-only workflows. J01 is the first packet of M21's effects phase, after chat and read-only work; it precedes J02 and proposal staging. M13 chat and M17–M20 read-only capability do not use the journal.
 
 Entry: native journal host module, bridge registration and host dependency manifest.
 Enable `bundled` deliberately; use a user-private app-data directory and one bounded
