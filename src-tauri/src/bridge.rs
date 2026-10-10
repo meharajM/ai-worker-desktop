@@ -2,7 +2,9 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
-use tauri::{State, Url, WebviewWindow};
+use tauri::{AppHandle, State, Url, WebviewWindow};
+
+use crate::preferences::{self, PreferenceState, Preferences};
 
 const PROTOCOL_VERSION: u8 = 1;
 const MAX_REQUEST_BYTES: usize = 256;
@@ -81,6 +83,25 @@ pub struct StatusRequest {
     pub request_id: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GetPreferencesRequest {
+    pub protocol_version: u8,
+    pub owner_id: String,
+    pub session_id: String,
+    pub request_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdatePreferencesRequest {
+    pub protocol_version: u8,
+    pub owner_id: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub preferences: Preferences,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenSessionReply {
@@ -99,6 +120,16 @@ pub struct NativeStatus {
     pub request_id: String,
     pub app_version: &'static str,
     pub available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreferencesReply {
+    pub protocol_version: u8,
+    pub owner_id: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub preferences: Preferences,
 }
 
 #[derive(Default)]
@@ -191,22 +222,16 @@ impl BridgeState {
     }
 
     fn status(&self, caller: &Caller, request: StatusRequest) -> Result<NativeStatus, BridgeError> {
-        validate_request(
-            64 + request.owner_id.len() + request.session_id.len() + request.request_id.len(),
+        self.authorize(
+            caller,
+            &request.owner_id,
+            &request.session_id,
+            &request.request_id,
+            serde_json::to_vec(&request)
+                .map_err(|_| BridgeError::invalid())?
+                .len(),
+            request.protocol_version,
         )?;
-        if request.protocol_version != PROTOCOL_VERSION
-            || !validate_id(&request.request_id, MAX_REQUEST_ID_BYTES)
-            || !validate_id(&request.session_id, MAX_SESSION_ID_BYTES)
-            || !validate_id(&request.owner_id, 32)
-        {
-            return Err(BridgeError::invalid());
-        }
-        trusted_caller(caller, &request.owner_id)?;
-
-        let sessions = self.inner.lock().map_err(|_| BridgeError::internal())?;
-        if sessions.by_owner.get(&caller.owner_id) != Some(&request.session_id) {
-            return Err(BridgeError::stale_session());
-        }
         Ok(NativeStatus {
             protocol_version: PROTOCOL_VERSION,
             owner_id: caller.owner_id.clone(),
@@ -214,6 +239,97 @@ impl BridgeState {
             request_id: request.request_id,
             app_version: env!("CARGO_PKG_VERSION"),
             available: true,
+        })
+    }
+
+    fn authorize(
+        &self,
+        caller: &Caller,
+        owner_id: &str,
+        session_id: &str,
+        request_id: &str,
+        payload_bytes: usize,
+        protocol_version: u8,
+    ) -> Result<(), BridgeError> {
+        validate_request(payload_bytes)?;
+        if protocol_version != PROTOCOL_VERSION
+            || !validate_id(request_id, MAX_REQUEST_ID_BYTES)
+            || !validate_id(session_id, MAX_SESSION_ID_BYTES)
+            || !validate_id(owner_id, 32)
+        {
+            return Err(BridgeError::invalid());
+        }
+        trusted_caller(caller, owner_id)?;
+        let sessions = self.inner.lock().map_err(|_| BridgeError::internal())?;
+        if sessions.by_owner.get(&caller.owner_id).map(String::as_str) != Some(session_id) {
+            return Err(BridgeError::stale_session());
+        }
+        Ok(())
+    }
+
+    fn get_preferences(
+        &self,
+        caller: &Caller,
+        request: GetPreferencesRequest,
+        app: &AppHandle,
+        preferences_state: &PreferenceState,
+    ) -> Result<PreferencesReply, BridgeError> {
+        self.authorize(
+            caller,
+            &request.owner_id,
+            &request.session_id,
+            &request.request_id,
+            serde_json::to_vec(&request)
+                .map_err(|_| BridgeError::invalid())?
+                .len(),
+            request.protocol_version,
+        )?;
+        let _guard = preferences_state
+            .0
+            .lock()
+            .map_err(|_| BridgeError::internal())?;
+        let preferences = preferences::get(app).map_err(|_| BridgeError::internal())?;
+        Ok(PreferencesReply {
+            protocol_version: PROTOCOL_VERSION,
+            owner_id: caller.owner_id.clone(),
+            session_id: request.session_id,
+            request_id: request.request_id,
+            preferences,
+        })
+    }
+
+    fn update_preferences(
+        &self,
+        caller: &Caller,
+        request: UpdatePreferencesRequest,
+        app: &AppHandle,
+        preferences_state: &PreferenceState,
+    ) -> Result<PreferencesReply, BridgeError> {
+        self.authorize(
+            caller,
+            &request.owner_id,
+            &request.session_id,
+            &request.request_id,
+            serde_json::to_vec(&request)
+                .map_err(|_| BridgeError::invalid())?
+                .len(),
+            request.protocol_version,
+        )?;
+        request
+            .preferences
+            .validate()
+            .map_err(|_| BridgeError::invalid())?;
+        let _guard = preferences_state
+            .0
+            .lock()
+            .map_err(|_| BridgeError::internal())?;
+        preferences::update(app, &request.preferences).map_err(|_| BridgeError::internal())?;
+        Ok(PreferencesReply {
+            protocol_version: PROTOCOL_VERSION,
+            owner_id: caller.owner_id.clone(),
+            session_id: request.session_id,
+            request_id: request.request_id,
+            preferences: request.preferences,
         })
     }
 
@@ -242,6 +358,30 @@ pub fn bridge_get_status(
 ) -> Result<NativeStatus, BridgeError> {
     let caller = Caller::from_window(&window)?;
     state.status(&caller, request)
+}
+
+#[tauri::command]
+pub fn bridge_get_preferences(
+    request: GetPreferencesRequest,
+    window: WebviewWindow,
+    app: AppHandle,
+    state: State<'_, BridgeState>,
+    preferences_state: State<'_, PreferenceState>,
+) -> Result<PreferencesReply, BridgeError> {
+    let caller = Caller::from_window(&window)?;
+    state.get_preferences(&caller, request, &app, &preferences_state)
+}
+
+#[tauri::command]
+pub fn bridge_update_preferences(
+    request: UpdatePreferencesRequest,
+    window: WebviewWindow,
+    app: AppHandle,
+    state: State<'_, BridgeState>,
+    preferences_state: State<'_, PreferenceState>,
+) -> Result<PreferencesReply, BridgeError> {
+    let caller = Caller::from_window(&window)?;
+    state.update_preferences(&caller, request, &app, &preferences_state)
 }
 
 #[cfg(test)]
@@ -478,5 +618,51 @@ mod tests {
         let json = serde_json::to_string(&error).unwrap();
         assert_eq!(error.code, BridgeErrorCode::Unauthorized);
         assert!(!json.contains("secret"));
+    }
+
+    #[test]
+    fn preferences_requests_are_fixed_bounded_and_use_active_session() {
+        let state = BridgeState::default();
+        let caller = caller("main", app_url());
+        let opened = state.open(&caller, open_request("main", "open-1")).unwrap();
+        let request = GetPreferencesRequest {
+            protocol_version: PROTOCOL_VERSION,
+            owner_id: "main".into(),
+            session_id: opened.session_id.clone(),
+            request_id: "prefs-1".into(),
+        };
+        let size = serde_json::to_vec(&request).unwrap().len();
+        assert!(state
+            .authorize(&caller, "main", &opened.session_id, "prefs-1", size, 1)
+            .is_ok());
+        assert_eq!(
+            state
+                .authorize(&caller, "main", "stale", "prefs-1", size, 1)
+                .unwrap_err()
+                .code,
+            BridgeErrorCode::StaleSession
+        );
+        assert_eq!(
+            state
+                .authorize(
+                    &caller,
+                    "main",
+                    &opened.session_id,
+                    "prefs-1",
+                    MAX_REQUEST_BYTES + 1,
+                    1
+                )
+                .unwrap_err()
+                .code,
+            BridgeErrorCode::InvalidRequest
+        );
+        assert!(serde_json::from_str::<GetPreferencesRequest>(
+            r#"{"protocolVersion":1,"ownerId":"main","sessionId":"s-1","requestId":"r1","path":"/tmp"}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<UpdatePreferencesRequest>(
+            r#"{"protocolVersion":1,"ownerId":"main","sessionId":"s-1","requestId":"r1","preferences":{"schemaVersion":1,"selectedProfileId":null,"resourcePreset":"lowImpact","idlePolicy":"taskEnd","grant":true}}"#
+        )
+        .is_err());
     }
 }

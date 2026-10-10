@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Local main window with status and protocol-v1 bridge commands",
+  "description": "Local main window with status, session, and fixed preference bridge commands",
   "windows": ["main"],
-  "permissions": ["allow-status", "allow-bridge-open-session", "allow-bridge-get-status"]
+  "permissions": [
+    "allow-status",
+    "allow-bridge-open-session",
+    "allow-bridge-get-status",
+    "allow-bridge-get-preferences",
+    "allow-bridge-update-preferences"
+  ]
 }

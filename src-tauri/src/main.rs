@@ -1,6 +1,7 @@
 use tauri::Manager;
 
 mod bridge;
+mod preferences;
 
 #[tauri::command]
 fn status() -> &'static str {
@@ -12,7 +13,9 @@ mod native_proof;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::default().build())
         .manage(bridge::BridgeState::default())
+        .manage(preferences::PreferenceState::default())
         .setup(|_app| {
             #[cfg(feature = "proof")]
             _app.manage(native_proof::ProofState::default());
@@ -31,6 +34,8 @@ fn main() {
             status,
             bridge::bridge_open_session,
             bridge::bridge_get_status,
+            bridge::bridge_get_preferences,
+            bridge::bridge_update_preferences,
             #[cfg(feature = "proof")]
             native_proof::proof_stream,
             #[cfg(feature = "proof")]

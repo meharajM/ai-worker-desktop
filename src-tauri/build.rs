@@ -4,12 +4,20 @@ fn main() {
             "status",
             "bridge_open_session",
             "bridge_get_status",
+            "bridge_get_preferences",
+            "bridge_update_preferences",
             "proof_stream",
             "proof_cancel",
             "proof_fixture_action",
         ]
     } else {
-        &["status", "bridge_open_session", "bridge_get_status"]
+        &[
+            "status",
+            "bridge_open_session",
+            "bridge_get_status",
+            "bridge_get_preferences",
+            "bridge_update_preferences",
+        ]
     };
     tauri_build::try_build(
         tauri_build::Attributes::new()
