@@ -2,12 +2,21 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
-use tauri::{State, WebviewWindow};
+use tauri::{State, Url, WebviewWindow};
 
 const PROTOCOL_VERSION: u8 = 1;
 const MAX_REQUEST_BYTES: usize = 256;
 const MAX_REQUEST_ID_BYTES: usize = 64;
 const MAX_SESSION_ID_BYTES: usize = 64;
+
+#[cfg(any(target_os = "windows", target_os = "android"))]
+const APP_SCHEME: &str = "http";
+#[cfg(any(target_os = "windows", target_os = "android"))]
+const APP_HOST: &str = "tauri.localhost";
+#[cfg(not(any(target_os = "windows", target_os = "android")))]
+const APP_SCHEME: &str = "tauri";
+#[cfg(not(any(target_os = "windows", target_os = "android")))]
+const APP_HOST: &str = "localhost";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,7 +115,7 @@ struct BridgeSessions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Caller {
     owner_id: String,
-    origin: String,
+    url: Url,
 }
 
 impl Caller {
@@ -114,16 +123,20 @@ impl Caller {
         let url = window.url().map_err(|_| BridgeError::unauthorized())?;
         Ok(Self {
             owner_id: window.label().to_owned(),
-            origin: url.origin().ascii_serialization(),
+            url,
         })
     }
 }
 
 fn trusted_caller(caller: &Caller, claimed_owner: &str) -> Result<(), BridgeError> {
-    // Tauri's bundled frontend origin is tauri.localhost; payload owner is only a claim to compare.
+    let url = &caller.url;
     if caller.owner_id != "main"
         || claimed_owner != caller.owner_id
-        || caller.origin != "http://tauri.localhost"
+        || url.scheme() != APP_SCHEME
+        || url.host_str() != Some(APP_HOST)
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
     {
         return Err(BridgeError::unauthorized());
     }
@@ -235,10 +248,21 @@ pub fn bridge_get_status(
 mod tests {
     use super::*;
 
-    fn caller(owner_id: &str, origin: &str) -> Caller {
+    fn caller(owner_id: &str, url: &str) -> Caller {
         Caller {
             owner_id: owner_id.into(),
-            origin: origin.into(),
+            url: Url::parse(url).unwrap(),
+        }
+    }
+
+    fn app_url() -> &'static str {
+        #[cfg(any(target_os = "windows", target_os = "android"))]
+        {
+            "http://tauri.localhost/"
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "android")))]
+        {
+            "tauri://localhost"
         }
     }
 
@@ -262,7 +286,7 @@ mod tests {
     #[test]
     fn main_local_caller_opens_and_reads_correlated_status() {
         let state = BridgeState::default();
-        let caller = caller("main", "http://tauri.localhost");
+        let caller = caller("main", app_url());
         let opened = state.open(&caller, open_request("main", "req-1")).unwrap();
         let status = state
             .status(&caller, status_request("main", &opened.session_id, "req-2"))
@@ -275,7 +299,7 @@ mod tests {
     #[test]
     fn rejects_malformed_oversized_and_unknown_fields() {
         let state = BridgeState::default();
-        let caller = caller("main", "http://tauri.localhost");
+        let caller = caller("main", app_url());
         assert_eq!(
             state
                 .open(&caller, open_request("main", " "))
@@ -322,24 +346,18 @@ mod tests {
         let state = BridgeState::default();
         assert_eq!(
             state
-                .open(
-                    &caller("main", "http://tauri.localhost"),
-                    open_request("other", "r1")
-                )
+                .open(&caller("main", app_url()), open_request("other", "r1"))
                 .unwrap_err()
                 .code,
             BridgeErrorCode::Unauthorized
         );
         let session = state
-            .open(
-                &caller("main", "http://tauri.localhost"),
-                open_request("main", "r1"),
-            )
+            .open(&caller("main", app_url()), open_request("main", "r1"))
             .unwrap();
         assert_eq!(
             state
                 .status(
-                    &caller("main", "http://tauri.localhost"),
+                    &caller("main", app_url()),
                     status_request("other", &session.session_id, "r2"),
                 )
                 .unwrap_err()
@@ -349,7 +367,7 @@ mod tests {
         assert_eq!(
             state
                 .status(
-                    &caller("main", "http://tauri.localhost"),
+                    &caller("main", app_url()),
                     status_request("main", "forged", "r3"),
                 )
                 .unwrap_err()
@@ -358,10 +376,7 @@ mod tests {
         );
         assert_eq!(
             state
-                .open(
-                    &caller("popup", "http://tauri.localhost"),
-                    open_request("popup", "r1")
-                )
+                .open(&caller("popup", app_url()), open_request("popup", "r1"))
                 .unwrap_err()
                 .code,
             BridgeErrorCode::Unauthorized
@@ -376,12 +391,62 @@ mod tests {
                 .code,
             BridgeErrorCode::Unauthorized
         );
+        for url in [
+            "https://tauri.localhost/",
+            "tauri://other-host",
+            "tauri://localhost:8080",
+            "http://tauri.localhost:8080/",
+            "tauri://user@localhost",
+            "data:text/plain,opaque",
+            "custom://localhost",
+        ] {
+            assert_eq!(
+                state
+                    .open(&caller("main", url), open_request("main", "r1"))
+                    .unwrap_err()
+                    .code,
+                BridgeErrorCode::Unauthorized,
+                "unexpectedly trusted {url}"
+            );
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "android")))]
+        assert_eq!(
+            state
+                .open(
+                    &caller("main", "http://tauri.localhost/"),
+                    open_request("main", "r1")
+                )
+                .unwrap_err()
+                .code,
+            BridgeErrorCode::Unauthorized
+        );
+        #[cfg(any(target_os = "windows", target_os = "android"))]
+        assert_eq!(
+            state
+                .open(
+                    &caller("main", "tauri://localhost"),
+                    open_request("main", "r1")
+                )
+                .unwrap_err()
+                .code,
+            BridgeErrorCode::Unauthorized
+        );
+    }
+
+    #[test]
+    fn accepts_the_configured_platform_url_as_a_parsed_url() {
+        let parsed = Url::parse(app_url()).unwrap();
+        assert_eq!(parsed.scheme(), APP_SCHEME);
+        assert_eq!(parsed.host_str(), Some(APP_HOST));
+        assert!(trusted_caller(&caller("main", app_url()), "main").is_ok());
+        let decorated_url = format!("{}/path?q=1#section", app_url().trim_end_matches('/'));
+        assert!(trusted_caller(&caller("main", &decorated_url), "main").is_ok());
     }
 
     #[test]
     fn replacement_and_owner_destruction_invalidate_old_session() {
         let state = BridgeState::default();
-        let caller = caller("main", "http://tauri.localhost");
+        let caller = caller("main", app_url());
         let first = state.open(&caller, open_request("main", "r1")).unwrap();
         let second = state.open(&caller, open_request("main", "r2")).unwrap();
         assert_ne!(first.session_id, second.session_id);
@@ -406,7 +471,7 @@ mod tests {
     fn error_text_is_static_and_does_not_echo_request_data() {
         let error = BridgeState::default()
             .open(
-                &caller("main", "http://tauri.localhost"),
+                &caller("main", app_url()),
                 open_request("secret-token", "secret-key"),
             )
             .unwrap_err();
