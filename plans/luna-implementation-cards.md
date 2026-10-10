@@ -2,7 +2,9 @@
 
 Reusable `local-operation-journal` Rust crate and portable TypeScript bridge are available locally. Use the [journal integration cards](./operation-journal-integration.md) within M13/M21–M23/M26–M27; application integration and the Tauri migration remain pending.
 
-Revision 2, 10 October 2026. Planned work only. [Product plan](./local-desktop-product-plan.md) · [replacement audit](./custom-code-alternatives-audit.md).
+Revision 3, 10 October 2026. Planned work only. [Product plan](./local-desktop-product-plan.md) · [replacement audit](./custom-code-alternatives-audit.md) · [LangChain/LangGraph migration decision](./langchain-langgraph-migration.md).
+
+The LangChain/LangGraph decision supersedes earlier AI SDK Core selections and proof instructions until the product plan is consolidated. Existing AI SDK proof code remains historical evidence only; do not extend or treat it as a passed gate.
 
 Execution base: clean `ai-worker-desktop` history from `e56f8d2`. Archived T00–T36 Electron cards are obsolete. Current IDs are M00–M41. macOS first, Windows next; offline bundled UI; CLI confirmation required.
 
@@ -10,7 +12,7 @@ Execution base: clean `ai-worker-desktop` history from `e56f8d2`. Archived T00�
 
 Paste this header plus **one card** into a Luna coding turn:
 
-> Implement `<ID>` only in the ai-worker-desktop checkout. Confirm prerequisite cards are committed. Read applicable rules, named modules and callers; use Context7 for current SDK/API/CLI configuration. Use the selected Tauri/React/AI SDK/rmcp architecture; do not add a Node/Python app server, second agent framework or second model engine. Normally change at most three production files, one focused behavioral check and a small architecture.md entry; split expanding work. Initial generated scaffolding is the stated exception. Use synthetic files and temporary profiles/workspaces. Preserve old user data and published credential sanitization. Run the card's relevant checks, web typecheck/build for changed frontend/types, and cargo fmt/check plus focused Rust checks for changed native code. Report actual outcomes and limitations; commit only related files. No clean:state/dev:clean, package-manager autoinstall at app runtime, cloud E2E, real user files, publishing or old-upstream push. Stop at a missing prerequisite or failed compatibility gate rather than widening scope silently.
+> Implement `<ID>` only in the ai-worker-desktop checkout. Confirm prerequisite cards are committed. Read applicable rules, named modules and callers; use Context7 for current SDK/API/CLI configuration. Use the selected Tauri/React/LangChain.js/LangGraph.js/rmcp architecture; do not add a Node/Python app server, second agent framework or second model engine. Normally change at most three production files, one focused behavioral check and a small architecture.md entry; split expanding work. Initial generated scaffolding is the stated exception. Use synthetic files and temporary profiles/workspaces. Preserve old user data and published credential sanitization. Run the card's relevant checks, web typecheck/build for changed frontend/types, and cargo fmt/check plus focused Rust checks for changed native code. Report actual outcomes and limitations; commit only related files. No clean:state/dev:clean, package-manager autoinstall at app runtime, cloud E2E, real user files, publishing or old-upstream push. Stop at a missing prerequisite or failed compatibility gate rather than widening scope silently.
 
 Paths prefixed `src-tauri/`, `src/renderer/src/desktop-bridge.ts`, `local-agent-client.ts`, `model-fetch.ts`, `chat-storage.ts`, `vite.config.ts`, and `src/renderer/src/LocalApp.tsx` are **proposed**. Inspect existing symbols before creating them; reuse relevant equivalents. Directory names may change, but contracts/outcomes remain.
 
@@ -46,13 +48,19 @@ Entry: proposed Vite config, renderer HTML/entry and web-specific TypeScript con
 
 **Check:** web typecheck/build, offline packaged asset loading, asset sizes and one native invoke roundtrip. Plain browser preview reports native bridge unavailable. No replacement frontend framework.
 
-### M03 — Prove SDK + Tauri streaming before porting services
+### M03 — Prove LangChain/LangGraph + Tauri streaming before porting services
 
 **Depends:** M02. **Stories:** U3, U4.
 
-Entry: proposed `model-fetch.ts`, a test/proof Rust transport command and proof UI/agent adapter. Pin AI SDK Core/OpenAI-compatible provider. Prove fake local SSE → typed Channel → Response/ReadableStream → SDK output, then two tool calls/results → final text. Use a harmless native fixture action. Test endpoint exists only in isolated proof/test configuration.
+#### M03a — Reuse native fixture transport
 
-**Check:** actual WKWebView, then WebView2 proof where available; split UTF-8/frames, errors, aborted stream and tool-history persistence. Record JS gzip/native size and adapters required in `plans/reports/stack-proof.md`. No Node shims, gateway/string-model default, secret in UI or custom SSE parser. If the selected stack fails compatibility/size, record one reviewed alternative decision before continuing; do not build AI SDK and Rig together.
+Reuse the reviewed-clean native fixture transport and isolated proof configuration already present. Do not recreate its behavior. Keep the proof endpoint and capability outside default app assets; native authority and cleanup stay in the host.
+
+#### M03b — Prove LangChain/LangGraph in the WebView
+
+Treat the AI SDK harness from `b9d6de3` as unchecked and obsolete. Pin verified compatible exact versions of `@langchain/core`, `@langchain/openai`, and `@langchain/langgraph`; import only required public modules. Prove fake local SSE → typed Channel → bounded web stream → LangChain model output, then structured tool call/result → final text through explicit LangGraph graph primitives. Use harmless native fixture action. See [LangChain/LangGraph migration decision](./langchain-langgraph-migration.md) for the proof packet.
+
+**Check:** actual WKWebView is a hard gate; then WebView2 where available. Cover split UTF-8/frames, error, abort, tool history and native cleanup. Record browser support source, imported package graph, exact pins, JS gzip/native size and required adapters in `plans/reports/stack-proof.md`; initial JS gzip target remains ≤750 KiB. Document unavailable target hardware without claiming proof. No Node shims, cloud gateway/default tracing, secret in UI, custom SSE parser, automatic Rig/SDK fallback, or two agent frameworks. A compatibility/size failure requires a reviewed decision before implementation proceeds.
 
 ## Phase 1 — Lean UI and migration
 
@@ -138,13 +146,13 @@ Entry: native task policy/queue and local transport command; extend the M03 brid
 
 **Check:** direct IPC tampering, queued cancel, overflow, redirect/remote model rejection, backend failure, wrong owner, late frames and sender destruction. Controllers/promises/listeners released; client cannot raise limits or execute a request outside an active grant.
 
-### M14 — Replace custom execution with one SDK agent client
+### M14 — Replace custom execution with one LangGraph agent client
 
 **Depends:** M12, M13. **Stories:** U3.
 
-Entry: proposed local-agent-client, IAgentClient and small type/history translation boundary. Use explicit local provider, SDK streaming/structured tool loop and bounded stop conditions. Preserve complete canonical SDK tool turns independently of display formatting. Plain chat needs no decomposition/planning/reflection; keep the old AgentRuntime only in legacy build.
+Entry: proposed local-agent-client, `IAgentClient`, provider transport, graph adapter and small history boundary. Use `@langchain/openai` against the explicit native-approved local endpoint and `@langchain/langgraph` explicit graph primitives; no second custom loop. Keep modules understandable with short module/export contract comments and targeted comments for graph routing, trust boundary and cancellation ordering where the code alone is unclear. Graph may call only the in-process ToolBroker; it never owns permission approvals, replay, OS effects or durable journal state. Bound model→native ToolBroker→model cycles and persist canonical LangChain `BaseMessage` turns using the official serializer. Native operation journal remains durable side-effect source; do not add graph checkpointer/workflow DB by default. Keep `IAgentClient`, Tauri/native transport and UI contracts; old `AgentRuntime` remains on legacy build only.
 
-**Check:** two tool calls/results, malformed calls, persisted/reloaded history, empty final turn, provider error and abort. No hand-coded protocol repair, cloud provider check or gateway fallback. Reuse documented pinned APIs rather than assuming historical helper names.
+**Check:** two tool calls/results, malformed calls, complete persisted/reloaded message history, empty final turn, provider error, cancellation before/during/after tool dispatch, late event suppression and native cleanup. Verify any official message deserialization path is restricted to app-owned validated storage; never load untrusted user data into class constructors. No cloud checkpointer/tracing/default network, custom protocol repair or automatic provider/framework fallback. Exact module and API usage must match M03 proof pins and current official docs.
 
 ### M15 — Connect streamed UI and actual Stop
 
@@ -184,7 +192,7 @@ Entry: native workspace module, ToolBroker and canonical built-in schemas. Use s
 
 **Depends:** M14, M18. **Stories:** U4, U5.
 
-Entry: SDK prepare-step/context helper, model profile and native task policy. Compact prompt/current permitted tools; include schemas/history/results/reserved output in effective context. Trim whole older tool groups; conservative Unicode preflight and runtime usage. Keep total request/tool/error/duplicate limits natively as well as SDK stop conditions.
+Entry: LangChain/LangGraph prepare-step/context helper, model profile and native task policy. Compact prompt/current permitted tools; include schemas/history/results/reserved output in effective context. Trim whole older tool groups; conservative Unicode preflight and runtime usage. Keep total request/tool/error/duplicate limits natively as well as graph stop conditions.
 
 **Check:** 4k/8k cases, long outputs/schemas, Unicode, impossible request and latest instructions. No half tool turn, extra reflection/summary model or automatic continuation.
 

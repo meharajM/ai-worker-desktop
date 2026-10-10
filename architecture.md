@@ -8,6 +8,8 @@ This document provides a comprehensive overview of the AI-Worker application arc
 
 > **M03b proof harness:** The opt-in `tauri:proof` command selects `tauri.proof.conf.json`, `capabilities/proof.json`, and a separate `static-proof` Vite output. The adapter in `src/renderer/src/proof/proof-transport.ts` converts typed Channel byte arrays into a bounded `ReadableStream`; AI SDK Core 7.0.137 and `@ai-sdk/openai-compatible` 3.0.67 own SSE parsing and tool calls. Default assets and `main` capability remain status-only. Actual native WebView behavior is pending M03c.
 
+> **AI-layer decision update (planned):** The AI SDK harness above records historical, unchecked code only and is superseded by [the LangChain.js + LangGraph.js migration decision](./plans/langchain-langgraph-migration.md). Replacement proof reuses reviewed-clean M03a native fixtures, then gates the selected LangChain/LangGraph pins on actual WKWebView behavior and the existing ≤750 KiB initial JS gzip target. The planned graph stays in-process and delegates tools to the native-enforced broker; it cannot own approvals, OS effects, replay or journal state. No app code has migrated yet.
+
 ---
 
 ## Table of Contents
