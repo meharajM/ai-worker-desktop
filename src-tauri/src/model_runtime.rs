@@ -85,8 +85,9 @@ impl ModelRuntime {
     /// Called by the native chat path only; no UI or boot hook calls this yet.
     #[allow(dead_code)]
     pub fn start<R: Runtime>(&self, app: &AppHandle<R>) -> Result<u16, &'static str> {
+        let generation = self.cancel_generation.load(Ordering::SeqCst);
         let assets = resolve_assets(app)?;
-        self.start_assets(assets, None)
+        self.start_assets_at_generation(assets, None, generation)
     }
 
     pub fn stop(&self) {
@@ -97,8 +98,21 @@ impl ModelRuntime {
         stop_owned(&mut owned);
     }
 
+    #[cfg(test)]
     fn start_assets(&self, assets: Assets, forced_port: Option<u16>) -> Result<u16, &'static str> {
         let generation = self.cancel_generation.load(Ordering::SeqCst);
+        self.start_assets_at_generation(assets, forced_port, generation)
+    }
+
+    fn start_assets_at_generation(
+        &self,
+        assets: Assets,
+        forced_port: Option<u16>,
+        generation: u64,
+    ) -> Result<u16, &'static str> {
+        if self.cancel_generation.load(Ordering::SeqCst) != generation {
+            return Err("runtime start cancelled");
+        }
         verify_assets(&assets)?;
         if self.cancel_generation.load(Ordering::SeqCst) != generation {
             return Err("runtime start cancelled");
@@ -527,6 +541,27 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(runtime.server.lock().unwrap().is_none());
         assert!(unsafe { kill(pid as i32, 0) } != 0, "startup child reaped");
+    }
+
+    #[test]
+    fn stop_during_asset_resolution_cancels_before_verification_or_spawn() {
+        let runtime = ModelRuntime::default();
+        let generation = runtime.cancel_generation.load(Ordering::SeqCst);
+        runtime.stop();
+
+        assert_eq!(
+            runtime.start_assets_at_generation(
+                Assets {
+                    executable: PathBuf::from("/missing/llama-server"),
+                    model: PathBuf::from("/missing/model.gguf"),
+                    library_dir: PathBuf::from("/missing"),
+                },
+                None,
+                generation,
+            ),
+            Err("runtime start cancelled")
+        );
+        assert!(runtime.server.lock().unwrap().is_none());
     }
 
     #[test]
