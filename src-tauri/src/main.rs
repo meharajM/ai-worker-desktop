@@ -1,6 +1,7 @@
 use tauri::Manager;
 
 mod bridge;
+mod model_runtime;
 mod preferences;
 
 #[tauri::command]
@@ -27,6 +28,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(bridge::BridgeState::default())
+        .manage(model_runtime::ModelRuntime::default())
         .manage(preferences::PreferenceState::default())
         .setup(move |_app| {
             #[cfg(feature = "proof")]
@@ -64,6 +66,11 @@ fn main() {
             #[cfg(feature = "history-proof")]
             history_proof::history_proof_finish
         ])
-        .run(context)
-        .expect("failed to run Tauri application");
+        .build(context)
+        .expect("failed to build Tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<model_runtime::ModelRuntime>().stop();
+            }
+        });
 }
