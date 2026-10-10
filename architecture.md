@@ -2,7 +2,7 @@
 
 This document provides a comprehensive overview of the AI-Worker application architecture, including system design, component relationships, data flow, and integration patterns.
 
-> **Migration status (M01):** Electron remains the existing runnable host. A separate minimal Tauri 2 host now builds from `src-tauri/` with one local window and a permission-scoped `status` command; it does not port chat or services. Its app identifier is distinct from Electron. See [migration baseline](./plans/reports/migration-baseline.md) for measured facts and unverified target assumptions.
+> **Migration status (M02):** Electron remains the existing runnable host. Tauri now builds its separate React 18 view with Vite into `src-tauri/static/`; the view invokes only the permission-scoped Rust `status` command. Browser preview visibly reports an unavailable native bridge. No chat runtime or optional integrations are loaded. See [migration baseline](./plans/reports/migration-baseline.md) for measured facts and unverified target assumptions.
 
 ---
 
@@ -58,7 +58,8 @@ The migration host is an independent target; Electron scripts and sources remain
 
 ```mermaid
 graph LR
-    TauriWindow[Local WebView<br/>static proof page] -->|allow-status only| StatusCommand[Rust status command]
+    TauriWindow[Local WebView<br/>Vite React assets] --> LocalApp[LocalApp<br/>native status view]
+    LocalApp -->|allow-status only| StatusCommand[Rust status command]
     TauriConfig[Explicit main capability] --> TauriWindow
 ```
 
