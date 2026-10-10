@@ -1,8 +1,8 @@
 # M03 LangChain/LangGraph stack proof
 
 Date: 2026-10-10
-Source: `857908ca8e348bcb29bec275f74ba61b3246248f` plus the M03f/M03g packets on `codex/tauri-web-migration`.
-Status: **M03f passed the required macOS WKWebView fixture gate; M03g closed the call/result pairing finding with a fresh native run.** Earlier M03c/M03d failures remain below as historical evidence; WebView2 remains pending.
+Latest source: M03g runtime source `600fd7d44309293de539243f8d616c2ee69ec032` on `codex/tauri-web-migration`.
+Status: **M03g report records 11/11 macOS WKWebView rows passed.** Independent-source review is pending; WebView2 was unavailable on this macOS host. Earlier M03c/M03d failures remain historical evidence below.
 
 ## Host and package set
 
@@ -12,9 +12,9 @@ Status: **M03f passed the required macOS WKWebView fixture gate; M03g closed the
 - Renderer imports: `ChatOpenAI` from `@langchain/openai`; message classes and official stored-message mappers from `@langchain/core/messages`; `tool` from `@langchain/core/tools`; `StateGraph`, `StateSchema`, `MessagesValue`, `START`, `END` from `@langchain/langgraph`; `ToolNode` from `@langchain/langgraph/prebuilt`.
 - Browser support evidence: [LangGraph package metadata](https://registry.npmjs.org/@langchain/langgraph/latest) declares a browser entry; [LangChain ChatOpenAI integration](https://docs.langchain.com/oss/javascript/integrations/chat/openai) and [LangGraph workflows](https://docs.langchain.com/oss/javascript/langgraph/workflows-agents) document the used APIs. Package exports and resolved Vite graph were inspected in M03b. This metadata is not runtime compatibility evidence.
 
-## Build artifacts
+## Historical M03c build artifacts
 
-Both measurements use optimized macOS arm64 release builds from the source SHA above. The existing default release binary was dated before the M03b native source update, so it was rebuilt once with `npm exec tauri -- build --no-bundle` and copied aside before the proof build overwrote Cargo's shared output name.
+These optimized macOS arm64 release artifacts were built from historical M03c source `bc197a625413b8d89ff82dcbfd1e37805363709f`. They belong to the failed/incomplete M03c run, not the later M03f/M03g source. The existing default release binary was dated before the M03b native source update, so it was rebuilt once with `npm exec tauri -- build --no-bundle` and copied aside before the proof build overwrote Cargo's shared output name.
 
 | Artifact | Exact bytes | SHA-256 | Notes |
 |---|---:|---|---|
@@ -27,9 +27,15 @@ The actual proof JS build transformed 897 modules. Vite reported the main graph 
 | JS inventory | Raw bytes | Gzip bytes | Gzip KiB |
 |---|---:|---:|---:|
 | Default JS | 169,382 | 54,500 | 53.22 |
-| Proof JS (3 files, sum of individual gzip streams) | 1,598,702 | 422,634 | 412.73 |
+| M03c proof JS (3 files, sum of individual gzip streams) | 1,598,702 | 422,634 | 412.73 |
 
-The proof gzip total is below the 750 KiB target. Main proof chunk SHA-256: `6bc3252e43eb1ab52e52e69757b4bfc4c47afb9d583e46c2bd15f6a74cdc7d94`. Default generated `src-tauri/static/index.html` was restored to its tracked placeholder after the build. `static-proof` remains ignored build output.
+M03c proof gzip total was below the 750 KiB target. Main proof chunk SHA-256: `6bc3252e43eb1ab52e52e69757b4bfc4c47afb9d583e46c2bd15f6a74cdc7d94`. Default generated `src-tauri/static/index.html` was restored to its tracked placeholder after the build. `static-proof` remains ignored build output.
+
+## Latest M03g proof artifacts
+
+The M03g report identifies the optimized app built from source `600fd7d44309293de539243f8d616c2ee69ec032` and copied to `/tmp/m03g-final-89d52d6ca754/M03g LangChain Proof 89d52d6ca754.app`. Its `Contents/MacOS/ai-worker-tauri` executable is 8,908,384 bytes, SHA-256 `fe5664ff8d826494b59038e934cf308f3c8561f55ff79712e59ec057da52174a`. The app contains 3 regular files totaling 9,330,514 bytes; it is an unsigned local proof bundle, not an installer. The reported native run passed 11/11 rows and the app was quit with its owned PID absent afterward.
+
+The M03g `src-tauri/static-proof/assets/*.js` inventory is 3 files totaling 1,602,866 raw bytes / 423,814 gzip bytes (gzip level 9, `mtime=0`, each JS file compressed separately). Gzip total is 413.88 KiB, below the 750 KiB target. This measured JS inventory does not describe CPU, RAM, or installer size. The older M03f JS inventory, 1,601,855 raw / 423,784 gzip bytes, remains historical M03f evidence.
 
 Package inspection selected LangGraph's browser `dist/web.js`; M03b found no resolved `node:async_hooks` entry or Node polyfill. A literal scan of the minified proof bundle found zero `node:async_hooks` strings, two `node:buffer` strings, one `node:util` string, and transitive LangSmith strings. The provider passes empty callbacks and uses fixed `http://proof.invalid/v1` plus the local custom Fetch adapter. The bundle contains LangSmith code through transitive dependencies; no trace was configured. No network sockets were observed on the native app or WebKit networking process during the stalled run; this does not substitute for the missing row results.
 
@@ -51,7 +57,7 @@ Built one proof `.app` using `--features proof`, the separate `tauri.proof.conf.
 | Two native tool calls/results route through graph before final text | Not individually observed; batch did not return |
 | Canonical history restores both results and feeds next turn | Not individually observed; batch did not return |
 
-The app was quit using its native app menu (`Quit M03c LangChain Proof …`, action `terminate:`). Owned app PID `21433` was absent immediately afterward; no process remained with its unique app executable path. No code or Tauri source/config was changed to mask the failure. This hard gate needs a fresh bounded diagnostic/fix pass before a framework decision.
+The app was quit using its native app menu (`Quit M03c LangChain Proof …`, action `terminate:`). Owned app PID `21433` was absent immediately afterward; no process remained with its unique app executable path. No code or Tauri source/config was changed to mask the failure. At the time, this historical M03c gate needed a fresh bounded diagnostic/fix pass before a framework decision.
 
 ## M03d bounded native diagnostic
 
@@ -121,9 +127,9 @@ Detailed command, source diagnosis, and UI evidence are in ignored `.superpowers
 
 The M03g follow-up adds a negative check using public `AIMessage` and `ToolMessage` instances: reversed correct results pass, while wrong content and duplicate result IDs fail the same predicate used by the graph row. A fresh isolated native run passed all 11 proof rows. See ignored `.superpowers/sdd/M03f-report.md` for its build identity and commands.
 
-## Other gates and prior checks
+## Historical M03c/M03d gates and prior checks
 
-- Actual macOS WKWebView was used; this is a failed/incomplete runtime attempt, not a pass.
-- WebView2 was not run: no Windows host/hardware was available in this session.
+- M03c actual macOS WKWebView run was failed/incomplete; it is not a pass. M03d retains its separate bounded diagnostic outcomes above.
+- WebView2 was unavailable on the macOS host; no Windows host/hardware was available in this session.
 - M03b's recorded `web:typecheck`, proof typecheck/build, default web build, six generic transport checks, Cargo fmt/check, and seven focused Rust tests were not rerun as instructed. They remain prior M03b evidence only.
-- No RAM/CPU/model performance or compressed installer size is claimed. The `proof` chunk retains Vite's >500 kB raw chunk warning. No service port, model download, source fix, or production migration was performed.
+- In M03c, no service port, model download, source fix, or production migration was performed. These statements describe that historical attempt only. No RAM/CPU/model performance or compressed installer size is claimed. The proof chunk retains Vite's >500 kB raw chunk warning.
