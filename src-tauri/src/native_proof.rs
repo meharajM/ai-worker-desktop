@@ -184,14 +184,23 @@ fn produce(
             break;
         }
         if abort_after_first {
-            for _ in 0..20 {
+            let mut cancellation_observed = false;
+            for _ in 0..10 {
                 if stopped.load(Ordering::Acquire) {
+                    cancellation_observed = true;
                     break;
                 }
                 thread::sleep(Duration::from_millis(5));
             }
-            terminal = Some(ProofEvent::Aborted {
-                run_id: id.to_owned(),
+            terminal = Some(if cancellation_observed {
+                ProofEvent::Aborted {
+                    run_id: id.to_owned(),
+                }
+            } else {
+                ProofEvent::Failed {
+                    run_id: id.to_owned(),
+                    message: "abort fixture timed out waiting for cancellation",
+                }
             });
             channel_open = false;
             break;
@@ -394,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn abort_error_and_channel_failure_all_release_producer_state() {
+    fn abort_requires_observed_cancellation_and_releases_producer_state() {
         let state = ProofState::default();
         let stopped = Arc::new(AtomicBool::new(false));
         state.insert("abort", stopped.clone()).unwrap();
@@ -414,6 +423,16 @@ mod tests {
             },
         );
         assert!(matches!(aborted.last(), Some(ProofEvent::Aborted { .. })));
+        assert!(!state.cancel("abort").unwrap());
+        let next = run(&state, "after-abort", ProofScenario::Normal, false, false);
+        assert!(matches!(next.last(), Some(ProofEvent::Complete { .. })));
+
+        let timed_out = run(&state, "abort-timeout", ProofScenario::Abort, false, false);
+        assert!(
+            matches!(timed_out.last(), Some(ProofEvent::Failed { message, .. }) if *message == "abort fixture timed out waiting for cancellation")
+        );
+        assert!(!state.cancel("abort-timeout").unwrap());
+
         let failed = run(&state, "error", ProofScenario::Error, false, false);
         assert!(matches!(failed.last(), Some(ProofEvent::Failed { .. })));
         assert!(run(&state, "channel", ProofScenario::Normal, false, true).is_empty());

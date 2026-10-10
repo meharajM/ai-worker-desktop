@@ -31,6 +31,16 @@ async function readText(stream: AsyncIterable<{ content: unknown }>) {
   return text
 }
 
+async function waitFor<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(undefined), timeoutMs)
+    promise.then((value) => {
+      clearTimeout(timeout)
+      resolve(value)
+    })
+  })
+}
+
 /**
  * Runs real-framework assertions using the native fixed proof commands.
  * @param bridge - Isolated Tauri proof bridge.
@@ -78,16 +88,24 @@ export async function runM03bAssertions(
   let acceptedCancels = 0
   let lateChunks = 0
   let actionsAfterAbort = 0
+  let abortRunId: string | undefined
+  let cancelAcknowledgement: Promise<boolean> | undefined
+  let resolveAborted!: (runId: string) => void
+  const nativeAborted = new Promise<string>((resolve) => { resolveAborted = resolve })
   const abortController = new AbortController()
   const abortBridge: ProofBridge = {
     ...bridge,
-    cancel: async (runId) => {
-      const accepted = await bridge.cancel(runId)
-      if (accepted) acceptedCancels++
-      return accepted
+    cancel: (runId) => {
+      cancelAcknowledgement = bridge.cancel(runId).then((accepted) => {
+        if (accepted) acceptedCancels++
+        return accepted
+      }, () => false)
+      return cancelAcknowledgement
     },
     stream: (runId, scenario, onEvent) => bridge.stream(runId, scenario, (event) => {
+      abortRunId = runId
       if (abortController.signal.aborted && event.event === 'chunk') lateChunks++
+      if (event.event === 'aborted' && event.data.runId === runId) resolveAborted(runId)
       onEvent(event)
     }),
     action: async (action) => {
@@ -95,16 +113,36 @@ export async function runM03bAssertions(
       return bridge.action(action)
     },
   }
+  let abortError = ''
   try {
     await readText(await proofModel(abortBridge, ['abort'], () => abortController.abort()).stream(
       [{ role: 'user', content: 'abort after first raw bytes' }], { signal: abortController.signal, callbacks: [] },
     ))
-    check(results, 'abort during stream cancels native producer', false, 'Expected AbortError.')
+    abortError = 'Expected AbortError.'
   } catch (error) {
-    check(results, 'abort during stream cancels native producer', acceptedCancels === 1 && String(error).includes('AbortError'), String(error))
+    abortError = String(error)
   }
+  const [cancelAccepted, abortedRun] = await Promise.all([
+    cancelAcknowledgement ? waitFor(cancelAcknowledgement, 1000) : Promise.resolve(false),
+    waitFor(nativeAborted, 1000),
+  ])
+  check(results, 'abort during stream awaits native cancel and matching Aborted event',
+    cancelAccepted && acceptedCancels === 1 && abortRunId !== undefined && abortedRun === abortRunId && abortError.includes('AbortError'),
+    `accepted=${cancelAccepted}, aborted run=${abortedRun ?? 'timeout'}, stream run=${abortRunId ?? 'missing'}, stream=${abortError}`)
   check(results, 'abort drops late bytes and prevents later tool actions', lateChunks === 0 && actionsAfterAbort === 0,
     `late chunks=${lateChunks}, actions=${actionsAfterAbort}`)
+  let producerCleaned = false
+  let nextNativeText = ''
+  try {
+    producerCleaned = abortRunId !== undefined && await waitFor(bridge.cancel(abortRunId), 1000) === false
+    nextNativeText = await readText(await proofModel(bridge, ['normal']).stream(
+      [{ role: 'user', content: 'confirm native producer cleanup' }], { callbacks: [] },
+    ))
+  } catch {
+    // The named assertion below reports cleanup or follow-up stream failure.
+  }
+  check(results, 'abort cleans native state and next native run succeeds', producerCleaned && nextNativeText === 'café',
+    `cleanup=${producerCleaned}, next text=${nextNativeText || 'failed'}`)
 
   let unsafeHistoryRejected = false
   try {
