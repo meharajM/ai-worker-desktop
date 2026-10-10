@@ -14,6 +14,8 @@ export default defineConfig({
         index: resolve(import.meta.dirname, 'src/renderer/proof/index.html'),
         check: resolve(import.meta.dirname, 'src/renderer/proof/check.html'),
         m05c: resolve(import.meta.dirname, 'src/renderer/proof/m05c.html'),
+        m06b: resolve(import.meta.dirname, 'src/renderer/proof/m06b.html'),
+        m06bBlank: resolve(import.meta.dirname, 'src/renderer/proof/m06b-blank.html'),
         m05cUntrusted: resolve(import.meta.dirname, 'src/renderer/proof/m05c-untrusted.html'),
         m05cRemote: resolve(import.meta.dirname, 'src/renderer/proof/m05c-remote.ts'),
       },

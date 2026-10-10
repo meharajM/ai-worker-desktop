@@ -8,6 +8,7 @@ rust-version = "1.90"
 
 [features]
 proof = []
+history-proof = []
 
 [build-dependencies]
 tauri-build = { version = "=2.7.1", features = [] }

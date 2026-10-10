@@ -1,0 +1,22 @@
+{
+  "productName": "AI-Worker M06b History Proof",
+  "identifier": "com.aiworker.app.m06b.historyproof",
+  "build": {
+    "frontendDist": "static-proof",
+    "beforeBuildCommand": "npm run web:proof-build",
+    "beforeDevCommand": "npm run web:proof-build"
+  },
+  "app": {
+    "security": { "capabilities": ["history-proof"] },
+    "windows": [
+      {
+        "label": "main",
+        "create": false,
+        "title": "M06b History Proof",
+        "url": "m06b.html",
+        "width": 960,
+        "height": 720
+      }
+    ]
+  }
+}

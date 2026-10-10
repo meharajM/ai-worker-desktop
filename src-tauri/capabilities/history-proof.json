@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "history-proof",
+  "description": "M06b isolated browser-history proof commands",
+  "windows": ["main"],
+  "permissions": ["allow-history-proof-context", "allow-history-proof-finish"]
+}

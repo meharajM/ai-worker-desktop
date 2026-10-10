@@ -8,17 +8,34 @@ fn status() -> &'static str {
     concat!("AI-Worker ", env!("CARGO_PKG_VERSION"), ": ready")
 }
 
+#[cfg(feature = "history-proof")]
+mod history_proof;
 #[cfg(feature = "proof")]
 mod native_proof;
 
 fn main() {
+    #[cfg(feature = "history-proof")]
+    let history_proof = history_proof::options();
+    #[cfg(feature = "history-proof")]
+    let mut context = tauri::generate_context!();
+    #[cfg(not(feature = "history-proof"))]
+    let context = tauri::generate_context!();
+    #[cfg(feature = "history-proof")]
+    if let Some(options) = &history_proof {
+        history_proof::configure(&mut context, options);
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(bridge::BridgeState::default())
         .manage(preferences::PreferenceState::default())
-        .setup(|_app| {
+        .setup(move |_app| {
             #[cfg(feature = "proof")]
             _app.manage(native_proof::ProofState::default());
+            #[cfg(feature = "history-proof")]
+            if let Some(options) = history_proof.clone() {
+                _app.manage(options.state());
+                history_proof::setup(_app, options)?;
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -41,8 +58,12 @@ fn main() {
             #[cfg(feature = "proof")]
             native_proof::proof_cancel,
             #[cfg(feature = "proof")]
-            native_proof::proof_fixture_action
+            native_proof::proof_fixture_action,
+            #[cfg(feature = "history-proof")]
+            history_proof::history_proof_context,
+            #[cfg(feature = "history-proof")]
+            history_proof::history_proof_finish
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("failed to run Tauri application");
 }
