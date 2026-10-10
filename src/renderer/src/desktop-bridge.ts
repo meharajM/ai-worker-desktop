@@ -41,7 +41,26 @@ export type DesktopStatus = {
   available: boolean
 }
 
-type Invoke = <T>(command: string, args: { request: Record<string, string | number> }) => Promise<T>
+export type DesktopPreferences = {
+  schemaVersion: 1
+  selectedProfileId: null
+  resourcePreset: 'lowImpact' | 'balanced'
+  idlePolicy: 'taskEnd' | 'shortIdle'
+}
+
+export type DesktopPreferencesReply = {
+  protocolVersion: number
+  ownerId: string
+  sessionId: string
+  requestId: string
+  preferences: DesktopPreferences
+}
+
+type Identity = { protocolVersion: number; ownerId: string; sessionId: string; requestId: string }
+type OpenRequest = Omit<Identity, 'sessionId'>
+type NativeRequest = OpenRequest | Identity | (Identity & { preferences: DesktopPreferences })
+type NativeCommand = 'bridge_open_session' | 'bridge_get_status' | 'bridge_get_preferences' | 'bridge_update_preferences'
+type Invoke = <T>(command: NativeCommand, args: { request: NativeRequest }) => Promise<T>
 
 export function createDesktopBridgeClient(platform: { isTauri: () => boolean; invoke: Invoke }) {
   let requestSequence = 0
@@ -55,6 +74,12 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
     typeof value === 'string' && value.length > 0 && value.length <= MAX_ID_LENGTH && /^[A-Za-z0-9._:-]+$/.test(value)
   const object = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value)
+  const validPreferences = (value: unknown): value is DesktopPreferences => {
+    if (!object(value) || Object.keys(value).sort().join(',') !== 'idlePolicy,resourcePreset,schemaVersion,selectedProfileId') return false
+    if (value.schemaVersion !== 1 || value.selectedProfileId !== null) return false
+    return (value.resourcePreset === 'lowImpact' && value.idlePolicy === 'taskEnd') ||
+      (value.resourcePreset === 'balanced' && value.idlePolicy === 'shortIdle')
+  }
 
   function nativeError(error: unknown): DesktopBridgeError {
     if (object(error) && typeof error.code === 'string' && Object.hasOwn(ERROR_MESSAGES, error.code) && error.code !== 'unavailable' && error.code !== 'protocol_error' && error.code !== 'transport_error') {
@@ -68,6 +93,48 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
       throw new DesktopBridgeError('protocol_error')
     }
     return reply.sessionId
+  }
+
+  function validateIdentity(reply: unknown, identity: Identity): Record<string, unknown> {
+    if (!object(reply) || reply.protocolVersion !== PROTOCOL_VERSION || reply.ownerId !== OWNER_ID ||
+      reply.sessionId !== identity.sessionId || reply.requestId !== identity.requestId) {
+      throw new DesktopBridgeError('protocol_error')
+    }
+    return reply
+  }
+
+  function validatePreferencesReply(value: unknown, identity: Identity): DesktopPreferencesReply {
+    const reply = validateIdentity(value, identity)
+    if (Object.keys(reply).sort().join(',') !== 'ownerId,preferences,protocolVersion,requestId,sessionId' || !validPreferences(reply.preferences)) {
+      throw new DesktopBridgeError('protocol_error')
+    }
+    return reply as DesktopPreferencesReply
+  }
+
+  function samePreferences(left: DesktopPreferences, right: DesktopPreferences) {
+    return left.schemaVersion === right.schemaVersion && left.selectedProfileId === right.selectedProfileId &&
+      left.resourcePreset === right.resourcePreset && left.idlePolicy === right.idlePolicy
+  }
+
+  async function correlatedRequest<T>(
+    command: Exclude<NativeCommand, 'bridge_open_session'>,
+    preferences: DesktopPreferences | undefined,
+    validate: (reply: unknown, identity: Identity) => T,
+  ): Promise<T> {
+    if (!platform.isTauri()) throw new DesktopBridgeError('unavailable')
+    if (preferences !== undefined && !validPreferences(preferences)) throw new DesktopBridgeError('invalid_request')
+    const sessionId = await openSession()
+    const identity = { protocolVersion: PROTOCOL_VERSION, ownerId: OWNER_ID, sessionId, requestId: nextRequestId() }
+    const request: NativeRequest = preferences === undefined ? identity : { ...identity, preferences }
+    let reply: unknown
+    try {
+      reply = await platform.invoke(command, { request })
+    } catch (error) {
+      const failure = nativeError(error)
+      if (failure.code === 'stale_session') opening = undefined
+      throw failure
+    }
+    return validate(reply, identity)
   }
 
   function openSession(): Promise<string> {
@@ -88,28 +155,24 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
 
   return {
     isAvailable: platform.isTauri,
-    async getStatus(): Promise<DesktopStatus> {
-      if (!platform.isTauri()) throw new DesktopBridgeError('unavailable')
-      const sessionId = await openSession()
-      const requestId = nextRequestId()
-      let reply: unknown
-      try {
-        reply = await platform.invoke<DesktopStatus>('bridge_get_status', {
-          request: { protocolVersion: PROTOCOL_VERSION, ownerId: OWNER_ID, sessionId, requestId },
-        })
-      } catch (error) {
-        const failure = nativeError(error)
-        if (failure.code === 'stale_session') opening = undefined
-        throw failure
-      }
-      if (
-        !object(reply) || reply.protocolVersion !== PROTOCOL_VERSION || reply.ownerId !== OWNER_ID ||
-        reply.sessionId !== sessionId || reply.requestId !== requestId || typeof reply.available !== 'boolean' ||
-        typeof reply.appVersion !== 'string' || !/^[\x20-\x7e]{1,64}$/.test(reply.appVersion)
-      ) {
-        throw new DesktopBridgeError('protocol_error')
-      }
-      return reply as DesktopStatus
+    getStatus(): Promise<DesktopStatus> {
+      return correlatedRequest('bridge_get_status', undefined, (value, identity) => {
+        const reply = validateIdentity(value, identity)
+        if (typeof reply.available !== 'boolean' || typeof reply.appVersion !== 'string' || !/^[\x20-\x7e]{1,64}$/.test(reply.appVersion)) {
+          throw new DesktopBridgeError('protocol_error')
+        }
+        return reply as DesktopStatus
+      })
+    },
+    getPreferences(): Promise<DesktopPreferencesReply> {
+      return correlatedRequest('bridge_get_preferences', undefined, validatePreferencesReply)
+    },
+    updatePreferences(preferences: DesktopPreferences): Promise<DesktopPreferencesReply> {
+      return correlatedRequest('bridge_update_preferences', preferences, (value, identity) => {
+        const reply = validatePreferencesReply(value, identity)
+        if (!samePreferences(preferences, reply.preferences)) throw new DesktopBridgeError('protocol_error')
+        return reply
+      })
     },
   }
 }

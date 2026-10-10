@@ -204,6 +204,20 @@ mod tests {
     }
 
     #[test]
+    fn missing_preferences_read_returns_defaults_without_registering_or_writing_store() {
+        let (app, _directory) = app();
+        let path = store_path(&app);
+
+        assert!(!path.exists());
+        assert_eq!(get(app.handle()).unwrap(), Preferences::default());
+        assert!(
+            !path.exists(),
+            "a read must not create the preferences file"
+        );
+        assert!(app.handle().get_store(STORE_FILE).is_none());
+    }
+
+    #[test]
     fn official_store_defaults_reload_and_reject_bad_source_without_rewrite() {
         let (app, _directory) = app();
         assert_eq!(get(app.handle()).unwrap(), Preferences::default());
