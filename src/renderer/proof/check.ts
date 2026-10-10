@@ -1,7 +1,8 @@
 import { proofFetch, type ProofBridge, type ProofEvent } from '../src/proof/proof-transport'
-import { AIMessage, AIMessageChunk, mapChatMessagesToStoredMessages } from '@langchain/core/messages'
+import { AIMessage, AIMessageChunk, mapChatMessagesToStoredMessages, ToolMessage } from '@langchain/core/messages'
 import { normalizeGraphMessage } from '../src/proof/proof-graph'
 import { restoreProofHistory, serializeProofHistory } from '../src/proof/proof-history'
+import { hasExpectedFixtureToolPairs } from '../src/proof/proof-assertions'
 
 const results = document.querySelector<HTMLUListElement>('#results')!
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -26,6 +27,26 @@ async function test(name: string, run: () => Promise<void>) {
 }
 
 async function run() {
+  await test('shared graph predicate requires exact call/result pairs', async () => {
+    const assistant = new AIMessage({ tool_calls: [
+      { id: 'call_a', name: 'proof_fixture_action', args: { action: 'first' }, type: 'tool_call' },
+      { id: 'call_b', name: 'proof_fixture_action', args: { action: 'second' }, type: 'tool_call' },
+    ] })
+    const paired = [
+      new ToolMessage({ tool_call_id: 'call_b', content: 'fixture:second' }),
+      new ToolMessage({ tool_call_id: 'call_a', content: 'fixture:first' }),
+    ]
+    assert(hasExpectedFixtureToolPairs(assistant.tool_calls, paired), 'correct pairs failed when results arrived out of order')
+    assert(!hasExpectedFixtureToolPairs(assistant.tool_calls, [
+      new ToolMessage({ tool_call_id: 'call_b', content: 'fixture:first' }),
+      paired[1],
+    ]), 'mismatched result content passed')
+    assert(!hasExpectedFixtureToolPairs(assistant.tool_calls, [
+      new ToolMessage({ tool_call_id: 'call_a', content: 'fixture:first' }),
+      new ToolMessage({ tool_call_id: 'call_a', content: 'fixture:first' }),
+    ]), 'duplicate result id passed')
+  })
+
   await test('streamed AI message keeps canonical fields through history', async () => {
     const normalized = normalizeGraphMessage(new AIMessageChunk({
       content: '',

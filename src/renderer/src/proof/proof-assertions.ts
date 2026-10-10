@@ -20,6 +20,19 @@ const SCENARIO_DEADLINE_MS = 8000
 // Native abort fixture waits up to 1s before emitting its terminal event.
 const NATIVE_ABORT_DEADLINE_MS = 2500
 
+/** Checks fixture calls against their exact results; ToolNode may resolve results concurrently. */
+export function hasExpectedFixtureToolPairs(calls: AIMessage['tool_calls'], results: ToolMessage[]): boolean {
+  const expected = [
+    { id: 'call_a', action: 'first', content: 'fixture:first' },
+    { id: 'call_b', action: 'second', content: 'fixture:second' },
+  ]
+  return calls.length === expected.length && results.length === expected.length && expected.every(({ id, action, content }) =>
+    calls.filter((call) => call.id === id).length === 1 &&
+    calls.some((call) => call.id === id && call.name === 'proof_fixture_action' && call.args.action === action) &&
+    results.filter((result) => result.tool_call_id === id).length === 1 &&
+    results.some((result) => result.tool_call_id === id && result.content === content))
+}
+
 /** One named assertion shown by the isolated proof page. */
 export type ProofResult = { name: string; passed: boolean; detail: string }
 
@@ -273,7 +286,7 @@ export async function runM03bAssertions(
     const callDetails = assistantCalls.map((call) => `${call.id}:${call.name}:${JSON.stringify(call.args)}`).join(',')
     const resultDetails = toolResults.map((message) => `${message.tool_call_id}:${String(message.content)}`).join(',')
     record('two native calls/results route through graph before final text',
-      assistantCalls.length === 2 && toolResults.length === 2 &&
+      hasExpectedFixtureToolPairs(assistantCalls, toolResults) &&
       [...nativeResults].sort().join(',') === 'first:fixture:first,second:fixture:second' && finalText === 'café',
       `messages=${firstTurn.messages.length} [${messageTypes}], calls=${assistantCalls.length} [${callIds}], call data=[${callDetails}], results=${toolResults.length} [${resultDetails}], native=${nativeResults.join(',')}, final=${String(finalText)}`)
   } catch (error) {

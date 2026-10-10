@@ -1,8 +1,8 @@
 # M03 LangChain/LangGraph stack proof
 
 Date: 2026-10-10
-Source: `857908ca8e348bcb29bec275f74ba61b3246248f` plus the M03f packet on `codex/tauri-web-migration`.
-Status: **M03f passed the required macOS WKWebView fixture gate.** Earlier M03c/M03d failures remain below as historical evidence; WebView2 remains pending.
+Source: `857908ca8e348bcb29bec275f74ba61b3246248f` plus the M03f/M03g packets on `codex/tauri-web-migration`.
+Status: **M03f passed the required macOS WKWebView fixture gate; M03g closed the call/result pairing finding with a fresh native run.** Earlier M03c/M03d failures remain below as historical evidence; WebView2 remains pending.
 
 ## Host and package set
 
@@ -106,7 +106,7 @@ The final app's incremental UI results were:
 | Abort cleanup and next native run | PASS; cancel after terminal returned false; next stream returned `café` |
 | Actual LangGraph abort using native `tool_calls` fixture | PASS; one request, accepted native cancel, matching `Aborted`, graph `AbortError`, zero action calls and no follow-up request |
 | Restored unregistered tool call rejected | PASS |
-| Two native calls/results through graph before final text | PASS; 5 messages `[human, ai, tool, tool, ai]`; calls `call_a:proof_fixture_action:{"action":"first"}`, `call_b:proof_fixture_action:{"action":"second"}`; paired results `call_a:fixture:first`, `call_b:fixture:second`; native actions returned both fixed fixture values; final `café` |
+| Two native calls/results through graph before final text | PASS; shared predicate requires `call_a`/`proof_fixture_action`/`first` → `fixture:first` and `call_b`/`proof_fixture_action`/`second` → `fixture:second`; result order independent. Fresh M03g WKWebView run passed with 5 messages `[human, ai, tool, tool, ai]`, both native actions, and final `café` |
 | Bounded canonical history and next graph turn | PASS; exact official stored-message DTO match; all 5 message types, both call ids/names/arguments and paired result ids/content restored; next graph turn returned `café` |
 
 The graph-abort row starts from the same first native tool-call fixture frame as the successful graph row, then aborts before stream completion. This establishes non-vacuous graph cancellation behavior: the model request began, native cancellation was accepted, its matching `Aborted` arrived, and neither an action nor a follow-up request began.
@@ -118,6 +118,8 @@ Checks after the source changes: `npm run web:typecheck`, `npm run web:proof-bui
 After the completed run, the app was quit through its native menu. Owned app PID `34789` was absent, and no process remained with either `/tmp` or `/private/tmp` unique app executable path. CUA returned `procNotFound` during the quit action as the app exited; process checks confirmed termination. WebView2 was unavailable on this macOS host.
 
 Detailed command, source diagnosis, and UI evidence are in ignored `.superpowers/sdd/M03f-report.md`.
+
+The M03g follow-up adds a negative check using public `AIMessage` and `ToolMessage` instances: reversed correct results pass, while wrong content and duplicate result IDs fail the same predicate used by the graph row. A fresh isolated native run passed all 11 proof rows. See ignored `.superpowers/sdd/M03f-report.md` for its build identity and commands.
 
 ## Other gates and prior checks
 
