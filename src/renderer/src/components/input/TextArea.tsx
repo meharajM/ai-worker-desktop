@@ -1,6 +1,8 @@
 import React, { useRef, useEffect } from 'react'
 
 interface TextAreaProps {
+  id?: string
+  placeholder?: string
   /** Current text value */
   value: string
   /** Change handler */
@@ -24,6 +26,8 @@ interface TextAreaProps {
  * Speech sync, file drops, and submission are handled by parent components.
  */
 export function TextArea({
+  id,
+  placeholder,
   value,
   onChange,
   onKeyDown,
@@ -49,19 +53,20 @@ export function TextArea({
 
   return (
     <textarea
+      id={id}
       ref={ref}
       value={value}
       data-testid="chat-textarea"
       onChange={onChange}
       onKeyDown={onKeyDown}
       disabled={disabled}
-      placeholder={
+      placeholder={placeholder ?? (
         isListening
           ? 'Listening...'
           : isFirstSetup
             ? 'Downloading model...'
             : 'Message... (Shift+Enter for new line, or drag files here)'
-      }
+      )}
       rows={1}
       style={{
         resize: 'none',

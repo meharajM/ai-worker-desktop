@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
-import { invoke, isTauri } from '@tauri-apps/api/core'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './components/primitives/Button'
+import { TextArea } from './components/input/TextArea'
+import { DesktopBridgeError, desktopBridge } from './desktop-bridge'
 
 type View = 'chat' | 'settings'
 
@@ -9,18 +10,25 @@ export function LocalApp() {
   const [status, setStatus] = useState('Checking native bridge…')
   const [text, setText] = useState('')
   const [draft, setDraft] = useState('')
+  const checkGeneration = useRef(0)
+  const mounted = useRef(false)
 
   const checkStatus = useCallback(async () => {
-    if (!isTauri()) {
+    const generation = ++checkGeneration.current
+    if (!desktopBridge.isAvailable()) {
       setStatus('Native bridge unavailable in browser preview')
       return
     }
 
     setStatus('Checking native bridge…')
     try {
-      setStatus(await invoke<string>('status'))
+      const result = await desktopBridge.getStatus()
+      if (!mounted.current || generation !== checkGeneration.current) return
+      setStatus(result.available ? `Native bridge ready · v${result.appVersion}` : 'Native bridge unavailable')
     } catch (error) {
-      setStatus(`Native status check failed: ${error instanceof Error ? error.message : String(error)}`)
+      if (!mounted.current || generation !== checkGeneration.current) return
+      const message = error instanceof DesktopBridgeError ? error.message : 'Native bridge request failed.'
+      setStatus(message)
     }
   }, [])
 
@@ -31,7 +39,12 @@ export function LocalApp() {
   }
 
   useEffect(() => {
+    mounted.current = true
     void checkStatus()
+    return () => {
+      mounted.current = false
+      checkGeneration.current += 1
+    }
   }, [checkStatus])
 
   return (
@@ -83,7 +96,7 @@ export function LocalApp() {
               )}
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
                 <label htmlFor="local-draft" className="sr-only">Write a local draft</label>
-                <textarea
+                <TextArea
                   id="local-draft"
                   value={text}
                   onChange={(event) => setText(event.target.value)}
@@ -94,8 +107,6 @@ export function LocalApp() {
                     }
                   }}
                   placeholder="Write a draft… (Enter saves, Shift+Enter adds a line)"
-                  rows={3}
-                  className="w-full resize-y bg-transparent p-2 text-sm outline-none placeholder:text-[var(--color-text-dim)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                 />
                 <div className="flex justify-end pt-2">
                   <Button type="button" size="sm" variant="secondary" onClick={saveDraft} disabled={!text.trim()}>
