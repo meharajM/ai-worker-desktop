@@ -4,7 +4,10 @@ use std::{
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -60,7 +63,10 @@ const RUNTIME_LIBRARIES: &[(&str, &str)] = &[
 ];
 
 #[derive(Default)]
-pub struct ModelRuntime(Mutex<Option<OwnedServer>>);
+pub struct ModelRuntime {
+    server: Mutex<Option<OwnedServer>>,
+    cancel_generation: AtomicU64,
+}
 
 struct Assets {
     executable: PathBuf,
@@ -84,12 +90,24 @@ impl ModelRuntime {
     }
 
     pub fn stop(&self) {
-        let Ok(mut owned) = self.0.lock() else { return };
+        self.cancel_generation.fetch_add(1, Ordering::SeqCst);
+        let Ok(mut owned) = self.server.lock() else {
+            return;
+        };
         stop_owned(&mut owned);
     }
 
     fn start_assets(&self, assets: Assets, forced_port: Option<u16>) -> Result<u16, &'static str> {
-        let mut current = self.0.lock().map_err(|_| "runtime state unavailable")?;
+        let generation = self.cancel_generation.load(Ordering::SeqCst);
+        verify_assets(&assets)?;
+        if self.cancel_generation.load(Ordering::SeqCst) != generation {
+            return Err("runtime start cancelled");
+        }
+
+        let mut current = self
+            .server
+            .lock()
+            .map_err(|_| "runtime state unavailable")?;
         if let Some(server) = current.as_mut() {
             if server
                 .child
@@ -97,12 +115,17 @@ impl ModelRuntime {
                 .map_err(|_| "runtime status unavailable")?
                 .is_none()
             {
+                if self.cancel_generation.load(Ordering::SeqCst) != generation {
+                    return Err("runtime start cancelled");
+                }
                 return Ok(server.port);
             }
         }
         stop_owned(&mut current);
 
-        verify_assets(&assets)?;
+        if self.cancel_generation.load(Ordering::SeqCst) != generation {
+            return Err("runtime start cancelled");
+        }
         let port = forced_port.unwrap_or(reserve_port()?);
         let (private_dir, auth_file, auth) = private_auth()?;
         let mut command = Command::new(&assets.executable);
@@ -160,7 +183,11 @@ impl ModelRuntime {
             auth,
             private_dir,
         });
-        if let Err(error) = await_ready(current.as_mut().expect("child just stored")) {
+        if let Err(error) = await_ready(
+            current.as_mut().expect("child just stored"),
+            &self.cancel_generation,
+            generation,
+        ) {
             stop_owned(&mut current);
             return Err(error);
         }
@@ -170,7 +197,7 @@ impl ModelRuntime {
 
 impl Drop for ModelRuntime {
     fn drop(&mut self) {
-        if let Ok(owned) = self.0.get_mut() {
+        if let Ok(owned) = self.server.get_mut() {
             stop_owned(owned);
         }
     }
@@ -282,9 +309,16 @@ fn private_auth() -> Result<(PathBuf, PathBuf, String), &'static str> {
     Ok((directory, path, auth))
 }
 
-fn await_ready(server: &mut OwnedServer) -> Result<(), &'static str> {
+fn await_ready(
+    server: &mut OwnedServer,
+    cancellation: &AtomicU64,
+    generation: u64,
+) -> Result<(), &'static str> {
     let deadline = Instant::now() + START_TIMEOUT;
     while Instant::now() < deadline {
+        if cancellation.load(Ordering::SeqCst) != generation {
+            return Err("runtime start cancelled");
+        }
         if server
             .child
             .try_wait()
@@ -294,6 +328,9 @@ fn await_ready(server: &mut OwnedServer) -> Result<(), &'static str> {
             return Err("runtime exited during startup");
         }
         if authenticated_models(server.port, &server.auth) {
+            if cancellation.load(Ordering::SeqCst) != generation {
+                return Err("runtime start cancelled");
+            }
             return Ok(());
         }
         thread::sleep(Duration::from_millis(100));
@@ -438,6 +475,60 @@ mod tests {
         assert!(!private_dir.exists(), "owned temporary directory removed");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn stop_cancels_pending_startup_while_readiness_holds_state_lock() {
+        use std::{
+            os::unix::process::CommandExt,
+            sync::{mpsc, Arc},
+        };
+
+        let private_dir =
+            std::env::temp_dir().join(format!("m11-cancel-start-{}", std::process::id()));
+        fs::create_dir(&private_dir).unwrap();
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("60")
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = command.spawn().unwrap();
+        let pid = child.id();
+        let port = reserve_port().unwrap();
+        let runtime = Arc::new(ModelRuntime::default());
+        *runtime.server.lock().unwrap() = Some(OwnedServer {
+            child,
+            port,
+            auth: String::new(),
+            private_dir,
+        });
+        let generation = runtime.cancel_generation.load(Ordering::SeqCst);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let waiter = Arc::clone(&runtime);
+        let readiness = thread::spawn(move || {
+            let mut server = waiter.server.lock().unwrap();
+            entered_tx.send(()).unwrap();
+            assert_eq!(
+                await_ready(
+                    server.as_mut().unwrap(),
+                    &waiter.cancel_generation,
+                    generation
+                ),
+                Err("runtime start cancelled")
+            );
+        });
+        entered_rx.recv().unwrap();
+
+        let started = Instant::now();
+        runtime.stop();
+        readiness.join().unwrap();
+
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(runtime.server.lock().unwrap().is_none());
+        assert!(unsafe { kill(pid as i32, 0) } != 0, "startup child reaped");
+    }
+
     #[test]
     #[ignore = "requires the reviewed M10a candidate artifacts on the development SSD"]
     fn candidate_process_auth_port_failure_crash_and_repeated_cleanup() {
@@ -483,11 +574,11 @@ mod tests {
         let first_port = runtime.start_assets(wrong, None).unwrap();
         assert!(authenticated_models(
             first_port,
-            &runtime.0.lock().unwrap().as_ref().unwrap().auth
+            &runtime.server.lock().unwrap().as_ref().unwrap().auth
         ));
-        let first_pid = runtime.0.lock().unwrap().as_ref().unwrap().child.id();
+        let first_pid = runtime.server.lock().unwrap().as_ref().unwrap().child.id();
         runtime
-            .0
+            .server
             .lock()
             .unwrap()
             .as_mut()
@@ -496,11 +587,11 @@ mod tests {
             .kill()
             .unwrap();
         assert!(wait_until(
-            &mut runtime.0.lock().unwrap().as_mut().unwrap().child,
+            &mut runtime.server.lock().unwrap().as_mut().unwrap().child,
             first_pid,
             Duration::from_secs(2)
         ));
-        stop_owned(&mut runtime.0.lock().unwrap());
+        stop_owned(&mut runtime.server.lock().unwrap());
         assert!(
             unsafe { kill(first_pid as i32, 0) } != 0,
             "crashed owned process reaped"
@@ -509,7 +600,7 @@ mod tests {
         let second_port = runtime.start_assets(artifact_assets(), None).unwrap();
         assert_ne!(first_port, second_port);
         let key_dir = runtime
-            .0
+            .server
             .lock()
             .unwrap()
             .as_ref()
@@ -537,7 +628,7 @@ mod tests {
         runtime.start_assets(artifact_assets(), None).unwrap();
         runtime.stop();
         assert!(
-            runtime.0.lock().unwrap().is_none(),
+            runtime.server.lock().unwrap().is_none(),
             "repeated open/quit leaves no owned child"
         );
     }
