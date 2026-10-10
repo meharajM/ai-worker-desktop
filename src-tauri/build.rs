@@ -2,12 +2,14 @@ fn main() {
     let commands: &[&str] = if std::env::var_os("CARGO_FEATURE_PROOF").is_some() {
         &[
             "status",
+            "bridge_open_session",
+            "bridge_get_status",
             "proof_stream",
             "proof_cancel",
             "proof_fixture_action",
         ]
     } else {
-        &["status"]
+        &["status", "bridge_open_session", "bridge_get_status"]
     };
     tauri_build::try_build(
         tauri_build::Attributes::new()

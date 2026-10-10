@@ -1,5 +1,6 @@
-#[cfg(feature = "proof")]
 use tauri::Manager;
+
+mod bridge;
 
 #[tauri::command]
 fn status() -> &'static str {
@@ -11,13 +12,25 @@ mod native_proof;
 
 fn main() {
     tauri::Builder::default()
+        .manage(bridge::BridgeState::default())
         .setup(|_app| {
             #[cfg(feature = "proof")]
             _app.manage(native_proof::ProofState::default());
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                // A later window may reuse this label; its session must start fresh.
+                window
+                    .app_handle()
+                    .state::<bridge::BridgeState>()
+                    .owner_destroyed(window.label());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             status,
+            bridge::bridge_open_session,
+            bridge::bridge_get_status,
             #[cfg(feature = "proof")]
             native_proof::proof_stream,
             #[cfg(feature = "proof")]

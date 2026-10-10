@@ -4,9 +4,11 @@ This document provides a comprehensive overview of the AI-Worker application arc
 
 > **Migration status (M04):** Electron remains the existing runnable host. Tauri builds its separate React 18 local core UI with Vite into `src-tauri/static/`; `LocalApp` provides Chat/Settings navigation, an in-memory unsent draft composer, and a permission-scoped native status check. Browser preview reports bridge unavailability; native command failures remain distinct. Model setup is explicitly unavailable, and no inference or optional integrations load. See [migration baseline](./plans/reports/migration-baseline.md) for measured facts and unverified target assumptions.
 
-> **M03a proof transport:** `src-tauri/src/native_proof.rs`, command registration, and AppManifest command grants are enabled only with Cargo feature `proof`. Fixed SSE scripts emit typed `Channel` events; active runs are capped at four and removed on completion, error, cancellation, or channel failure. Default capability still grants only `status`. SDK and WebView compatibility remain unverified.
+> **M05a native bridge packet:** `bridge_open_session` and `bridge_get_status` are local-main-window-only commands. The invoking Tauri `WebviewWindow` supplies owner label and current origin; the payload owner is checked as a claim. Protocol-v1 requests use bounded request/session IDs and static structured errors. Opening replaces the previous owner session; window destruction removes it. The no-argument `status` command remains for M04 until M05b migrates the renderer. Proof commands remain feature-only. Synthetic Rust guards are checked; OS ACL and real WebView origin enforcement still require M05c.
 
-> **M03b LangChain/LangGraph proof:** The opt-in `tauri:proof` command selects `tauri.proof.conf.json`, `capabilities/proof.json`, and separate `static-proof` assets. `proof-transport.ts` adapts typed Channel bytes to a bounded `ReadableStream`; `proof-provider.ts` configures ChatOpenAI with fixed custom Fetch; `proof-graph.ts` routes through LangGraph `StateGraph` and `ToolNode`; `proof-history.ts` validates official stored-message DTOs before reconstruction. Exact pins: `@langchain/core` 1.2.17, `@langchain/openai` 1.6.2, `@langchain/langgraph` 1.4.21. The abort assertion awaits native cancel acknowledgement and its matching `Aborted` event, checks producer removal, then requires a successful native stream; the fixture emits `Failed` if it does not observe cancellation within a one-second monotonic deadline. Default assets and `main` capability remain status-only.
+> **M03a proof transport:** `src-tauri/src/native_proof.rs`, command registration, and AppManifest command grants are enabled only with Cargo feature `proof`. Fixed SSE scripts emit typed `Channel` events; active runs are capped at four and removed on completion, error, cancellation, or channel failure. Default capability grants the local status and protocol-v1 identity bridge only. SDK and WebView compatibility remain unverified.
+
+> **M03b LangChain/LangGraph proof:** The opt-in `tauri:proof` command selects `tauri.proof.conf.json`, `capabilities/proof.json`, and separate `static-proof` assets. `proof-transport.ts` adapts typed Channel bytes to a bounded `ReadableStream`; `proof-provider.ts` configures ChatOpenAI with fixed custom Fetch; `proof-graph.ts` routes through LangGraph `StateGraph` and `ToolNode`; `proof-history.ts` validates official stored-message DTOs before reconstruction. Exact pins: `@langchain/core` 1.2.17, `@langchain/openai` 1.6.2, `@langchain/langgraph` 1.4.21. The abort assertion awaits native cancel acknowledgement and its matching `Aborted` event, checks producer removal, then requires a successful native stream; the fixture emits `Failed` if it does not observe cancellation within a one-second monotonic deadline. Default assets expose only status and the local identity bridge; proof commands remain feature-only.
 
 > **M03c native WebView gate (2026-10-10):** A release `.app` with the proof feature and isolated assets opened in macOS WKWebView, but **Run proof** stayed at “Running native fixture scenarios…” for over 90 seconds without rendering a result row. The page publishes rows only after the full assertion batch returns, and model stream awaits have no timeout; the unresolved scenario is unknown. The run is failed/incomplete and no framework compatibility row is counted as passing. The app was quit from its native menu and its owned PID exited. WebView2 was unavailable on this macOS host. See [stack proof](./plans/reports/stack-proof.md) for exact build, bundle, runtime and size evidence.
 
@@ -71,7 +73,7 @@ The migration host is an independent target; Electron scripts and sources remain
 ```mermaid
 graph LR
     TauriWindow[Local WebView<br/>Vite React assets] --> LocalApp[LocalApp<br/>offline core UI]
-    LocalApp -->|allow-status only| StatusCommand[Rust status command]
+    LocalApp -->|local main capability| StatusCommand[Rust status + protocol-v1 bridge]
     TauriConfig[Explicit main capability] --> TauriWindow
 ```
 
@@ -1585,11 +1587,12 @@ To balance security and convenience, sensitive data like API keys follows a stri
 
 ## Security Architecture
 
-### Tauri Migration Core (M01)
+### Tauri Native Bridge (M05a)
 
-- `src-tauri/capabilities/main.json` grants only the generated `allow-status` permission to the `main` window.
-- `src-tauri/build.rs` limits app-command ACL generation to `status`; no filesystem, shell, network, or plugin permissions are installed.
-- Tauri uses `com.aiworker.app.tauri`, separate from Electron's profile identity. The command returns static version/status text and reads no user data or secrets.
+- `src-tauri/capabilities/main.json` grants `status`, `bridge_open_session`, and `bridge_get_status` only to the `main` window.
+- `src-tauri/build.rs` limits app-command ACL generation to those commands by default; filesystem, shell, network, and plugin permissions are not added.
+- The legacy no-argument `status` remains for M04. Protocol-v1 requests bind request/session IDs to the invoking main `WebviewWindow` label and local app origin; session state is in memory and cleared on window destruction.
+- The bridge returns static app status and reads no user data or secrets. Real OS ACL and remote-navigation behavior await the M05c boundary proof.
 
 ### Security Boundaries
 

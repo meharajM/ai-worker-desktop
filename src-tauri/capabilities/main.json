@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Minimal Tauri window with status command only",
+  "description": "Local main window with status and protocol-v1 bridge commands",
   "windows": ["main"],
-  "permissions": ["allow-status"]
+  "permissions": ["allow-status", "allow-bridge-open-session", "allow-bridge-get-status"]
 }
