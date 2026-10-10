@@ -1,3 +1,4 @@
+//! Isolated fixture stream and fixed native actions for the LangChain/LangGraph proof.
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -15,15 +16,15 @@ const MAX_RUN_ID: usize = 64;
 // LangGraph merges message updates by provider message ID, so each fixture response
 // uses its already validated native run ID to keep separate assistant turns distinct.
 const NORMAL: &[&[u8]] = &[
-    b"data: {\"id\":\"proof\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"caf\xc3",
+    b"data: {\"id\":\"proof\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"caf\xc3",
     b"\xa9\"},\"finish_reason\":null}]}\n\n",
     b"data: [DONE]\n\n",
 ];
 const ERROR: &[&[u8]] = &[
-    b"data: {\"id\":\"proof\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n",
+    b"data: {\"id\":\"proof\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"partial\"},\"finish_reason\":null}]}\n\n",
 ];
 const TOOL_CALLS: &[&[u8]] = &[
-    b"data: {\"id\":\"proof\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"proof_fixture_action\",\"arguments\":\"{\\\"action\\\":\\\"first\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
+    b"data: {\"id\":\"proof\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"proof_fixture_action\",\"arguments\":\"{\\\"action\\\":\\\"first\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
     b"data: {\"id\":\"proof\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"proof_fixture_action\",\"arguments\":\"{\\\"action\\\":\\\"second\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
     b"data: {\"id\":\"proof\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
     b"data: [DONE]\n\n",
@@ -316,9 +317,30 @@ mod tests {
             .copied()
             .collect::<Vec<_>>();
         let script = String::from_utf8(bytes).unwrap();
-        assert!(script.contains("\\\"action\\\":\\\"first\\\""));
-        assert!(script.contains("\\\"action\\\":\\\"second\\\""));
-        assert!(script.contains("\"finish_reason\":\"tool_calls\""));
+        let frames = script
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter(|line| *line != "[DONE]")
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(frames[0]["choices"][0]["delta"]["role"], "assistant");
+        assert_eq!(
+            frames[0]["choices"][0]["delta"]["tool_calls"][0]["id"],
+            "call_a"
+        );
+        assert_eq!(
+            frames[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
+            "{\"action\":\"first\"}"
+        );
+        assert_eq!(
+            frames[1]["choices"][0]["delta"]["tool_calls"][0]["id"],
+            "call_b"
+        );
+        assert_eq!(
+            frames[1]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
+            "{\"action\":\"second\"}"
+        );
+        assert_eq!(frames[2]["choices"][0]["finish_reason"], "tool_calls");
         assert!(script.ends_with("data: [DONE]\n\n"));
     }
 

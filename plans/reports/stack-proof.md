@@ -1,8 +1,8 @@
 # M03 LangChain/LangGraph stack proof
 
 Date: 2026-10-10
-Source: `bc197a625413b8d89ff82dcbfd1e37805363709f` (`codex/tauri-web-migration`)
-Status: **M03b reviewed; M03c actual WKWebView hard gate failed/incomplete.** Do not treat framework compatibility as established.
+Source: `857908ca8e348bcb29bec275f74ba61b3246248f` plus the M03f packet on `codex/tauri-web-migration`.
+Status: **M03f passed the required macOS WKWebView fixture gate.** Earlier M03c/M03d failures remain below as historical evidence; WebView2 remains pending.
 
 ## Host and package set
 
@@ -83,6 +83,41 @@ Source inspection found a likely cause, not yet confirmed on the native path: in
 The built app was quit via its native menu. Exact owned PID `26514` was absent afterward. The static transport check page initially could not open through `file:`; it then passed in Brave over a disposable HTTP server bound only to `127.0.0.1:62163`. All nine checks passed, including `Request.signal`, deferred native start acknowledgement with accepted cancellation, and silent-producer deadline/cancel. Exact server PID `28413` was stopped and verified absent. Final source `npm run web:typecheck` and `npm run web:proof-build` passed after the cancellation-observer correction; Vite retained its existing >500 kB chunk warning. The generated proof JS total remains below 750 KiB. WebView2 remains unavailable on this macOS host.
 
 Detailed command, CUA observation and change record: ignored `.superpowers/sdd/M03d-report.md`.
+
+## M03f offline graph stream and native gate
+
+M03f keeps the exact package pins: Core 1.2.17, OpenAI 1.6.2, LangGraph 1.4.21. The graph model node now consumes public `ChatOpenAI.stream()` chunks, concatenates `AIMessageChunk` values, and constructs a canonical `AIMessage` from public fields (content, id, name, additional kwargs, response metadata, parsed/invalid tool calls, and usage metadata). The explicit field copy matters: Core 1.2.17's `Serializable` rejects another Serializable instance as constructor kwargs, which otherwise makes the official stored-message mapper omit `data`.
+
+The native Chat Completions fixture now includes `role: assistant` on the first delta in each assistant response. Pinned ChatOpenAI 1.6.2 requires a role (or a previously observed role) to decode `delta.tool_calls` as an `AIMessageChunk`; the old fixture omitted it, so those chunks became unknown-role messages with no parsed tool calls. The renderer still uses the official SDK parser, and the native fixture still exercises two distinct fixed calls with their original ids and JSON arguments.
+
+`ChatOpenAI.invoke()` with streaming enabled drains the native stream, then estimates token use through Core's lazy `https://tiktoken.pages.dev/js/<encoding>.json` fetch. The graph now uses the public stream iterator to avoid that network path, and normalizes only the completed aggregate before routing. ToolNode routing, native fixed action validation, caller signal propagation, canonical history validation, and the six-superstep recursion ceiling remain in place.
+
+The final optimized app used unique product `M03f LangChain Proof im0wHolt`, bundle id `com.aiworker.m03f.im0wholt`, and private app data under `/tmp/m03f-final-im0wHolt/app-data`. It was copied to `/tmp/m03f-final-im0wHolt/M03f LangChain Proof im0wHolt.app`; normal `HOME` was retained and no `dataStoreIdentifier` was set. The arm64 app executable SHA-256 is `673e25c40d52f58da8af3631c64cac28810ad9d105afaaf52f9a645e756c72d5`.
+
+The final app's incremental UI results were:
+
+| Assertion | Observed result |
+|---|---|
+| Native Channel byte preflight reaches fixed fixture | PASS; 191 decoded bytes, split UTF-8/SSE and `[DONE]` |
+| Normal split UTF-8/SSE → ChatOpenAI text | PASS; `café` |
+| Provider error | PASS; `fixture stream failed` |
+| Pre-abort | PASS; no native registration |
+| Provider mid-stream abort | PASS; `proof_cancel=true`, one cancel call, matching run id in `Aborted`, no late chunks |
+| Abort cleanup and next native run | PASS; cancel after terminal returned false; next stream returned `café` |
+| Actual LangGraph abort using native `tool_calls` fixture | PASS; one request, accepted native cancel, matching `Aborted`, graph `AbortError`, zero action calls and no follow-up request |
+| Restored unregistered tool call rejected | PASS |
+| Two native calls/results through graph before final text | PASS; 5 messages `[human, ai, tool, tool, ai]`; calls `call_a:proof_fixture_action:{"action":"first"}`, `call_b:proof_fixture_action:{"action":"second"}`; paired results `call_a:fixture:first`, `call_b:fixture:second`; native actions returned both fixed fixture values; final `café` |
+| Bounded canonical history and next graph turn | PASS; exact official stored-message DTO match; all 5 message types, both call ids/names/arguments and paired result ids/content restored; next graph turn returned `café` |
+
+The graph-abort row starts from the same first native tool-call fixture frame as the successful graph row, then aborts before stream completion. This establishes non-vacuous graph cancellation behavior: the model request began, native cancellation was accepted, its matching `Aborted` arrived, and neither an action nor a follow-up request began.
+
+Final proof JS assets measured 1,601,855 raw bytes / 423,784 gzip bytes (per-file gzip level 9, `mtime=0`); compressed total is 413.9 KiB, below the ≤750 KiB target. Raw JS is 1,564 KiB. The optimized release build reports the existing >500 kB raw-chunk warning. No RAM, CPU, model download, or installer size is inferred.
+
+Checks after the source changes: `npm run web:typecheck`, `npm run web:proof-build`, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, `cargo check --locked --manifest-path src-tauri/Cargo.toml --features proof`, and `cargo test --locked --manifest-path src-tauri/Cargo.toml --features proof --bin ai-worker-tauri` all passed; seven native tests passed. A focused TypeScript round-trip assertion was added to the generated proof check page; browser file navigation was blocked by the CUA URL policy, so that page itself was not separately opened. The native app exercised the same normalization through the successful canonical-history row.
+
+After the completed run, the app was quit through its native menu. Owned app PID `34789` was absent, and no process remained with either `/tmp` or `/private/tmp` unique app executable path. CUA returned `procNotFound` during the quit action as the app exited; process checks confirmed termination. WebView2 was unavailable on this macOS host.
+
+Detailed command, source diagnosis, and UI evidence are in ignored `.superpowers/sdd/M03f-report.md`.
 
 ## Other gates and prior checks
 

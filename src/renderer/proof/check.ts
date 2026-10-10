@@ -1,4 +1,7 @@
 import { proofFetch, type ProofBridge, type ProofEvent } from '../src/proof/proof-transport'
+import { AIMessage, AIMessageChunk, mapChatMessagesToStoredMessages } from '@langchain/core/messages'
+import { normalizeGraphMessage } from '../src/proof/proof-graph'
+import { restoreProofHistory, serializeProofHistory } from '../src/proof/proof-history'
 
 const results = document.querySelector<HTMLUListElement>('#results')!
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -23,6 +26,25 @@ async function test(name: string, run: () => Promise<void>) {
 }
 
 async function run() {
+  await test('streamed AI message keeps canonical fields through history', async () => {
+    const normalized = normalizeGraphMessage(new AIMessageChunk({
+      content: '',
+      id: 'fixture-response',
+      name: 'fixture',
+      additional_kwargs: { marker: 'kept' },
+      response_metadata: { model_provider: 'openai', marker: 'kept' },
+      tool_calls: [{ name: 'proof_fixture_action', args: { action: 'first' }, id: 'call_a', type: 'tool_call' }],
+      usage_metadata: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    }))
+    const stored = mapChatMessagesToStoredMessages([normalized])[0]
+    const [restored] = restoreProofHistory(serializeProofHistory([normalized]))
+    assert(normalized instanceof AIMessage && stored.data !== undefined, 'official mapper omitted AI message data')
+    assert(restored instanceof AIMessage && restored.id === 'fixture-response' && restored.name === 'fixture', 'message identity was lost')
+    assert(restored.tool_calls[0]?.id === 'call_a' && restored.tool_calls[0]?.args.action === 'first', 'tool call was lost')
+    assert(restored.additional_kwargs.marker === 'kept' && restored.response_metadata.marker === 'kept', 'message metadata was lost')
+    assert(restored.usage_metadata?.total_tokens === 2, 'usage metadata was lost')
+  })
+
   await test('Channel byte fragments stay intact through Response stream', async () => {
     const bridge = bridgeFor(async (runId, _scenario, onEvent) => {
       onEvent({ event: 'chunk', data: { runId, bytes: [0xc3] } })

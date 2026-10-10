@@ -1,5 +1,6 @@
-import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages'
+import { AIMessage, HumanMessage, mapChatMessagesToStoredMessages, ToolMessage, type BaseMessage } from '@langchain/core/messages'
 import { proofGraph } from './proof-graph'
+import { observeNativeCancellation } from './proof-cancellation'
 import { restoreProofHistory, serializeProofHistory } from './proof-history'
 import { proofModel } from './proof-provider'
 import { proofFetch, type ProofBridge } from './proof-transport'
@@ -76,7 +77,7 @@ async function nativeByteText(bridge: ProofBridge) {
  * Runs real-framework assertions using the native fixed proof commands.
  * @param bridge - Isolated Tauri proof bridge.
  * @param storage - Storage interface for bounded canonical history round trip.
- * @returns Named results for the M03c native WebView run.
+ * @returns Named results for the bounded native LangChain/LangGraph proof.
  */
 export async function runM03bAssertions(
   bridge: ProofBridge,
@@ -132,45 +133,15 @@ export async function runM03bAssertions(
   }
 
   onProgress?.('Checking mid-stream abort and native acknowledgement…')
-  let acceptedCancels = 0
-  let cancelCalls = 0
-  const cancelResults: boolean[] = []
   let lateChunks = 0
-  let actionsAfterAbort = 0
-  let abortRunId: string | undefined
-  let resolveCancelAcknowledgement!: (accepted: boolean) => void
-  // Create this before streaming: the first chunk can abort before native start ACK,
-  // so the bridge cancellation call may begin after modelText has already rejected.
-  const cancelAcknowledgement = new Promise<boolean>((resolve) => { resolveCancelAcknowledgement = resolve })
-  let cancelAckError = ''
-  let resolveAborted!: (runId: string) => void
-  const nativeAborted = new Promise<string>((resolve) => { resolveAborted = resolve })
+  const cancellation = observeNativeCancellation(bridge)
   const abortController = new AbortController()
   const abortBridge: ProofBridge = {
-    ...bridge,
-    cancel: (runId) => {
-      cancelCalls++
-      return bridge.cancel(runId).then((accepted) => {
-        if (accepted) acceptedCancels++
-        cancelResults.push(accepted)
-        resolveCancelAcknowledgement(accepted)
-        return accepted
-      }, (error) => {
-        cancelAckError = String(error)
-        resolveCancelAcknowledgement(false)
-        return false
-      })
-    },
-    stream: (runId, scenario, onEvent) => bridge.stream(runId, scenario, (event) => {
-      abortRunId = runId
+    ...cancellation.bridge,
+    stream: (runId, scenario, onEvent) => cancellation.bridge.stream(runId, scenario, (event) => {
       if (abortController.signal.aborted && event.event === 'chunk') lateChunks++
-      if (event.event === 'aborted' && event.data.runId === runId) resolveAborted(runId)
       onEvent(event)
     }),
-    action: async (action) => {
-      if (abortController.signal.aborted) actionsAfterAbort++
-      return bridge.action(action)
-    },
   }
   let abortError = ''
   try {
@@ -181,25 +152,74 @@ export async function runM03bAssertions(
     abortError = String(error)
   }
   const [cancelAccepted, abortedRun] = await Promise.all([
-    waitFor(cancelAcknowledgement, NATIVE_ABORT_DEADLINE_MS),
-    waitFor(nativeAborted, NATIVE_ABORT_DEADLINE_MS),
+    waitFor(cancellation.acknowledgement, NATIVE_ABORT_DEADLINE_MS),
+    waitFor(cancellation.aborted, NATIVE_ABORT_DEADLINE_MS),
   ])
-  if (cancelAccepted === undefined && !cancelAckError) cancelAckError = cancelCalls ? 'acknowledgement timed out' : 'cancel not called'
+  const cancellationState = cancellation.state()
+  const cancelAckError = cancellationState.error || (cancelAccepted === undefined ? cancellationState.calls ? 'acknowledgement timed out' : 'cancel not called' : '')
   record('abort during stream awaits native cancel and matching Aborted event',
-    cancelAccepted && acceptedCancels === 1 && abortRunId !== undefined && abortedRun === abortRunId && abortError.includes('AbortError'),
-    `accepted=${cancelAccepted}, accepted calls=${acceptedCancels}, calls=${cancelCalls}, results=${cancelResults.join(',') || 'pending'}, ack=${cancelAckError || 'settled'}, aborted run=${abortedRun ?? 'timeout'}, stream run=${abortRunId ?? 'missing'}, stream=${abortError}`)
-  record('abort drops late bytes and prevents later tool actions', lateChunks === 0 && actionsAfterAbort === 0,
-    `late chunks=${lateChunks}, actions=${actionsAfterAbort}`)
+    cancelAccepted && cancellationState.acceptedCalls === 1 && cancellationState.runId !== undefined && abortedRun === cancellationState.runId && abortError.includes('AbortError'),
+    `accepted=${cancelAccepted}, accepted calls=${cancellationState.acceptedCalls}, calls=${cancellationState.calls}, results=${cancellationState.results.join(',') || 'pending'}, ack=${cancelAckError || 'settled'}, aborted run=${abortedRun ?? 'timeout'}, stream run=${cancellationState.runId ?? 'missing'}, stream=${abortError}`)
+  record('provider abort drops late bytes', lateChunks === 0, `late chunks=${lateChunks}`)
   let producerCleaned = false
   let nextNativeText = ''
   try {
-    producerCleaned = abortRunId !== undefined && await waitFor(bridge.cancel(abortRunId), NATIVE_ABORT_DEADLINE_MS) === false
+    producerCleaned = cancellationState.runId !== undefined && await waitFor(bridge.cancel(cancellationState.runId), NATIVE_ABORT_DEADLINE_MS) === false
     nextNativeText = await modelText(proofModel(bridge, ['normal']), [{ role: 'user', content: 'confirm native producer cleanup' }])
   } catch {
     // The named assertion below reports cleanup or follow-up stream failure.
   }
   record('abort cleans native state and next native run succeeds', producerCleaned && nextNativeText === 'café',
     `cleanup=${producerCleaned}, next text=${nextNativeText || 'failed'}`)
+
+  onProgress?.('Checking cancellation inside the LangGraph tool-call turn…')
+  const graphAbortController = new AbortController()
+  const graphCancellation = observeNativeCancellation(bridge)
+  let graphAbortRequests = 0
+  let graphAbortActions = 0
+  const graphAbortScenarios: string[] = []
+  const graphAbortBridge: ProofBridge = {
+    ...graphCancellation.bridge,
+    stream: (runId, scenario, onEvent) => {
+      graphAbortRequests++
+      graphAbortScenarios.push(scenario)
+      return graphCancellation.bridge.stream(runId, scenario, onEvent)
+    },
+    action: async (action) => {
+      graphAbortActions++
+      return bridge.action(action)
+    },
+  }
+  let graphAbortError = ''
+  let graphAbortTimer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const graphRun = proofGraph(graphAbortBridge, ['tool_calls', 'normal'], () => graphAbortController.abort())
+      .invoke([new HumanMessage('Run fixture actions only after the full tool-call response.')], graphAbortController.signal)
+    await Promise.race([
+      graphRun,
+      new Promise<never>((_, reject) => {
+        graphAbortTimer = setTimeout(() => {
+          graphAbortController.abort()
+          reject(new Error(`LangGraph abort timed out after ${SCENARIO_DEADLINE_MS}ms`))
+        }, SCENARIO_DEADLINE_MS)
+      }),
+    ])
+    graphAbortError = 'Expected graph AbortError.'
+  } catch (error) {
+    graphAbortError = String(error)
+  } finally {
+    if (graphAbortTimer) clearTimeout(graphAbortTimer)
+  }
+  const [graphCancelAccepted, graphAbortedRun] = await Promise.all([
+    waitFor(graphCancellation.acknowledgement, NATIVE_ABORT_DEADLINE_MS),
+    waitFor(graphCancellation.aborted, NATIVE_ABORT_DEADLINE_MS),
+  ])
+  const graphCancellationState = graphCancellation.state()
+  record('LangGraph abort accepts native cancel and prevents actions or follow-up requests',
+    graphAbortRequests === 1 && graphAbortScenarios.join(',') === 'tool_calls' && graphAbortActions === 0 &&
+      graphCancelAccepted === true && graphCancellationState.acceptedCalls === 1 &&
+      graphAbortedRun === graphCancellationState.runId && graphAbortError.includes('AbortError'),
+    `requests=${graphAbortRequests} (${graphAbortScenarios.join(',')}), actions=${graphAbortActions}, accepted=${graphCancelAccepted}, accepted calls=${graphCancellationState.acceptedCalls}, Aborted=${graphAbortedRun ?? 'timeout'}, run=${graphCancellationState.runId ?? 'missing'}, graph=${graphAbortError}`)
 
   let unsafeHistoryRejected = false
   try {
@@ -248,10 +268,14 @@ export async function runM03bAssertions(
       .flatMap((message) => message.tool_calls)
     const toolResults = firstTurn.messages.filter((message): message is ToolMessage => message instanceof ToolMessage)
     const finalText = [...firstTurn.messages].reverse().find((message) => message instanceof AIMessage)?.content
+    const messageTypes = firstTurn.messages.map((message) => message.getType()).join(',')
+    const callIds = assistantCalls.map((call) => call.id).join(',')
+    const callDetails = assistantCalls.map((call) => `${call.id}:${call.name}:${JSON.stringify(call.args)}`).join(',')
+    const resultDetails = toolResults.map((message) => `${message.tool_call_id}:${String(message.content)}`).join(',')
     record('two native calls/results route through graph before final text',
       assistantCalls.length === 2 && toolResults.length === 2 &&
       [...nativeResults].sort().join(',') === 'first:fixture:first,second:fixture:second' && finalText === 'café',
-      `calls=${assistantCalls.length}, results=${toolResults.length}, native=${nativeResults.join(',')}, final=${String(finalText)}`)
+      `messages=${firstTurn.messages.length} [${messageTypes}], calls=${assistantCalls.length} [${callIds}], call data=[${callDetails}], results=${toolResults.length} [${resultDetails}], native=${nativeResults.join(',')}, final=${String(finalText)}`)
   } catch (error) {
     record('two native calls/results route through graph before final text', false, `${String(error)}; trace=${graphTrace.join(' > ') || 'none'}`)
   }
@@ -262,6 +286,10 @@ export async function runM03bAssertions(
     const serialized = serializeProofHistory(firstTurnMessages)
     storage.setItem(STORAGE_KEY, serialized)
     const restored = restoreProofHistory(storage.getItem(STORAGE_KEY) ?? 'null')
+    // Compare Core's canonical stored DTOs to prove ids, arguments, and metadata survive the shared serializer.
+    const originalStored = mapChatMessagesToStoredMessages(firstTurnMessages)
+    const restoredStored = mapChatMessagesToStoredMessages(restored)
+    const canonicalHistoryMatches = JSON.stringify(restoredStored) === JSON.stringify(originalStored)
     const nextTurn = await bounded('LangGraph history turn', undefined, (signal) => proofGraph(bridge, ['normal']).invoke([
       ...restored,
       new HumanMessage('Continue from saved history.'),
@@ -270,9 +298,11 @@ export async function runM03bAssertions(
     const restoredCalls = restored.filter((message) => message instanceof AIMessage)
       .flatMap((message) => message.tool_calls)
     const restoredResults = restored.filter((message) => message instanceof ToolMessage)
+    const restoredCallDetails = restoredCalls.map((call) => `${call.id}:${call.name}:${JSON.stringify(call.args)}`).join(',')
+    const restoredResultDetails = restoredResults.map((message) => `${message.tool_call_id}:${String(message.content)}`).join(',')
     record('bounded canonical history restores both tool results and feeds next graph turn',
-      restoredCalls.length === 2 && restoredResults.length === 2 && restored.length === firstTurnMessages.length && nextText === 'café',
-      `restored=${restored.length}, calls=${restoredCalls.length}, results=${restoredResults.length}, next=${String(nextText)}`)
+      canonicalHistoryMatches && restoredCalls.length === 2 && restoredResults.length === 2 && restored.length === firstTurnMessages.length && nextText === 'café',
+      `restored=${restored.length} [${restored.map((message) => message.getType()).join(',')}], canonical DTO match=${canonicalHistoryMatches}, calls=${restoredCalls.length} [${restoredCallDetails}], results=${restoredResults.length} [${restoredResultDetails}], next=${String(nextText)}`)
   } catch (error) {
     record('bounded canonical history restores both tool results and feeds next graph turn', false, String(error))
   }

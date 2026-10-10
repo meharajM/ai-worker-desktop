@@ -1,4 +1,4 @@
-import { AIMessage } from '@langchain/core/messages'
+import { AIMessage, AIMessageChunk } from '@langchain/core/messages'
 import { tool } from '@langchain/core/tools'
 import { END, MessagesValue, START, StateGraph, StateSchema } from '@langchain/langgraph'
 import { ToolNode } from '@langchain/langgraph/prebuilt'
@@ -19,13 +19,28 @@ import type { ProofAction, ProofBridge, ProofScenario } from './proof-transport'
 
 const State = new StateSchema({ messages: MessagesValue })
 
+/** Converts an aggregated model stream chunk into a canonical stored AI message. */
+export function normalizeGraphMessage(chunk: AIMessageChunk): AIMessage {
+  // Passing a Serializable chunk instance makes Core's stored-message mapper omit its data.
+  return new AIMessage({
+    content: chunk.content,
+    id: chunk.id,
+    name: chunk.name,
+    additional_kwargs: chunk.additional_kwargs,
+    response_metadata: chunk.response_metadata,
+    tool_calls: chunk.tool_calls,
+    invalid_tool_calls: chunk.invalid_tool_calls,
+    usage_metadata: chunk.usage_metadata,
+  })
+}
+
 /**
  * Builds an explicit model → tools → model graph for the fixed fixture actions.
  * @param bridge - Native proof bridge whose action command is closed to two values.
  * @param scenarios - Fixed provider response scenarios in request order.
  * @returns Compiled graph with bounded recursion and explicit signal propagation.
  */
-export function proofGraph(bridge: ProofBridge, scenarios: ProofScenario[]) {
+export function proofGraph(bridge: ProofBridge, scenarios: ProofScenario[], onFirstChunk?: () => void) {
   const tools = [tool(async ({ action }: { action: ProofAction }, config) => {
     if (config.signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
     const result = await bridge.action(action)
@@ -36,12 +51,18 @@ export function proofGraph(bridge: ProofBridge, scenarios: ProofScenario[]) {
     description: 'Return fixed local proof fixture output.',
     schema: z.object({ action: z.enum(['first', 'second']) }),
   })]
-  const model = proofModel(bridge, scenarios).bindTools(tools)
+  const model = proofModel(bridge, scenarios, onFirstChunk).bindTools(tools)
 
   const graph = new StateGraph(State)
     .addNode('model', async (state, config) => {
       if (config.signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
-      return { messages: [await model.invoke(state.messages, config)] }
+      // `invoke` estimates tokens through a remote tokenizer fetch; public stream keeps this path offline.
+      let full: AIMessageChunk | undefined
+      for await (const chunk of await model.stream(state.messages, config)) {
+        full = full ? full.concat(chunk) : chunk
+      }
+      if (!full) throw new Error('ChatOpenAI returned an empty stream')
+      return { messages: [normalizeGraphMessage(full)] }
     })
     .addNode('tools', new ToolNode(tools))
     .addEdge(START, 'model')
