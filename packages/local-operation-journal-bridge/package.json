@@ -1,0 +1,23 @@
+{
+  "name": "local-operation-journal-bridge",
+  "version": "0.1.0",
+  "description": "Typed JSON client for the local-operation-journal Rust library",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meharajM/ai-worker-desktop.git",
+    "directory": "packages/local-operation-journal-bridge"
+  },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "npm run build && node scripts/self-check.mjs",
+    "prepack": "npm run build"
+  },
+  "devDependencies": { "typescript": "^5.3.3" }
+}

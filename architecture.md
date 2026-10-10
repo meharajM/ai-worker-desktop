@@ -1466,6 +1466,23 @@ Memory tool calls (`memory_create_entity`, etc.) go through the standard `mcp:ca
 
 ## Storage Architecture
 
+### Standalone operation journal library
+
+- **Role**: Durable reviewed-operation records and explicit crash reconciliation.
+- **Owns**: Immutable intents, approvals, execution claims, receipts, transition log.
+- **Consumed by**: Library example and TypeScript contract check; future Tauri host integration is planned and has not replaced Electron storage.
+
+```mermaid
+flowchart LR
+    Client[Portable TypeScript client] -->|proposal and read JSON| Bridge[Rust versioned bridge]
+    Bridge --> Journal[local-operation-journal]
+    Host[Trusted native host] -->|approve / begin / finish / reconcile| Journal
+    Journal --> DB[App-owned SQLite WAL]
+    Host --> Effect[Host-managed file or CLI effect]
+```
+
+Rust package: `crates/local-operation-journal`; TS package: `packages/local-operation-journal-bridge`. Both MIT and provisional 0.1.0, unpublished. The crate has no Tauri/process/scheduler dependency; bundled SQLite is an opt-in host feature. Native host owns authorization, private storage paths, process liveness and external effect policy. Known-dead-run recovery invalidates unused approvals and marks running effects uncertain; the library never automatically retries. SQLite transactions cover records/events, not external filesystem/CLI effects. See the [library contract](./crates/local-operation-journal/README.md) and [integration cards](./plans/operation-journal-integration.md).
+
 ### Storage Layers
 
 ```mermaid

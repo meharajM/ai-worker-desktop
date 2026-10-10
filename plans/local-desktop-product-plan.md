@@ -1,6 +1,6 @@
 # AI-Worker Desktop: small Tauri bridge and offline web UI
 
-Revision 2, 10 October 2026. Optimized implementation draft; no migration code has been implemented.
+Revision 3, 10 October 2026. Optimized implementation draft. A reusable Rust operation journal and TypeScript bridge are implemented separately; the Tauri application migration remains unimplemented.
 
 Repository: `meharajM/ai-worker-desktop`, clean published baseline `e56f8d2`. Do not bring the original `ai-worker.app` history into this repository. Keep its published credential sanitization.
 
@@ -31,7 +31,7 @@ No account, cloud inference, telemetry, voice, WhatsApp, automatic sub-agents, v
 | Agent mechanics | AI SDK Core + one OpenAI-compatible provider behind existing `IAgentClient`. | Replaces custom streaming/protocol/tool-loop mechanics while retaining the UI seam. Browser/Tauri compatibility is proved first. [Custom fetch support](https://ai-sdk.dev/providers/openai-compatible-providers) |
 | Inference | One owned pinned `llama-server` process and an exact GGUF/template profile, started lazily. | Direct native sidecar supports a small bridge without a bundled Node/Python server or parallel engine implementations. Actual size/reliability need proof. [llama.cpp](https://github.com/ggml-org/llama.cpp) |
 | Tools | One native ToolBroker with built-in workspace policy, mature CLI actions, and official `rmcp` for external servers. | In-process library use avoids extra processes; real external MCP sessions use a maintained protocol library. [Rust SDK](https://github.com/modelcontextprotocol/rust-sdk) |
-| Persistence | IndexedDB for bounded chat/history; official Tauri store for fixed preferences; native journal for file proposals. | No graph-memory server or native Node database package. [Tauri store](https://tauri.app/plugin/store/) |
+| Persistence | IndexedDB for bounded chat/history; official Tauri store for fixed preferences; `local-operation-journal` for immutable task/operation proposals, approvals and recovery. | Reusable synchronous rusqlite crate plus portable TypeScript bridge, with no workflow server. [Journal contract](../crates/local-operation-journal/README.md), [Tauri store](https://tauri.app/plugin/store/) |
 | Optional browser | Official Microsoft Playwright MCP, explicitly enabled and pinned. | Replaces custom browser handlers; Node/browser costs are separate and never required at core boot. [Official server](https://github.com/microsoft/playwright-mcp) |
 | Optional conversion | Microsoft MarkItDown CLI/MCP. | Reuse conversion instead of maintaining parsers; Python/format packages stay outside core. [MarkItDown](https://github.com/microsoft/markitdown) |
 
@@ -53,6 +53,7 @@ flowchart TB
     TB --> FS[Scoped reads and staged file proposals]
     TB --> CLI[Confirmed structured CLI action]
     TB --> MCP[rmcp: lazy curated external MCP session]
+    POL --> JOURNAL[Reusable rusqlite operation journal]
     UI --> REV[Human reviews exact file or command proposal]
     REV --> POL
     UI --> DATA[IndexedDB chats and native preferences]
@@ -73,6 +74,12 @@ The Tauri core remains an OS/process broker rather than an application web serve
 - **CommandProposal**: registered executable identity, argv array, canonical cwd/grant, whitelisted environment summary, output/deadline/effect policy and immutable proposal hash. Human approval binds to those exact values, expires, and is single-use.
 
 Do not duplicate raw LLM SSE parsing or MCP JSON-RPC framing. Retain only bounded transport plumbing and product-specific enforcement that the libraries do not provide. The bridge must reject unsafe calls even when the renderer SDK is bypassed.
+
+### Reusable operation journal
+
+The [Rust crate](../crates/local-operation-journal/) and [TypeScript package](../packages/local-operation-journal-bridge/) are independent of Tauri and the existing Electron runtime. Neither is published yet. The bridge submits immutable pending intents and reads durable facts. Only native policy may approve, claim execution, finish or recover. Intent payload semantics (hashes, scoped paths, executable/argv/env, grants) are application-owned. Recovery marks interrupted effects uncertain; it never repeats a CLI or applies staged file contents. A fresh execution needs a new immutable ID and fresh review.
+
+Integrate through the [journal cards](./operation-journal-integration.md) inside M13/M21–M23/M26–M27. Do not reimplement storage or treat SQLite as atomic with external filesystem/CLI effects. M00–M03 still gate the Tauri stack. Existing file staging/task JSON remains unchanged until the guarded host integration is complete.
 
 ## 4. Native authority and process rules
 

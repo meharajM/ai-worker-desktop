@@ -13,6 +13,15 @@
 
 ---
 
+## Reusable operation journal
+
+The [MIT Rust journal](./crates/local-operation-journal/) and [TypeScript bridge](./packages/local-operation-journal-bridge/)
+provide immutable proposals, expiring approvals, single-use execution claims and
+explicit crash reconciliation for other local applications. Both packages are
+provisional and unpublished. The TypeScript runtime has no dependencies; Rust is
+independent of Tauri. Integration into the desktop app remains planned in the
+[current migration cards](./plans/operation-journal-integration.md).
+
 ## ✨ Why AI-Worker?
 
 Unlike browser-based AI tools or cloud-dependent agents:

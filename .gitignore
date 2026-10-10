@@ -23,6 +23,8 @@ node_modules/
 # Build Output
 out/
 dist/
+target/
+*.tgz
 build/Release
 # Test artifacts
 tests/temp-storage-test/

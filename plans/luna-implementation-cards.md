@@ -1,5 +1,7 @@
 # Luna cards: Tauri web migration
 
+Reusable `local-operation-journal` Rust crate and portable TypeScript bridge are available locally. Use the [journal integration cards](./operation-journal-integration.md) within M13/M21–M23/M26–M27; application integration and the Tauri migration remain pending.
+
 Revision 2, 10 October 2026. Planned work only. [Product plan](./local-desktop-product-plan.md) · [replacement audit](./custom-code-alternatives-audit.md).
 
 Execution base: clean `ai-worker-desktop` history from `e56f8d2`. Archived T00–T36 Electron cards are obsolete. Current IDs are M00–M41. macOS first, Windows next; offline bundled UI; CLI confirmation required.
@@ -132,7 +134,7 @@ Entry: native model module, small setup view and bridge methods. Show exact cand
 
 **Depends:** M05, M11. **Stories:** U3, U4.
 
-Entry: native task policy/queue and local transport command; extend the M03 bridge. Native owns profile/limits/endpoints/auth and task/request ownership. Validate bounded chat payload, stream bytes over Channels, one active task/inference, max ten queued tasks, deadlines and cancellation. Only approved chat endpoint; no generic URL proxy. Split queue/transport if needed.
+Entry: native task policy/queue and local transport command; extend the M03 bridge. Integrate journal host ownership via J01; persistent task identity does not confer a live grant. Native owns profile/limits/endpoints/auth and task/request ownership. Validate bounded chat payload, stream bytes over Channels, one active task/inference, max ten queued tasks, deadlines and cancellation. Only approved chat endpoint; no generic URL proxy. Split queue/transport if needed.
 
 **Check:** direct IPC tampering, queued cancel, overflow, redirect/remote model rejection, backend failure, wrong owner, late frames and sender destruction. Controllers/promises/listeners released; client cannot raise limits or execute a request outside an active grant.
 
@@ -198,7 +200,7 @@ Entry: existing scope/attachment/message presentation and small agent UI adapter
 
 **Depends:** M17, M20. **Stories:** U6.
 
-Entry: proposed native proposal module, workspace ToolBroker and FileChangeReview contract. Only stage create/edit proposals with target/base/proposed hashes, task/grant identity and bounded text. Ignore model/renderer auto-approval fields. Internal bookkeeping is a trusted separate operation, never an AI filename exception.
+Entry: proposed native proposal module, workspace ToolBroker and FileChangeReview contract. Use J02 and journal immutable intents, not a new proposal database. Only stage create/edit proposals with target/base/proposed hashes, task/grant identity and bounded text. Ignore model/renderer auto-approval fields. Internal bookkeeping is a trusted separate operation, never an AI filename exception.
 
 **Check:** original unchanged, expected-absence/new-parent validation, repeated proposals and fake auto-approve flag. Proposal IDs cannot substitute different contents/path; canceled tasks stop new staging.
 
@@ -206,7 +208,7 @@ Entry: proposed native proposal module, workspace ToolBroker and FileChangeRevie
 
 **Depends:** M21. **Stories:** U6.
 
-Entry: native proposal apply/reject, review command and existing review UI. Bind human approval to immutable proposal; recheck grant/target/base hash/absence. Prepare backup/same-directory replace and minimal journal transitions before mutation. Preserve later edits and recoverable state on errors; repeated clicks are idempotent.
+Entry: native proposal apply/reject, review command and existing review UI. Use J03 and native-only journal approval/begin/finish calls. Bind human approval to immutable proposal; recheck grant/target/base hash/absence. Prepare durable backup/same-directory replacement metadata in immutable intent before approval, commit begin before mutation, and record verified outcome. Preserve later edits and recoverable state on errors; repeated clicks cannot execute twice.
 
 **Check:** edited/replaced/symlink target, revoked grant, disk/permissions failure, approve/reject race and failure at prepare/replace. No unapproved write or cross-device atomicity claim. Separate boundary review.
 
@@ -214,7 +216,7 @@ Entry: native proposal apply/reject, review command and existing review UI. Bind
 
 **Depends:** M22. **Stories:** U6, U9.
 
-Entry: native journal/recovery, proposal storage and review state. Complete restart recovery for prepared/applied states; never auto-apply unapproved content. Undo verifies the currently applied hash; missing backup or newer edits show a conflict. Retention/cleanup touches only app-owned backup/staging data.
+Entry: native journal/recovery, proposal storage and review state. Use J04: prove old run/processes dead, recover only its records, reconcile uncertain effects with base/proposed/backup hashes. Never auto-apply unapproved content. Undo is a new reviewed intent and verifies the currently applied hash; missing backup or newer edits show a conflict. Retention/cleanup touches only app-owned backup/staging data and preserves idempotency history.
 
 **Check:** injected crash at each transition, repeated recovery, missing journal/backup, stale undo and cleanup failure. Actual temp files survive failed paths; no real user profile.
 
@@ -240,7 +242,7 @@ Entry: proposed native CLI action catalog, executable resolver and schemas. Star
 
 **Depends:** M25. **Stories:** U7.
 
-Entry: native command proposal state, small existing dialog/card UI and bridge approval methods. Preview executable/argv/cwd/effects/env policy and deadline. Confirm or reject exact immutable proposal with expiry/revocation/single-use authority; AI tools cannot call approval methods. Shell-like rendering is display only.
+Entry: native command proposal state, small existing dialog/card UI and separate native review command. Use journal intent/approve/cancel through J02/J03; generic TypeScript journal bridge cannot approve. Preview executable/argv/cwd/effects/env policy and deadline. Confirm or reject exact immutable proposal with expiry/revocation/single-use authority; AI tools cannot call approval methods. Shell-like rendering is display only.
 
 **Check:** changed argv/cwd/env/identity, stale/replayed approval, double click, cancel and revoked workspace. Native execution unavailable before approval. UI states clearly that confirmation/cwd does not sandbox the process.
 
@@ -248,7 +250,7 @@ Entry: native command proposal state, small existing dialog/card UI and bridge a
 
 **Depends:** M26, M13. **Stories:** U7, U4.
 
-Entry: native CLI executor, owned-process helper and task cancellation. Spawn direct executable + argv; independently drain stdout/stderr into bounded buffers/events, enforce exit/deadline/cancel, minimal env and platform group/job ownership. Recheck approved identity/scope immediately before launch.
+Entry: native CLI executor, owned-process helper and task cancellation. Use J03/J04: commit journal begin before spawn, record verified exit or uncertain outcome, never automatically replay after interruption. Spawn direct executable + argv; independently drain stdout/stderr into bounded buffers/events, enforce exit/deadline/cancel, minimal env and platform group/job ownership. Recheck approved identity/scope immediately before launch.
 
 **Check:** pipe saturation, large output, timeout, nonzero exit, stdin wait, spawn failure and descendants on macOS/Windows. No shell expressions, leaked process or later tool after Stop. Escaping/daemonizing commands stay unsupported absent confinement evidence.
 

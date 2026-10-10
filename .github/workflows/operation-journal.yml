@@ -1,0 +1,49 @@
+name: Operation journal
+
+on:
+  pull_request:
+    paths:
+      - 'crates/local-operation-journal/**'
+      - 'packages/local-operation-journal-bridge/**'
+      - '.github/workflows/operation-journal.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'crates/local-operation-journal/**'
+      - 'packages/local-operation-journal-bridge/**'
+      - '.github/workflows/operation-journal.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  journal:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/local-operation-journal-bridge/package-lock.json
+      - name: Rust formatting
+        run: cargo fmt --manifest-path crates/local-operation-journal/Cargo.toml --check
+      - name: Rust diagnostics
+        run: cargo clippy --locked --manifest-path crates/local-operation-journal/Cargo.toml --features bundled --all-targets -- -D warnings
+      - name: Install bridge build tool
+        run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: packages/local-operation-journal-bridge
+      - name: Recovery and shared wire contract
+        run: npm run check
+        working-directory: packages/local-operation-journal-bridge
+      - name: Rust package
+        run: cargo package --locked --manifest-path crates/local-operation-journal/Cargo.toml --features bundled
+      - name: TypeScript package
+        run: npm pack --dry-run
+        working-directory: packages/local-operation-journal-bridge
