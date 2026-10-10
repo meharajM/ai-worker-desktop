@@ -2,7 +2,7 @@
 
 This document provides a comprehensive overview of the AI-Worker application architecture, including system design, component relationships, data flow, and integration patterns.
 
-> **Migration status (M00):** The runnable desktop host remains Electron. The standalone Rust operation-journal crate and dependency-free TypeScript bridge exist; neither is integrated into the desktop app. No Tauri host, commands, or capabilities exist yet. Tauri diagrams and boundaries belong in this map only as implemented; see [migration baseline](./plans/reports/migration-baseline.md) for measured facts and unverified target assumptions.
+> **Migration status (M01):** Electron remains the existing runnable host. A separate minimal Tauri 2 host now builds from `src-tauri/` with one local window and a permission-scoped `status` command; it does not port chat or services. Its app identifier is distinct from Electron. See [migration baseline](./plans/reports/migration-baseline.md) for measured facts and unverified target assumptions.
 
 ---
 
@@ -52,6 +52,14 @@ graph TB
     Main -->|Stdio/SSE| MCPServers
     Main -->|Read/Write| FileSystem
     Renderer -->|Access| BrowserAPIs
+```
+
+The migration host is an independent target; Electron scripts and sources remain intact.
+
+```mermaid
+graph LR
+    TauriWindow[Local WebView<br/>static proof page] -->|allow-status only| StatusCommand[Rust status command]
+    TauriConfig[Explicit main capability] --> TauriWindow
 ```
 
 ---
@@ -1564,6 +1572,12 @@ To balance security and convenience, sensitive data like API keys follows a stri
 
 ## Security Architecture
 
+### Tauri Migration Core (M01)
+
+- `src-tauri/capabilities/main.json` grants only the generated `allow-status` permission to the `main` window.
+- `src-tauri/build.rs` limits app-command ACL generation to `status`; no filesystem, shell, network, or plugin permissions are installed.
+- Tauri uses `com.aiworker.app.tauri`, separate from Electron's profile identity. The command returns static version/status text and reads no user data or secrets.
+
 ### Security Boundaries
 
 ```mermaid
@@ -1736,6 +1750,8 @@ See `.env.example` for full template.
 ---
 
 ## Build & Distribution
+
+Electron remains on its existing `dev`/`build` scripts. The independent Tauri host uses `npm run tauri:dev` and `npm run tauri:build` with the local CLI; its current `frontendDist` is `src-tauri/static` until M02 supplies Vite assets.
 
 ### Build Architecture
 
