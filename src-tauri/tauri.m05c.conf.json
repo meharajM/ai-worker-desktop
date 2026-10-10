@@ -1,0 +1,18 @@
+{
+  "build": {
+    "frontendDist": "static-proof",
+    "beforeBuildCommand": "npm run web:proof-build"
+  },
+  "productName": "AI-Worker M05c",
+  "app": {
+    "withGlobalTauri": false,
+    "security": {
+      "capabilities": ["main", "m05c-untrusted"],
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    },
+    "windows": [
+      { "label": "main", "title": "AI-Worker M05c", "url": "m05c.html?remote=__M05C_REMOTE_URL__", "width": 1100, "height": 760 },
+      { "label": "untrusted", "title": "M05c untrusted window", "url": "m05c-untrusted.html", "width": 520, "height": 280 }
+    ]
+  }
+}

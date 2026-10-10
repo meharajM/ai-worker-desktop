@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "m05c-untrusted",
+  "description": "M05c only: let a bundled untrusted-label window reach the native owner check",
+  "windows": ["untrusted"],
+  "permissions": ["allow-bridge-open-session", "allow-bridge-get-status"]
+}
