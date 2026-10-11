@@ -21,7 +21,7 @@ function storedMessages(turn: TerminalTurn): ThreadMessage[] {
   ]
 }
 
-export function createChatHistoryAdapter(history: ChatHistory, sessionId: string): ThreadHistoryAdapter {
+export function createChatHistoryAdapter(history: ChatHistory, sessionId: string, onPersistenceError: (messageId: string, error: unknown) => void = () => {}): ThreadHistoryAdapter {
   let pending: { id: string; text: string } | undefined
   return {
     scopeId: sessionId,
@@ -56,8 +56,13 @@ export function createChatHistoryAdapter(history: ChatHistory, sessionId: string
         status: message.status.type === 'complete' ? 'completed' : message.status.type === 'incomplete' && message.status.reason === 'cancelled' ? 'canceled' : 'failed',
         endedAt: new Date().toISOString(),
       }
-      await history.commitTerminalTurn(turn)
-      pending = undefined
+      try {
+        await history.commitTerminalTurn(turn)
+      } catch (error) {
+        onPersistenceError(message.id, error)
+      } finally {
+        pending = undefined
+      }
     },
   }
 }
