@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex,
     },
     thread,
@@ -104,14 +104,44 @@ impl ModelRuntime {
     pub(crate) fn chat_endpoint<R: Runtime>(
         &self,
         app: &AppHandle<R>,
+        deadline: Instant,
+        cancelled: &AtomicBool,
     ) -> Result<(u16, String), &'static str> {
-        let port = self.start(app)?;
+        let generation = self.cancel_generation.load(Ordering::SeqCst);
+        if let Some(port) = self.live_server_port(generation)? {
+            if Self::chat_start_aborted(deadline, cancelled) {
+                return Err("chat response timed out");
+            }
+            let current = self
+                .server
+                .lock()
+                .map_err(|_| "runtime state unavailable")?;
+            let server = current.as_ref().ok_or("runtime unavailable")?;
+            return Ok((port, server.auth.clone()));
+        }
+        if Self::chat_start_aborted(deadline, cancelled) {
+            return Err("chat response timed out");
+        }
+        let assets = resolve_assets(app)?;
+        if Self::chat_start_aborted(deadline, cancelled) {
+            return Err("chat response timed out");
+        }
+        self.start_assets_at_generation_with_abort(
+            assets,
+            None,
+            generation,
+            Some((deadline, cancelled)),
+        )?;
         let current = self
             .server
             .lock()
             .map_err(|_| "runtime state unavailable")?;
         let server = current.as_ref().ok_or("runtime unavailable")?;
-        Ok((port, server.auth.clone()))
+        Ok((server.port, server.auth.clone()))
+    }
+
+    pub(crate) fn chat_start_aborted(deadline: Instant, cancelled: &AtomicBool) -> bool {
+        cancelled.load(Ordering::Acquire) || Instant::now() >= deadline
     }
 
     fn live_server_port(&self, generation: u64) -> Result<Option<u16>, &'static str> {
@@ -166,14 +196,48 @@ impl ModelRuntime {
         forced_port: Option<u16>,
         generation: u64,
     ) -> Result<u16, &'static str> {
+        self.start_assets_at_generation_with_abort(assets, forced_port, generation, None)
+    }
+
+    fn start_assets_at_generation_with_abort(
+        &self,
+        assets: Assets,
+        forced_port: Option<u16>,
+        generation: u64,
+        chat_abort: Option<(Instant, &AtomicBool)>,
+    ) -> Result<u16, &'static str> {
+        if chat_abort
+            .is_some_and(|(deadline, cancelled)| Self::chat_start_aborted(deadline, cancelled))
+        {
+            return Err("chat response timed out");
+        }
         if let Some(port) = self.live_server_port(generation)? {
             return Ok(port);
         }
         verify_runtime_assets(&assets)?;
-        let (model_file, model_argument) =
-            open_verified_model(&assets.model, &self.cancel_generation, generation)?;
+        if chat_abort
+            .is_some_and(|(deadline, cancelled)| Self::chat_start_aborted(deadline, cancelled))
+        {
+            return Err("chat response timed out");
+        }
+        let (model_file, model_argument) = open_verified_model(
+            &assets.model,
+            &self.cancel_generation,
+            generation,
+            chat_abort,
+        )?;
+        if chat_abort
+            .is_some_and(|(deadline, cancelled)| Self::chat_start_aborted(deadline, cancelled))
+        {
+            return Err("chat response timed out");
+        }
         if self.cancel_generation.load(Ordering::SeqCst) != generation {
             return Err("runtime start cancelled");
+        }
+        if chat_abort
+            .is_some_and(|(deadline, cancelled)| Self::chat_start_aborted(deadline, cancelled))
+        {
+            return Err("chat response timed out");
         }
 
         let mut current = self
@@ -281,6 +345,7 @@ impl ModelRuntime {
             current.as_mut().expect("child just stored"),
             &self.cancel_generation,
             generation,
+            chat_abort,
         ) {
             stop_owned(&mut current);
             return Err(error);
@@ -336,6 +401,7 @@ fn open_verified_model(
     path: &Path,
     cancel_generation: &AtomicU64,
     generation: u64,
+    chat_abort: Option<(Instant, &AtomicBool)>,
 ) -> Result<(Option<File>, PathBuf), &'static str> {
     let mut file = File::open(path).map_err(|_| "verified model runtime assets unreadable")?;
     let metadata = file
@@ -347,8 +413,8 @@ fn open_verified_model(
     let mut digest = Sha256::new();
     let mut buffer = [0; 1024 * 1024];
     loop {
-        if cancel_generation.load(Ordering::SeqCst) != generation {
-            return Err("runtime start cancelled");
+        if let Some(error) = startup_abort(cancel_generation, generation, chat_abort) {
+            return Err(error);
         }
         let read = file
             .read(&mut buffer)
@@ -373,13 +439,49 @@ fn open_verified_model(
     path: &Path,
     cancel_generation: &AtomicU64,
     generation: u64,
+    chat_abort: Option<(Instant, &AtomicBool)>,
 ) -> Result<(Option<File>, PathBuf), &'static str> {
-    if cancel_generation.load(Ordering::SeqCst) != generation {
-        return Err("runtime start cancelled");
-    }
     // shortcut: Windows uses path-based opening until a native inherited-handle equivalent is added.
-    verify_file(path, Some(MODEL_SIZE), MODEL_SHA256)?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_| "verified model runtime assets missing")?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() != MODEL_SIZE {
+        return Err("verified model runtime assets invalid");
+    }
+    let mut file = File::open(path).map_err(|_| "verified model runtime assets unreadable")?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        if let Some(error) = startup_abort(cancel_generation, generation, chat_abort) {
+            return Err(error);
+        }
+        let count = file
+            .read(&mut buffer)
+            .map_err(|_| "verified model runtime assets unreadable")?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    if format!("{:x}", hash.finalize()) != MODEL_SHA256 {
+        return Err("verified model runtime digest mismatch");
+    }
     Ok((None, path.to_path_buf()))
+}
+
+fn startup_abort(
+    cancellation: &AtomicU64,
+    generation: u64,
+    chat_abort: Option<(Instant, &AtomicBool)>,
+) -> Option<&'static str> {
+    if cancellation.load(Ordering::SeqCst) != generation {
+        Some("runtime start cancelled")
+    } else if chat_abort
+        .is_some_and(|(deadline, cancelled)| ModelRuntime::chat_start_aborted(deadline, cancelled))
+    {
+        Some("chat response timed out")
+    } else {
+        None
+    }
 }
 
 fn verify_file(path: &Path, size: Option<u64>, expected: &str) -> Result<(), &'static str> {
@@ -464,9 +566,15 @@ fn await_ready(
     server: &mut OwnedServer,
     cancellation: &AtomicU64,
     generation: u64,
+    chat_abort: Option<(Instant, &AtomicBool)>,
 ) -> Result<(), &'static str> {
     let deadline = Instant::now() + START_TIMEOUT;
     while Instant::now() < deadline {
+        if chat_abort.is_some_and(|(deadline, cancelled)| {
+            ModelRuntime::chat_start_aborted(deadline, cancelled)
+        }) {
+            return Err("chat response timed out");
+        }
         if cancellation.load(Ordering::SeqCst) != generation {
             return Err("runtime start cancelled");
         }
@@ -704,7 +812,8 @@ mod tests {
                 await_ready(
                     server.as_mut().unwrap(),
                     &waiter.cancel_generation,
-                    generation
+                    generation,
+                    None,
                 ),
                 Err("runtime start cancelled")
             );
@@ -739,6 +848,74 @@ mod tests {
             Err("runtime start cancelled")
         );
         assert!(runtime.server.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn expired_chat_deadline_aborts_before_runtime_asset_work() {
+        let runtime = ModelRuntime::default();
+        let cancelled = AtomicBool::new(false);
+        assert_eq!(
+            runtime.start_assets_at_generation_with_abort(
+                Assets {
+                    executable: PathBuf::from("/missing/llama-server"),
+                    model: PathBuf::from("/missing/model.gguf"),
+                    library_dir: PathBuf::from("/missing/libs"),
+                },
+                None,
+                runtime.cancel_generation.load(Ordering::SeqCst),
+                Some((Instant::now() - Duration::from_millis(1), &cancelled)),
+            ),
+            Err("chat response timed out")
+        );
+        assert!(runtime.server.lock().unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chat_deadline_during_startup_reaps_owned_child() {
+        use std::os::unix::process::CommandExt;
+
+        let private_dir = std::env::temp_dir().join(format!(
+            "m13-deadline-start-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&private_dir).unwrap();
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("60")
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = command.spawn().unwrap();
+        let pid = child.id();
+        let generation = 0;
+        let cancellation = AtomicU64::new(generation);
+        let mut owned = Some(OwnedServer {
+            child,
+            port: reserve_port().unwrap(),
+            auth: "secret".into(),
+            private_dir,
+        });
+        let deadline = Instant::now() + Duration::from_millis(25);
+
+        let result = await_ready(
+            owned.as_mut().unwrap(),
+            &cancellation,
+            generation,
+            Some((deadline, &AtomicBool::new(false))),
+        );
+        if result.is_err() {
+            stop_owned(&mut owned);
+        }
+
+        assert_eq!(result, Err("chat response timed out"));
+        assert!(owned.is_none());
+        assert!(unsafe { kill(pid as i32, 0) } != 0, "startup child reaped");
     }
 
     #[test]

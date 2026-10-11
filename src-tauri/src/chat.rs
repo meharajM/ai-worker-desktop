@@ -122,6 +122,7 @@ struct Task {
     messages: Vec<ChatMessage>,
     channel: Channel<ChatEvent>,
     cancelled: AtomicBool,
+    deadline: Instant,
 }
 
 impl ChatState {
@@ -236,6 +237,7 @@ pub fn local_chat_start(
         messages: request.messages,
         channel: on_event,
         cancelled: AtomicBool::new(false),
+        deadline: Instant::now() + RESPONSE_DEADLINE,
     });
     let launch = state.submit(Arc::clone(&task)).map_err(str::to_owned)?;
     if launch {
@@ -367,7 +369,11 @@ fn worker(queue: Arc<Mutex<Queue>>, app: AppHandle) {
         };
         let Some(task) = task else { return };
         let mut failed = None;
-        if !task.cancelled.load(Ordering::Acquire) {
+        if task.cancelled.load(Ordering::Acquire) {
+            // Cancellation already reported by the caller.
+        } else if task_deadline_expired(&task) {
+            failed = Some("chat response timed out");
+        } else {
             if task
                 .channel
                 .send(ChatEvent::Started {
@@ -380,7 +386,7 @@ fn worker(queue: Arc<Mutex<Queue>>, app: AppHandle) {
             } else {
                 let result = app
                     .state::<ModelRuntime>()
-                    .chat_endpoint(&app)
+                    .chat_endpoint(&app, task.deadline, &task.cancelled)
                     .and_then(|(port, auth)| request_stream(port, &auth, &task));
                 if let Err(message) = result {
                     failed = Some(message);
@@ -405,9 +411,16 @@ fn worker(queue: Arc<Mutex<Queue>>, app: AppHandle) {
     }
 }
 
+fn task_deadline_expired(task: &Task) -> bool {
+    Instant::now() >= task.deadline
+}
+
 fn request_stream(port: u16, auth: &str, task: &Task) -> Result<(), &'static str> {
     if task.cancelled.load(Ordering::Acquire) {
         return Ok(());
+    }
+    if Instant::now() >= task.deadline {
+        return Err("chat response timed out");
     }
     let body = serde_json::to_vec(&serde_json::json!({
         "model": MODEL_NAME,
@@ -418,16 +431,38 @@ fn request_stream(port: u16, auth: &str, task: &Task) -> Result<(), &'static str
     }))
     .map_err(|_| "chat backend failed")?;
     let address = SocketAddr::from(([127, 0, 0, 1], port));
-    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(2))
-        .map_err(|_| "chat backend unavailable")?;
+    let connect_timeout = task.deadline.saturating_duration_since(Instant::now());
+    if connect_timeout.is_zero() {
+        return Err("chat response timed out");
+    }
+    let mut stream =
+        TcpStream::connect_timeout(&address, connect_timeout.min(Duration::from_secs(2))).map_err(
+            |_| {
+                if task_deadline_expired(task) {
+                    "chat response timed out"
+                } else {
+                    "chat backend unavailable"
+                }
+            },
+        )?;
     stream
         .set_read_timeout(Some(Duration::from_millis(250)))
         .map_err(|_| "chat backend failed")?;
+    let write_timeout = task.deadline.saturating_duration_since(Instant::now());
+    if write_timeout.is_zero() {
+        return Err("chat response timed out");
+    }
     stream
-        .set_write_timeout(Some(Duration::from_secs(2)))
+        .set_write_timeout(Some(write_timeout.min(Duration::from_secs(2))))
         .map_err(|_| "chat backend failed")?;
-    write!(stream, "POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {auth}\r\nContent-Type: application/json\r\nAccept: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).and_then(|_| stream.write_all(&body)).map_err(|_| "chat backend failed")?;
-    let deadline = Instant::now() + RESPONSE_DEADLINE;
+    write!(stream, "POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {auth}\r\nContent-Type: application/json\r\nAccept: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).and_then(|_| stream.write_all(&body)).map_err(|_| {
+        if task_deadline_expired(task) {
+            "chat response timed out"
+        } else {
+            "chat backend failed"
+        }
+    })?;
+    let deadline = task.deadline;
     let mut wire = Vec::new();
     let mut total = 0usize;
     let (header_end, headers) = loop {
@@ -651,7 +686,16 @@ mod tests {
             }],
             channel: Channel::new(|_| Ok(())),
             cancelled: AtomicBool::new(false),
+            deadline: Instant::now() + RESPONSE_DEADLINE,
         })
+    }
+
+    #[test]
+    fn expired_queued_task_is_rejected_before_runtime_start() {
+        let mut task = task("expired", "main", "s1");
+        Arc::get_mut(&mut task).unwrap().deadline = Instant::now() - Duration::from_millis(1);
+        assert!(task_deadline_expired(&task));
+        assert!(!task.cancelled.load(Ordering::Acquire));
     }
 
     #[test]
@@ -725,6 +769,7 @@ mod tests {
             messages: vec![],
             channel,
             cancelled: AtomicBool::new(true),
+            deadline: Instant::now() + RESPONSE_DEADLINE,
         };
         assert!(process_sse(
             b"data: {\"choices\":[{\"delta\":{\"content\":\"late\"}}]}",
@@ -746,6 +791,7 @@ mod tests {
             messages: vec![],
             channel: Channel::new(|_| Err(tauri::Error::FailedToReceiveMessage)),
             cancelled: AtomicBool::new(false),
+            deadline: Instant::now() + RESPONSE_DEADLINE,
         };
         assert_eq!(
             process_sse(
@@ -794,6 +840,7 @@ mod tests {
             }],
             channel,
             cancelled: AtomicBool::new(false),
+            deadline: Instant::now() + RESPONSE_DEADLINE,
         };
         request_stream(port, "native-secret", &task).unwrap();
         server.join().unwrap();
