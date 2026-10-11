@@ -131,7 +131,7 @@ impl ChatState {
         if q.tasks.contains_key(&task.id) {
             return Err("chat task already exists");
         }
-        if q.running && q.pending.len() >= MAX_QUEUED + 1 {
+        if q.running && q.tasks.len() >= MAX_QUEUED + 1 {
             return Err("chat queue is full");
         }
         q.tasks.insert(task.id.clone(), Arc::clone(&task));
@@ -187,8 +187,9 @@ impl ChatState {
             }
             q.pending
                 .retain(|task| task.owner != owner || task.session == keep_session);
-            q.tasks
-                .retain(|_, task| task.owner != owner || task.session == keep_session);
+            q.tasks.retain(|_, task| {
+                task.owner != owner || task.session == keep_session || !queued.contains(&task.id)
+            });
             drop(q);
             for task in stale.into_iter().filter(|task| queued.contains(&task.id)) {
                 let _ = task.channel.send(ChatEvent::Cancelled {
@@ -227,8 +228,14 @@ pub fn local_chat_start(
     app: AppHandle,
     bridge: State<'_, BridgeState>,
     state: State<'_, ChatState>,
-) -> Result<ChatAccepted, String> {
-    authorize_payload(&request, &window, &bridge).map_err(str::to_owned)?;
+) -> Result<ChatAccepted, crate::bridge::BridgeError> {
+    validate_payload(&request)?;
+    let identity = StatusRequest {
+        protocol_version: request.protocol_version,
+        owner_id: request.owner_id.clone(),
+        session_id: request.session_id.clone(),
+        request_id: request.request_id.clone(),
+    };
     let task = Arc::new(Task {
         owner: request.owner_id.clone(),
         session: request.session_id.clone(),
@@ -239,7 +246,15 @@ pub fn local_chat_start(
         cancelled: AtomicBool::new(false),
         deadline: Instant::now() + RESPONSE_DEADLINE,
     });
-    let launch = state.submit(Arc::clone(&task)).map_err(str::to_owned)?;
+    let launch = bridge
+        .with_authorized_model_request(&window, &identity, || state.submit(Arc::clone(&task)))?
+        .map_err(|error| {
+            if error == "chat queue unavailable" {
+                crate::bridge::BridgeError::internal()
+            } else {
+                crate::bridge::BridgeError::invalid()
+            }
+        })?;
     if launch {
         let queue = Arc::clone(&state.inner);
         let app_handle = app.clone();
@@ -262,7 +277,7 @@ pub fn local_chat_start(
                     message: "chat worker unavailable",
                 });
             }
-            return Err("chat worker unavailable".into());
+            return Err(crate::bridge::BridgeError::internal());
         }
     }
     Ok(ChatAccepted {
@@ -282,16 +297,20 @@ pub fn local_chat_cancel(
     bridge: State<'_, BridgeState>,
     state: State<'_, ChatState>,
     runtime: State<'_, ModelRuntime>,
-) -> Result<ChatCancelled, String> {
-    bridge
-        .authorize_model_request(&window, &request)
-        .map_err(|_| "chat request rejected")?;
+) -> Result<ChatCancelled, crate::bridge::BridgeError> {
+    bridge.authorize_model_request(&window, &request)?;
     if !valid_task_id(&task_id) {
-        return Err("chat request rejected".into());
+        return Err(crate::bridge::BridgeError::invalid());
     }
     let active = state
         .cancel(&request.owner_id, &request.session_id, &task_id)
-        .map_err(str::to_owned)?;
+        .map_err(|error| {
+            if error == "chat queue unavailable" {
+                crate::bridge::BridgeError::internal()
+            } else {
+                crate::bridge::BridgeError::invalid()
+            }
+        })?;
     if active {
         runtime.stop();
     }
@@ -305,28 +324,15 @@ pub fn local_chat_cancel(
     })
 }
 
-fn authorize_payload(
-    request: &ChatRequest,
-    window: &WebviewWindow,
-    bridge: &BridgeState,
-) -> Result<(), &'static str> {
-    let identity = StatusRequest {
-        protocol_version: request.protocol_version,
-        owner_id: request.owner_id.clone(),
-        session_id: request.session_id.clone(),
-        request_id: request.request_id.clone(),
-    };
-    bridge
-        .authorize_model_request(window, &identity)
-        .map_err(|_| "chat request rejected")?;
+fn validate_payload(request: &ChatRequest) -> Result<(), crate::bridge::BridgeError> {
     if !crate::model_setup::developer_candidate_available()
         || !valid_task_id(&request.task_id)
         || request.messages.is_empty()
         || request.messages.len() > MAX_MESSAGES
     {
-        return Err("chat request rejected");
+        return Err(crate::bridge::BridgeError::invalid());
     }
-    validate_messages(&request.messages)
+    validate_messages(&request.messages).map_err(|_| crate::bridge::BridgeError::invalid())
 }
 
 fn validate_messages(messages: &[ChatMessage]) -> Result<(), &'static str> {
@@ -370,7 +376,7 @@ fn worker(queue: Arc<Mutex<Queue>>, app: AppHandle) {
         let Some(task) = task else { return };
         let mut failed = None;
         if task.cancelled.load(Ordering::Acquire) {
-            // Cancellation already reported by the caller.
+            // Skip startup when cancellation wins before the worker begins.
         } else if task_deadline_expired(&task) {
             failed = Some("chat response timed out");
         } else {
@@ -393,22 +399,36 @@ fn worker(queue: Arc<Mutex<Queue>>, app: AppHandle) {
                 }
             }
         }
+        let terminal = queue
+            .lock()
+            .ok()
+            .and_then(|mut q| terminal_event(&mut q, &task, failed));
+        if let Some(event) = terminal {
+            let _ = task.channel.send(event);
+        }
+    }
+}
+
+fn terminal_event(q: &mut Queue, task: &Task, failed: Option<&'static str>) -> Option<ChatEvent> {
+    q.tasks.remove(&task.id).map(|_| {
         if task.cancelled.load(Ordering::Acquire) {
-            let _ = task.channel.send(ChatEvent::Cancelled {
+            ChatEvent::Cancelled {
                 task_id: task.id.clone(),
                 request_id: task.request.clone(),
-            });
+            }
         } else if let Some(message) = failed {
-            let _ = task.channel.send(ChatEvent::Failed {
+            ChatEvent::Failed {
                 task_id: task.id.clone(),
                 request_id: task.request.clone(),
                 message,
-            });
+            }
+        } else {
+            ChatEvent::Complete {
+                task_id: task.id.clone(),
+                request_id: task.request.clone(),
+            }
         }
-        if let Ok(mut q) = queue.lock() {
-            q.tasks.remove(&task.id);
-        }
-    }
+    })
 }
 
 fn task_deadline_expired(task: &Task) -> bool {
@@ -516,17 +536,12 @@ fn request_stream(port: u16, auth: &str, task: &Task) -> Result<(), &'static str
             false
         };
         if chunk_done {
-            if consume_sse(&mut sse, task)? {
-                send_complete(task);
-                return Ok(());
-            }
-            send_complete(task);
+            let _ = consume_sse(&mut sse, task)?;
             return Ok(());
         } else if !wire.is_empty() {
             sse.extend(wire.drain(..));
         }
         if consume_sse(&mut sse, task)? {
-            send_complete(task);
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -606,13 +621,6 @@ fn is_done_event(event: &[u8]) -> bool {
         .split(|byte| *byte == b'\n')
         .filter_map(|line| line.strip_prefix(b"data:"))
         .any(|data| trim_ascii(data) == b"[DONE]")
-}
-
-fn send_complete(task: &Task) {
-    let _ = task.channel.send(ChatEvent::Complete {
-        task_id: task.id.clone(),
-        request_id: task.request.clone(),
-    });
 }
 
 fn find_header_end(bytes: &[u8]) -> Option<usize> {
@@ -746,6 +754,54 @@ mod tests {
     }
 
     #[test]
+    fn queue_allows_one_active_plus_ten_waiting_after_worker_pops_active() {
+        let state = ChatState::default();
+        let active = task("active", "main", "s1");
+        assert!(state.submit(Arc::clone(&active)).unwrap());
+        assert_eq!(
+            state.inner.lock().unwrap().pending.pop_front().unwrap().id,
+            "active"
+        );
+        for n in 1..=MAX_QUEUED {
+            assert!(!state.submit(task(&format!("t{n}"), "main", "s1")).unwrap());
+        }
+        assert_eq!(
+            state.submit(task("overflow", "main", "s1")).unwrap_err(),
+            "chat queue is full"
+        );
+    }
+
+    #[test]
+    fn cancel_and_completion_choose_only_one_terminal_event() {
+        let state = Arc::new(ChatState::default());
+        let task = task("race", "main", "s1");
+        state.submit(Arc::clone(&task)).unwrap();
+        state.inner.lock().unwrap().pending.clear();
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let cancel_state = Arc::clone(&state);
+        let cancel_barrier = Arc::clone(&barrier);
+        let cancel = thread::spawn(move || {
+            cancel_barrier.wait();
+            cancel_state.cancel("main", "s1", "race")
+        });
+        let finish_state = Arc::clone(&state);
+        let finish_task = Arc::clone(&task);
+        let finish_barrier = Arc::clone(&barrier);
+        let finish = thread::spawn(move || {
+            finish_barrier.wait();
+            terminal_event(&mut finish_state.inner.lock().unwrap(), &finish_task, None).unwrap()
+        });
+        barrier.wait();
+        let cancel = cancel.join().unwrap();
+        let terminal = finish.join().unwrap();
+        match (cancel.is_ok(), terminal) {
+            (true, ChatEvent::Cancelled { .. }) | (false, ChatEvent::Complete { .. }) => {}
+            pair => panic!("cancel and completion chose conflicting terminal events: {pair:?}"),
+        }
+        assert!(state.inner.lock().unwrap().tasks.is_empty());
+    }
+
+    #[test]
     fn payload_and_response_policy_reject_tampering_and_redirects() {
         let unknown = r#"{"protocolVersion":1,"ownerId":"main","sessionId":"s-1","requestId":"r-1","taskId":"t-1","messages":[{"role":"user","content":"hi","extra":true}]}"#;
         assert!(serde_json::from_str::<ChatRequest>(unknown).is_err());
@@ -865,10 +921,24 @@ mod tests {
         request_stream(port, "native-secret", &task).unwrap();
         server.join().unwrap();
         let chunk: serde_json::Value = serde_json::from_str(&rx.recv().unwrap()).unwrap();
-        let complete: serde_json::Value = serde_json::from_str(&rx.recv().unwrap()).unwrap();
         assert_eq!(chunk["event"], "chunk");
         assert_eq!(chunk["data"]["content"], "hi");
-        assert_eq!(complete["event"], "complete");
+        let mut queue = Queue::default();
+        queue.tasks.insert(
+            task.id.clone(),
+            Arc::new(Task {
+                owner: task.owner.clone(),
+                session: task.session.clone(),
+                request: task.request.clone(),
+                id: task.id.clone(),
+                messages: task.messages.clone(),
+                channel: task.channel.clone(),
+                cancelled: AtomicBool::new(false),
+                deadline: task.deadline,
+            }),
+        );
+        let complete = terminal_event(&mut queue, &task, None).unwrap();
+        assert!(matches!(complete, ChatEvent::Complete { .. }));
 
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();

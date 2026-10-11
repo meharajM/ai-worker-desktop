@@ -37,7 +37,7 @@ pub struct BridgeError {
 }
 
 impl BridgeError {
-    fn invalid() -> Self {
+    pub(crate) fn invalid() -> Self {
         Self {
             code: BridgeErrorCode::InvalidRequest,
             message: "Invalid bridge request.",
@@ -58,7 +58,7 @@ impl BridgeError {
         }
     }
 
-    fn internal() -> Self {
+    pub(crate) fn internal() -> Self {
         Self {
             code: BridgeErrorCode::Internal,
             message: "Native bridge is unavailable.",
@@ -208,11 +208,55 @@ impl BridgeState {
         )
     }
 
+    pub(crate) fn with_authorized_model_request<T>(
+        &self,
+        window: &WebviewWindow,
+        request: &StatusRequest,
+        action: impl FnOnce() -> T,
+    ) -> Result<T, BridgeError> {
+        let caller = Caller::from_window(window)?;
+        let payload_bytes = serde_json::to_vec(request)
+            .map_err(|_| BridgeError::invalid())?
+            .len();
+        self.with_authorized(&caller, request, payload_bytes, action)
+    }
+
+    fn with_authorized<T>(
+        &self,
+        caller: &Caller,
+        request: &StatusRequest,
+        payload_bytes: usize,
+        action: impl FnOnce() -> T,
+    ) -> Result<T, BridgeError> {
+        validate_authorization(
+            caller,
+            &request.owner_id,
+            &request.session_id,
+            &request.request_id,
+            payload_bytes,
+            request.protocol_version,
+        )?;
+        let sessions = self.inner.lock().map_err(|_| BridgeError::internal())?;
+        authorize_session(&sessions, caller, &request.session_id)?;
+        Ok(action())
+    }
+
+    #[cfg(test)]
     fn open(
         &self,
         caller: &Caller,
         request: OpenSessionRequest,
     ) -> Result<OpenSessionReply, BridgeError> {
+        self.open_with(caller, request, |_| ())
+            .map(|(reply, ())| reply)
+    }
+
+    fn open_with<T>(
+        &self,
+        caller: &Caller,
+        request: OpenSessionRequest,
+        action: impl FnOnce(&OpenSessionReply) -> T,
+    ) -> Result<(OpenSessionReply, T), BridgeError> {
         validate_request(49 + request.owner_id.len() + request.request_id.len())?;
         if request.protocol_version != PROTOCOL_VERSION
             || !validate_id(&request.request_id, MAX_REQUEST_ID_BYTES)
@@ -231,12 +275,14 @@ impl BridgeState {
         sessions
             .by_owner
             .insert(caller.owner_id.clone(), session_id.clone());
-        Ok(OpenSessionReply {
+        let reply = OpenSessionReply {
             protocol_version: PROTOCOL_VERSION,
             owner_id: caller.owner_id.clone(),
             session_id,
             request_id: request.request_id,
-        })
+        };
+        let result = action(&reply);
+        Ok((reply, result))
     }
 
     fn status(&self, caller: &Caller, request: StatusRequest) -> Result<NativeStatus, BridgeError> {
@@ -269,20 +315,16 @@ impl BridgeState {
         payload_bytes: usize,
         protocol_version: u8,
     ) -> Result<(), BridgeError> {
-        validate_request(payload_bytes)?;
-        if protocol_version != PROTOCOL_VERSION
-            || !validate_id(request_id, MAX_REQUEST_ID_BYTES)
-            || !validate_id(session_id, MAX_SESSION_ID_BYTES)
-            || !validate_id(owner_id, 32)
-        {
-            return Err(BridgeError::invalid());
-        }
-        trusted_caller(caller, owner_id)?;
+        validate_authorization(
+            caller,
+            owner_id,
+            session_id,
+            request_id,
+            payload_bytes,
+            protocol_version,
+        )?;
         let sessions = self.inner.lock().map_err(|_| BridgeError::internal())?;
-        if sessions.by_owner.get(&caller.owner_id).map(String::as_str) != Some(session_id) {
-            return Err(BridgeError::stale_session());
-        }
-        Ok(())
+        authorize_session(&sessions, caller, session_id)
     }
 
     fn get_preferences(
@@ -358,6 +400,36 @@ impl BridgeState {
     }
 }
 
+fn validate_authorization(
+    caller: &Caller,
+    owner_id: &str,
+    session_id: &str,
+    request_id: &str,
+    payload_bytes: usize,
+    protocol_version: u8,
+) -> Result<(), BridgeError> {
+    validate_request(payload_bytes)?;
+    if protocol_version != PROTOCOL_VERSION
+        || !validate_id(request_id, MAX_REQUEST_ID_BYTES)
+        || !validate_id(session_id, MAX_SESSION_ID_BYTES)
+        || !validate_id(owner_id, 32)
+    {
+        return Err(BridgeError::invalid());
+    }
+    trusted_caller(caller, owner_id)
+}
+
+fn authorize_session(
+    sessions: &BridgeSessions,
+    caller: &Caller,
+    session_id: &str,
+) -> Result<(), BridgeError> {
+    if sessions.by_owner.get(&caller.owner_id).map(String::as_str) != Some(session_id) {
+        return Err(BridgeError::stale_session());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn bridge_open_session(
     request: OpenSessionRequest,
@@ -367,10 +439,11 @@ pub fn bridge_open_session(
     runtime: State<'_, crate::model_runtime::ModelRuntime>,
 ) -> Result<OpenSessionReply, BridgeError> {
     let caller = Caller::from_window(&window)?;
-    let reply = state.open(&caller, request)?;
-    if chat.invalidate_sessions(&reply.owner_id, &reply.session_id) {
-        runtime.stop();
-    }
+    let (reply, ()) = state.open_with(&caller, request, |reply| {
+        if chat.invalidate_sessions(&reply.owner_id, &reply.session_id) {
+            runtime.stop();
+        }
+    })?;
     Ok(reply)
 }
 
@@ -629,6 +702,46 @@ mod tests {
                 .code,
             BridgeErrorCode::StaleSession
         );
+    }
+
+    #[test]
+    fn authorized_start_holds_session_lock_through_enqueue_action() {
+        use std::{sync::mpsc, thread};
+
+        let state = std::sync::Arc::new(BridgeState::default());
+        let caller = caller("main", app_url());
+        let opened = state.open(&caller, open_request("main", "r1")).unwrap();
+        let request = status_request("main", &opened.session_id, "r2");
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let start_state = std::sync::Arc::clone(&state);
+        let start_caller = caller.clone();
+        let start_request = status_request("main", &opened.session_id, "r2");
+        let start = thread::spawn(move || {
+            start_state.with_authorized(&start_caller, &start_request, 64, || {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            })
+        });
+        entered_rx.recv().unwrap();
+        let open_state = std::sync::Arc::clone(&state);
+        let open_caller = caller.clone();
+        let replace = thread::spawn(move || {
+            open_state
+                .open(&open_caller, open_request("main", "r3"))
+                .unwrap()
+        });
+        release_tx.send(()).unwrap();
+        assert!(start.join().unwrap().is_ok());
+        let replacement = replace.join().unwrap();
+        assert_eq!(
+            state
+                .with_authorized(&caller, &request, 64, || ())
+                .unwrap_err()
+                .code,
+            BridgeErrorCode::StaleSession
+        );
+        assert_ne!(opened.session_id, replacement.session_id);
     }
 
     #[test]
