@@ -21,6 +21,15 @@ All commands ran from `/Users/meharaj/Downloads/.worktrees/ai-worker-desktop-cha
 
 The first `cargo fmt --check` caught formatting in the new test; `cargo fmt` corrected it, and the final check passed.
 
+## Fixture follow-up
+
+The grouped chat test intermittently failed because each fake server performed one `read`, which can return after only the HTTP headers while the client is still writing the JSON body. The fixture now reads through the header terminator and consumes the advertised `Content-Length` before replying. Both fake servers use this test-only helper; production transport is unchanged.
+
+- `cargo fmt --check --manifest-path src-tauri/Cargo.toml` — passed.
+- `git diff --check` — passed.
+- `cargo test --bin ai-worker-tauri chat:: --manifest-path src-tauri/Cargo.toml` — passed, 6 passed.
+- Same grouped test command run 10 consecutive times — all passed, 6 passed each run.
+
 ## Commit
 
 `fix(chat): abort expired startup before spawn`.

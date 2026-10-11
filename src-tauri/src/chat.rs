@@ -674,6 +674,27 @@ fn trim_ascii(bytes: &[u8]) -> &[u8] {
 mod tests {
     use super::*;
 
+    fn read_http_request(socket: &mut TcpStream) {
+        let mut request = Vec::new();
+        let mut byte = [0u8; 1];
+        while !request.ends_with(b"\r\n\r\n") {
+            socket.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        let headers = std::str::from_utf8(&request).unwrap();
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().unwrap())
+            })
+            .unwrap_or(0);
+        let body_start = request.len();
+        request.resize(request.len() + content_length, 0);
+        socket.read_exact(&mut request[body_start..]).unwrap();
+    }
+
     fn task(id: &str, owner: &str, session: &str) -> Arc<Task> {
         Arc::new(Task {
             owner: owner.into(),
@@ -815,8 +836,7 @@ mod tests {
         wire.extend_from_slice(b"\r\n0\r\n\r\n");
         let server = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            let mut request = [0u8; 4096];
-            let _ = socket.read(&mut request);
+            read_http_request(&mut socket);
             socket
                 .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
                 .unwrap();
@@ -854,8 +874,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            let mut request = [0u8; 4096];
-            let _ = socket.read(&mut request);
+            read_http_request(&mut socket);
             socket.write_all(b"HTTP/1.1 302 Found\r\nLocation: https://example.com\r\nContent-Length: 0\r\n\r\n").unwrap();
         });
         assert_eq!(
