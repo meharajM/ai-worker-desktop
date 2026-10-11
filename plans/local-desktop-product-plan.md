@@ -1,10 +1,10 @@
 # AI-Worker Desktop: small Tauri bridge and offline web UI
 
-Revision 3, 10 October 2026. Optimized implementation draft. A reusable Rust operation journal and TypeScript bridge are implemented separately; the Tauri application migration remains unimplemented.
+Revision 6, 11 October 2026. The product is a local offline web UI hosted by Tauri, macOS first and Windows next; approved workspace CLI actions come later. M13 native chat transport and M14 one-node LangChain/LangGraph chat graph are implemented. M14's mocked proof exercises live `messages` streaming only; real model inference remains unverified because no GGUF is available and disk space is below import needs. Task111 macOS arm64 llama runtime bundling and alias verification are implemented. The runtime package is verified; Qwen3 1.7B is the pinned development candidate, not a certified profile. Windows and performance are unverified.
 
 Repository: `meharajM/ai-worker-desktop`, clean published baseline `e56f8d2`. Do not bring the original `ai-worker.app` history into this repository. Keep its published credential sanitization.
 
-The user's latest direction supersedes the Electron-first recommendation. Preserve the [previous plan](./archive/electron-v1/local-desktop-product-plan.md) for history, but execute only the [current Luna cards](./luna-implementation-cards.md). The [custom-code audit](./custom-code-alternatives-audit.md) records replacement choices, code evidence, current source links, licenses and unmeasured limits.
+The user's latest direction supersedes the Electron-first recommendation. Preserve the [previous plan](./archive/electron-v1/local-desktop-product-plan.md) for history, but execute only the [current Luna cards](./luna-implementation-cards.md). The [chat-first plan](./chat-first-delivery.md#final-goal) defines the final product goal, 16 GiB macOS beta and full M41 release. The [custom-code audit](./custom-code-alternatives-audit.md) records replacement choices, code evidence, current source links, licenses and unmeasured limits.
 
 ## 1. Confirmed requirements
 
@@ -15,9 +15,11 @@ The user's latest direction supersedes the Electron-first recommendation. Preser
 - Free local model and open-source application/dependencies. Inference remains local; optional browsing explicitly uses website network access.
 - Keep the machine usable through bounded work. Footprint accounting excludes inference only as a separate category, while still reporting total resource use.
 
-### First-release scope
+### Full-release scope
 
 Chat, selected text-file summarization/comparison/extraction, reviewed creation/edit of one file, confirmed registered CLI actions, and a small curated MCP integration mechanism. UTF-8 text/Markdown/JSON/CSV first. Browser research and office/PDF conversion are optional later integrations.
+
+M16c is an earlier reviewable macOS Apple silicon chat-only beta for a physically certified 16 GiB profile. It includes explicit model setup, real Stop, legacy chat migration, offline clean-install and footprint evidence. It grants no workspace, CLI or MCP tools. The full consumer release remains M41; 8 GiB and Windows support require their own hardware proof.
 
 No account, cloud inference, telemetry, voice, WhatsApp, automatic sub-agents, vector memory, unrestricted shell/desktop control, or marketplace autoinstall in this release. CLI initially exposes registered structured actions; users see each action before execution. A workspace cwd is not an OS sandbox, so arbitrary scripts/project execution must not be described as confined file operations.
 
@@ -25,25 +27,27 @@ No account, cloud inference, telemetry, voice, WhatsApp, automatic sub-agents, v
 
 | Area | Decision | Why |
 | --- | --- | --- |
-| UI | Reuse React/Zustand/Tailwind and useful accessible components; plain Vite static build. | Existing UI is web code. A simultaneous framework rewrite adds work before measuring savings. |
+| UI | Use Assistant UI's React chat runtime/components over the existing React/Vite/Tailwind static app, with one custom adapter to `IAgentClient`. | Reuses the current web stack and provides streaming chat interactions. LangChain/LangGraph remain the AI layer; bounded IndexedDB remains the only durable chat history. Measure the complete UI bundle against the 750 KiB gzip target before promotion. |
 | Desktop | Tauri 2 + system WebView, one main window. | Removes the bundled Electron/Chromium/Node distribution. OS WebView costs remain visible. [Tauri process model](https://tauri.app/concept/process-model/) |
 | Native bridge | Rust owns capabilities, workspace grants, approvals, local HTTP, process lifecycle and resource/task limits. | Browser/model input cannot create OS authority. Keep commands thin and domain modules small. |
-| Agent mechanics | AI SDK Core + one OpenAI-compatible provider behind existing `IAgentClient`. | Replaces custom streaming/protocol/tool-loop mechanics while retaining the UI seam. Browser/Tauri compatibility is proved first. [Custom fetch support](https://ai-sdk.dev/providers/openai-compatible-providers) |
+| Agent mechanics | LangChain.js provider/message types and an explicit bounded LangGraph.js graph behind existing `IAgentClient`. | Replaces custom streaming and tool-loop mechanics while retaining the UI seam; the first chat graph has no tools. M19b connects read tools through native ToolBroker. [Migration decision](./langchain-langgraph-migration.md) |
 | Inference | One owned pinned `llama-server` process and an exact GGUF/template profile, started lazily. | Direct native sidecar supports a small bridge without a bundled Node/Python server or parallel engine implementations. Actual size/reliability need proof. [llama.cpp](https://github.com/ggml-org/llama.cpp) |
 | Tools | One native ToolBroker with built-in workspace policy, mature CLI actions, and official `rmcp` for external servers. | In-process library use avoids extra processes; real external MCP sessions use a maintained protocol library. [Rust SDK](https://github.com/modelcontextprotocol/rust-sdk) |
 | Persistence | IndexedDB for bounded chat/history; official Tauri store for fixed preferences; `local-operation-journal` for immutable task/operation proposals, approvals and recovery. | Reusable synchronous rusqlite crate plus portable TypeScript bridge, with no workflow server. [Journal contract](../crates/local-operation-journal/README.md), [Tauri store](https://tauri.app/plugin/store/) |
 | Optional browser | Official Microsoft Playwright MCP, explicitly enabled and pinned. | Replaces custom browser handlers; Node/browser costs are separate and never required at core boot. [Official server](https://github.com/microsoft/playwright-mcp) |
 | Optional conversion | Microsoft MarkItDown CLI/MCP. | Reuse conversion instead of maintaining parsers; Python/format packages stay outside core. [MarkItDown](https://github.com/microsoft/markitdown) |
 
-These are choices for the revised plan, not a claim that their combined implementation has passed. M03 is a hard compatibility gate. If browser SDK/bridge cost fails, review one switch to Rig; if native runtime/model support fails, review one runtime/profile adjustment. Do not implement two frameworks or engines as speculative fallbacks.
+These are choices for the revised plan, not a claim that their combined implementation has passed. M03's macOS fixture proof passed; Windows WebView2, real model and bundle costs still need proof. A failure requires a reviewed architecture decision, never an automatic fallback framework or engine.
 
-Candidate dependency pins observed during research: Tauri 2.12.2, `ai` 7.0.137, OpenAI-compatible provider 3.0.67, rmcp 3.5.1, llama.cpp 0.6.0. Verify compatible stable releases/security patches, exact artifacts and licenses when M01/M03/M10 run; commit lockfiles. Do not use floating `latest`, git-main crates or unpinned `npx`/`uvx` at runtime. The audit includes the MCP licensing transition; the application's MIT license does not remove dependency/model notice obligations.
+LangChain.js and LangGraph.js are the selected application stack. The [M03 proof](./reports/stack-proof.md) passed 11/11 fixture checks in macOS WKWebView, including two native tool calls, canonical history and cancellation; it did not validate a real GGUF/runtime or Windows. The [AI engineering demand shortlist](./reports/ai-layer-market-research.md) remains market background: its largely Python hiring counts do not establish LangGraph.js-specific demand or SDK footprint.
+
+M03 pinned `@langchain/core` 1.2.17, `@langchain/openai` 1.6.2 and `@langchain/langgraph` 1.4.21 for the fixture proof. M10 must verify exact runtime/model artifacts and licenses before use. Do not use floating `latest`, git-main crates or unpinned `npx`/`uvx` at runtime. The audit includes the MCP licensing transition; the application's MIT license does not remove dependency/model notice obligations.
 
 ## 3. Target architecture
 
 ```mermaid
 flowchart TB
-    UI[Bundled React web UI] --> AC[IAgentClient: AI SDK bounded task]
+    UI[Bundled Assistant UI React chat] --> AC[IAgentClient: LangChain/LangGraph bounded task]
     AC --> BF[Small fetch and tool bridge adapter]
     BF --> IPC[Tauri typed commands and Channels]
     IPC --> POL[Native task policy: owner, grants, limits, approvals]
@@ -79,7 +83,7 @@ Do not duplicate raw LLM SSE parsing or MCP JSON-RPC framing. Retain only bounde
 
 The [Rust crate](../crates/local-operation-journal/) and [TypeScript package](../packages/local-operation-journal-bridge/) are independent of Tauri and the existing Electron runtime. Neither is published yet. The bridge submits immutable pending intents and reads durable facts. Only native policy may approve, claim execution, finish or recover. Intent payload semantics (hashes, scoped paths, executable/argv/env, grants) are application-owned. Recovery marks interrupted effects uncertain; it never repeats a CLI or applies staged file contents. A fresh execution needs a new immutable ID and fresh review.
 
-Integrate through the [journal cards](./operation-journal-integration.md) inside M13/M21–M23/M26–M27. Do not reimplement storage or treat SQLite as atomic with external filesystem/CLI effects. M00–M03 still gate the Tauri stack. Existing file staging/task JSON remains unchanged until the guarded host integration is complete.
+Integrate through the [journal cards](./operation-journal-integration.md) starting at M21/J01, then M21–M23/M26–M27. M13 chat and M17–M20 read-only work do not need the journal. Do not reimplement storage or treat SQLite as atomic with external filesystem/CLI effects. Existing file staging/task JSON remains unchanged until the guarded host integration is complete.
 
 ## 4. Native authority and process rules
 
@@ -98,7 +102,7 @@ Generic reference filesystem/terminal MCP servers cannot replace points 4–9. P
 
 ## 5. Footprint and performance budgets
 
-All values below are proposed engineering targets; no app or model has been benchmarked for this revision.
+All values below are proposed engineering targets. The M03 fixture proof measured limited bridge/asset behavior; no real model or complete app workload has been benchmarked for this revision.
 
 | Category | Initial target / measurement |
 | --- | --- |
@@ -116,7 +120,7 @@ Windows uses system Evergreen WebView2 where available. A small installer may ne
 
 ### Local model policy
 
-Candidate open-weight Apache-2.0 Qwen3.5 profiles: 2B for reduced available memory, 4B for a measured 16 GB baseline, optional 9B only on verified higher tiers. The [official 4B model card](https://huggingface.co/Qwen/Qwen3.5-4B) documents tool use, but the exact GGUF conversion/quantization and llama.cpp template must be verified separately. Do not equate artifact size with peak RAM or claim the family benchmark applies to a small variant.
+Use the pinned Qwen3 1.7B candidate for current development E2E. It is not certified: real inference has not run because no GGUF is available and disk space is below import needs. Revisit Qwen3.5 after the Qwen3 candidate E2E. Verify each exact GGUF, quantization, template, license and resource envelope before use. Do not infer peak RAM from artifact size or make performance claims from model-family benchmarks.
 
 Start Low impact at 4,096 context / 512 output tokens; Balanced at 8,192 / 1,024. One inference slot, thinking disabled where supported, 6/8 tool calls, 8/10 model turns and 90/120 seconds active work. Consecutive errors stop after two; a third identical call stops the loop. Bound tool results to 8/16 KiB within aggregate context. These are tuning starting points, not quality guarantees.
 
@@ -142,7 +146,7 @@ Lazy-start the owned engine. Low impact releases the model/process after a compl
 
 Stories: U1, U3, U4. Cards M00–M03.
 
-Preserve history/decisions, create a minimal Tauri/Vite build, then prove an SDK streaming turn and harmless tool follow-up through typed native IPC with a fake local provider. Measure release asset/bridge size before porting services.
+Preserve history/decisions, create a minimal Tauri/Vite build, then prove a LangChain/LangGraph streaming turn and harmless tool follow-up through typed native IPC with a fake local provider. M03 passed 11/11 in macOS WKWebView; WebView2 proof remains open.
 
 Acceptance: no Node production sidecar; no generic privileged browser APIs; SDK works in WKWebView and WebView2 or the limitation is recorded; candidate dependency versions/security patches locked; measured proof report decides whether the selected stack proceeds. No speculative port of all Electron modules.
 
@@ -150,7 +154,7 @@ Acceptance: no Node production sidecar; no generic privileged browser APIs; SDK 
 
 Stories: U1, U9. Cards M04–M09.
 
-Reuse the useful chat/settings/review UI with a small DesktopBridge, detach cloud/voice/WhatsApp/MCP boot paths, add bounded storage, migrate attachment/grant semantics, and deliver a versioned Electron export → Tauri import path.
+Reuse the useful chat/settings/review UI with a small DesktopBridge and detach cloud/voice/WhatsApp/MCP boot paths. M04–M06 build chat UI and bounded storage; M07–M09 migrate attachment semantics and deliver versioned Electron export → Tauri import after M15 proves real chat. M16c then packages the chat-only beta.
 
 Acceptance: offline boot starts no optional service; missing bridge fails visibly; old chats/settings import without secrets/authority; the original profile is untouched. The current architecture map still describes implementation, not an already completed migration.
 
@@ -158,7 +162,7 @@ Acceptance: offline boot starts no optional service; missing bridge fails visibl
 
 Stories: U2–U4. Cards M10–M16.
 
-Verify complete native runtime/model/template artifacts first, then manage one lazy owned process, explicit model setup/import, native task/HTTP queue, SDK agent adapter, streaming UI, cancellation and resource presets.
+Verify complete native runtime/model/template artifacts first, then manage one lazy owned process, explicit model setup/import, native task/HTTP queue, LangChain/LangGraph chat adapter, streaming UI, cancellation and resource presets. M16b certifies each RAM tier only on matching hardware; its 16 GiB result may advance to M16c while 8 GiB remains pending.
 
 Acceptance: exact real-model protocol matches the SDK; no cloud fallback/download on boot; two sessions serialize and cannot cross-deliver; Stop cancels compute and further actions; no leaked child/listener after errors/quit. Missing hardware stays unverified rather than being declared passing.
 
@@ -166,7 +170,7 @@ Acceptance: exact real-model protocol matches the SDK; no cloud fallback/downloa
 
 Stories: U5, U6. Cards M17–M24.
 
-Deliver trusted workspace grants, bounded read tools, context budgeting, source-aware read tasks, and a proposal → review → apply/recover/undo workflow. No recursive workspace ingestion or multi-file transactions.
+Deliver trusted workspace grants, bounded read tools, M19a context budgeting, M19b LangGraph-to-ToolBroker routing, source-aware read tasks, and a proposal → review → apply/recover/undo workflow. No recursive workspace ingestion or multi-file transactions.
 
 Acceptance: traversal/symlink/junction/revocation checks, no original write before review, stale-target conflicts, crash recovery and cancellation all pass. Development/evaluation tool profiles use synthetic files/temp grants; shipping profiles stay chat-only until Phase 5 certification.
 
@@ -218,24 +222,23 @@ No `clean:state`/`dev:clean`, global package upgrades, model acquisition on ordi
 
 ## 8. Next action and remaining evidence
 
-Begin M00–M03. The first demo is an offline Tauri UI with an SDK stream through the native bridge and measured payload cost. Then build real local chat before broad tool work. This order reduces speculative rewrites and exposes compatibility issues early.
+M00–M13 are implemented. M14 is implemented with mock proof; public `stream()` emits LangGraph `messages` mode live, while `streamState()` exposes final state. No production UI calls the graph. M16a has not started; M15 Assistant UI/history/Stop is pending. Resume at M16a, then M15. Real inference is blocked by missing GGUF and insufficient import disk space; M14 real-candidate E2E and M16b remain open. The candidate is pinned Qwen3 1.7B for development, then revisit Qwen3.5. The [final goal](./chat-first-delivery.md#final-goal) remains M41; macOS comes first, Windows next, approved workspace CLI actions later.
 
 ### Remaining development gates
 
 The current development Mac is arm64 with 16 GiB RAM (read on 10 October 2026).
-First-release minimum RAM and whether Intel Macs are included still need a product
-decision. These questions do not block the minimal Tauri scaffold.
+The first beta targets this 16 GiB Apple silicon class. An 8 GiB tier is a final-goal target pending physical certification; Intel Macs require separate evidence before any support claim.
 
 | Unknown | Resolution | Gate |
 | --- | --- | --- |
-| Supported CPU architectures and minimum RAM | Confirm release scope; name reference machines and Windows hardware access. | M00 baseline, before model tuning/support claims |
-| SDK/native streaming compatibility and adapter cost | Prove streaming, tool turns and cancellation in actual system WebViews; lock compatible versions. | M01–M03, before broad service porting |
+| Supported CPU architectures and minimum RAM | Beta: named 16 GiB Apple silicon; certify actual 8 GiB Mac and Windows x64 separately. | M16b per tier, M36 Windows, before support claims |
+| SDK/native streaming compatibility and adapter cost | macOS WKWebView fixture proof passed 11/11; prove WebView2 and real model behavior separately. | M03 Windows follow-up, M10–M16 real model |
 | Exact model/runtime/template quality and license | Verify artifacts and benchmark intended text/tool tasks under memory/CPU limits. Unknown capabilities remain disabled. | M10, M16, M32, before promoting capabilities |
 | Actual app size, idle RAM and responsiveness | Measure complete Tauri/WebView/native artifacts and workloads; the small TS journal alone is not an app footprint result. | M03, M33–M34, before release budget claims |
 | Native approval, process ownership and crash reconciliation | Wire journal into host policy; prove scopes, stale approvals, cancellation and uncertain file/CLI outcomes on each OS. | J01–J04, M17–M27, before privileged workflows |
 | Clean installs, supported OS versions and signing | Verify macOS/Windows prerequisites, runtime libraries, offline setup and distribution identity. | M35–M37, before supported release/publication |
 
 Source status: standalone journal and TypeScript bridge are implemented and checked
-locally on macOS; application integration and Tauri migration remain unimplemented.
+locally on macOS; M13 native chat transport and M14 mock graph proof are implemented. M16a and M15 remain pending; journal host integration starts at M21.
 Their [local evidence and integration cards](./operation-journal-integration.md)
 record what has actually been verified. No model has been downloaded or benchmarked.

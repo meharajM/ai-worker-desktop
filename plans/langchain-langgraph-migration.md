@@ -1,6 +1,6 @@
 # LangChain.js + LangGraph.js migration decision
 
-Decision recorded 10 October 2026. This plan supersedes earlier AI SDK Core selections and proof instructions until `local-desktop-product-plan.md` is consolidated. It is a plan, not implementation evidence or a claim that compatibility passed.
+Decision recorded 10 October 2026; implementation checkpoint `d394789` on 11 October 2026. This plan supersedes earlier AI SDK Core selections and proof instructions. M14's one-node LangGraph graph is implemented with mocked proof. Public `stream()` emits LangGraph `messages` mode live; `streamState()` emits final `values` state. No production UI calls it yet. Real inference remains unverified because no GGUF is available and disk space is below import needs. macOS arm64 runtime packaging and alias verification are implemented; the candidate is pinned Qwen3 1.7B for development E2E, then revisit Qwen3.5. Windows and performance remain unverified.
 
 ## Decision
 
@@ -36,13 +36,17 @@ Prove this real chain in actual WKWebView:
 
 Then run WebView2 when hardware is available. If unavailable, record missing hardware and leave that gate pending. Record exact package versions, imports, browser support source, imported package graph, JS gzip and native size, adapter details, and each pass/fail in `plans/reports/stack-proof.md`. Keep the initial JS gzip target at or below 750 KiB. Failed or unavailable evidence is not a pass. Continue only after a reviewed decision if compatibility or size fails.
 
-### M14 — In-process graph adapter
+### M14 — Tool-free chat graph adapter
 
-Keep change focused across provider transport, graph adapter, history translation, `IAgentClient`, and the UI stream/stop adapter only where required. Use explicit LangGraph graph primitives (for example `StateGraph` with conditional routing); use an official prebuilt agent only if it adds no second graph/runtime and preserves the same module boundaries. Do not implement another hand-written agent loop.
+Keep change focused across provider transport, graph adapter, history translation, `IAgentClient`, and the UI stream/stop adapter only where required. Use one explicit LangGraph model node with no tools for the first chat. Preserve native task/profile limits and canonical history; do not implement another hand-written agent loop.
 
 Required for every new AI-layer, bridge, fixture and proof module from this point onward: one clear responsibility, explicit export contract, and short module/export comments. Add targeted comments only where code does not explain non-obvious graph transitions, native trust/limit boundaries, cancellation order, or canonical history invariants. Keep comments tied to why the invariant exists; avoid narrating each statement.
 
-Focused checks: multiple tool calls/results, malformed calls, history round trip, empty final output, provider failure, abort before/during/after tool dispatch, late events, task identity, native cleanup and proof-asset isolation. Confirm no cloud tracing/checkpointer and no SDK-to-Rig/provider fallback.
+Implemented M14 mock proof covers graph chunk streaming, delivery before native completion, final state access, local endpoint/body rejection, native error propagation, abort before start acknowledgement, and rejection of unsupported tool/multimodal inputs. It is not real model E2E: no GGUF is available and disk space is below import needs. No production UI caller, persistence or UI Stop integration exists yet. Keep the following real-candidate checks open: real prompt/stream, history round trip, empty final output, provider failure, abort before/during streaming, late events, task identity and native cleanup. Confirm no cloud tracing/checkpointer or automatic framework/provider fallback.
+
+### M19b — Native-broker read-tool route
+
+After M18 native read tools and M19a context budgeting, add bounded LangGraph model → ToolBroker → model routing. Expose only current native-approved read descriptors; native policy validates every call. Preserve complete assistant call/result groups with source metadata. Check two distinct tool calls/results, malformed or duplicate calls, revoked grants, abort during dispatch and late events. Write, CLI and MCP tools remain absent until their own cards; production promotion still requires M32.
 
 ## Current documentation used
 

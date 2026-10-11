@@ -1,6 +1,6 @@
 # Custom code and open-source alternatives audit
 
-Date: 10 October 2026. Static audit of the published `ai-worker-desktop` baseline `e56f8d2`. No dependency installation, runtime benchmark, or implementation performed.
+Date: 10 October 2026. Static audit of the published `ai-worker-desktop` baseline `e56f8d2`. This audit did not install dependencies or benchmark runtime behavior; subsequent implementation status is tracked in the current Luna cards and chat-first plan.
 
 Confirmed direction: offline local web UI inside a small Tauri app; macOS first, Windows next; CLI actions require confirmation in a selected workspace. The later macOS/Windows answer supersedes the earlier Linux answer.
 
@@ -14,7 +14,7 @@ Measured source inventory, not runtime memory:
 | --- | --- | --- |
 | Browser tool implementation | 21 files / 2,994 lines, plus 181-line PlaywrightService | Large custom layer over functionality offered by a maintained MCP server. |
 | Old browser implementation | 1,813 lines | Candidate for deletion after import/reference checks; being present does not prove it runs. |
-| Agent subsystem | 2,459 lines plus 1,231-line AgentRuntime and 592-line decomposer | Replace execution mechanics with one SDK; remove decomposition/reflection from the initial product. |
+| Agent subsystem | 2,459 lines plus 1,231-line AgentRuntime and 592-line decomposer | Replace execution mechanics with selected LangChain/LangGraph stack; remove decomposition/reflection from the initial product. |
 | Renderer MCP wrapper | 583 lines | Duplicated dispatch, path handling, logging and reconnect logic should shrink to one bridge adapter. |
 | Memory adapters/privacy/migration | 8 files / 2,009 lines, plus MemoryService | A graph-memory subsystem is unnecessary for initial chat/file/CLI tasks. |
 | Electron IPC / preload | 12 files / 1,256 lines; 213-line preload | Port only required commands to typed Tauri IPC; remove unused channels. |
@@ -43,10 +43,10 @@ Paths below identify inspected current code. Proposed replacements do not exist 
 | Dynamic MCP argument/schema validation | **Reuse:** Rust `jsonschema` in explicit offline mode for vetted catalog schemas; typed Serde arguments for built-ins. | Restrict references, size/depth/regex/compile work. The validator treats schemas as trusted code; do not accept arbitrary schemas from an unreviewed marketplace. [Security guidance](https://github.com/stranger6667/jsonschema/blob/master/SECURITY.md) |
 | Custom browser tools, BrowserManager, stealth/humanMouse, old PlaywrightService | **Replace when browser is enabled:** official Microsoft `@playwright/mcp`. | Optional Node/browser installation, constrained tool exposure, dedicated browser profile, network policy and lifecycle. Core boot starts no browser. |
 | Browser CLI alternative | **Consider later:** official Playwright CLI + skills for coding-oriented workflows. | Smaller tool context can help larger coding models, but general shell/skill interpretation is a poorer initial fit for small local models. Measure before switching. |
-| `llm.ts`, provider wrappers, custom message/tool parsers | **Replace mechanics:** AI SDK Core + its OpenAI-compatible provider, talking to one local engine through Tauri. | Small bounded fetch/IPC adapter and model profile mapping. No default gateway, cloud probe or provider fallback. |
-| AgentRuntime, extracted orchestration/special-tool services | **Replace:** one AI SDK bounded streaming tool loop behind existing `IAgentClient`. | Application limits, UI/session mapping, workspace/tool policy and approval stay explicit. SDK approval features alone are not native authorization. |
+| `llm.ts`, provider wrappers, custom message/tool parsers | **Replace mechanics:** LangChain.js provider/message types, talking to one local engine through Tauri. | Small bounded fetch/IPC adapter and model profile mapping. No default gateway, cloud probe or provider fallback. |
+| AgentRuntime, extracted orchestration/special-tool services | **Replace:** one bounded LangGraph.js graph behind existing `IAgentClient`; add read-tool routing in M19b. | Application limits, UI/session mapping, workspace/tool policy and approval stay explicit. Graph behavior is not native authorization. |
 | Custom task decomposition, parallel sub-agents, continuation and MemoryReflector | **Remove from v1.** | One active task/inference. User starts another task explicitly after a bounded stop. No replacement framework. |
-| `dcp.ts`, execution-lanes/resource-lock wrappers | **Keep only needed policy:** whole-turn context trimming; native queue/semaphore and cancellation primitives. | SDK stop conditions do not cover all elapsed-time, resource, output and cross-session limits. |
+| `dcp.ts`, execution-lanes/resource-lock wrappers | **Keep only needed policy:** whole-turn context trimming; native queue/semaphore and cancellation primitives. | Graph stop conditions do not cover all elapsed-time, resource, output and cross-session limits. |
 | Think-block regex repair / result reporters / plan-manager task files | **Remove from new execution path.** Use structured SDK/runtime content and real operation states. | Small UI presentation adapters; preserve existing chats containing those fields during import. |
 | Vosk ModelManager/ModelServer and speech hooks/workers | **Remove from core.** | They manage speech, not LLMs. Voice can later use a separately evaluated offline engine; no voice runtime is bundled now. |
 | Ollama-specific model/download wrappers, WebLLM workers | **One proposed owned engine:** pinned `llama-server` + GGUF artifact, replacing both defaults after compatibility proof. | Explicit model acquisition/import, checksum/license verification and owned lifecycle. No dual-engine implementation. |
@@ -68,21 +68,21 @@ The inventory covers application subsystems, not a claim that every helper/funct
 
 ## 3. Shortlist, licenses, and stability evidence
 
-Snapshot from official repositories/releases and registry metadata on 10 October 2026. These versions are **candidate pins**, not a tested compatible stack. A recent release or a large star count does not prove reliability.
+Snapshot from official repositories/releases and registry metadata on 10 October 2026. These versions are **research candidates**, not a tested compatible stack; the selected LangChain/LangGraph fixture pins and measured result are in the [M03 report](./reports/stack-proof.md). A recent release or a large star count does not prove reliability.
 
 | Candidate | Observed release/version | License / selection reason |
 | --- | --- | --- |
 | Tauri | `tauri-v2.12.2`, 9 October 2026 | MIT / Apache-2.0; maintained desktop bridge using system WebViews. Pin matching official plugins and a supported Rust toolchain. [Repository](https://github.com/tauri-apps/tauri), [process model](https://tauri.app/concept/process-model/) |
 | Rust MCP SDK | `rmcp-v3.5.1`, 5 October 2026 | Official protocol library. Current LICENSE documents a transition from MIT to Apache-2.0; preserve notices for the exact pinned package/transitives. Select only required transports/features. [SDK](https://github.com/modelcontextprotocol/rust-sdk), [license](https://github.com/modelcontextprotocol/rust-sdk/blob/main/LICENSE) |
-| AI SDK Core / OpenAI-compatible provider | npm `ai@7.0.137` / `@ai-sdk/openai-compatible@3.0.67` | Apache-2.0; reuses TypeScript UI skills and protocol/stream/tool mechanics. Browser/WebView + custom bridge compatibility is a mandatory early proof. [SDK](https://github.com/vercel/ai), [custom fetch](https://ai-sdk.dev/providers/openai-compatible-providers) |
+| AI SDK Core / OpenAI-compatible provider | npm `ai@7.0.137` / `@ai-sdk/openai-compatible@3.0.67` | Historical alternative, not the selected app stack. [SDK](https://github.com/vercel/ai), [custom fetch](https://ai-sdk.dev/providers/openai-compatible-providers) |
 | llama.cpp | `v0.6.0`, 5 October 2026 | MIT; native server and GGUF runtime with platform backends. Rapidly evolving: pin complete binary/library assets and exact tool template. [Repository](https://github.com/ggml-org/llama.cpp), [tool templates](https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md) |
 | Playwright MCP | `v0.0.83`, 28 September 2026 | Apache-2.0; replaces custom browser implementation. Pre-1.0 package: optional, pinned, regression checked. [Official server](https://github.com/microsoft/playwright-mcp) |
 | ripgrep | `15.2.0`, 15 July 2026 | MIT / Unlicense; native search. Only bundle if measured size/use warrants it; otherwise detect/import explicitly. [Repository](https://github.com/BurntSushi/ripgrep) |
 | MarkItDown | `v0.1.8`, 21 September 2026 | MIT; official converter. Optional due to Python/format dependencies and pre-1.0 changes. [Repository](https://github.com/microsoft/markitdown) |
 
-**Alternative evaluated:** Rig (`v0.44.0`, MIT) supplies Rust agent/provider/MCP integrations. It is a reasonable fallback if the browser SDK proof fails or its total adapter/asset cost exceeds the budget. It moves execution into Rust and needs UI adaptation; do not implement Rig and AI SDK together. Context7 currently shows facade/agent module migrations, reinforcing the need to pin and check the exact version. [Rig](https://github.com/0xPlaygrounds/rig)
+**Alternative evaluated:** Rig (`v0.44.0`, MIT) supplies Rust agent/provider/MCP integrations. It is not the selected stack; an architecture change needs a separate review. It moves execution into Rust and needs UI adaptation. [Rig](https://github.com/0xPlaygrounds/rig)
 
-LangChain/LangGraph, Python agent servers, a Node sidecar running all existing Electron services, and a second frontend framework are not selected: their execution models introduce work or runtime prerequisites the requested small bridge does not need. This is an architecture-fit decision, not a measured speed comparison.
+LangChain.js/LangGraph.js were subsequently selected and passed the macOS M03 fixture proof. Python agent servers, a Node sidecar running all existing Electron services, and a second frontend framework remain outside the plan. This is an architecture-fit decision, not a measured speed comparison.
 
 ## 4. Why MCP everywhere is not automatically smaller
 

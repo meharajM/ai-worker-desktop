@@ -5,7 +5,7 @@ Branch: `codex/local-chat-e2e`
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| M13 — native chat transport | in progress | First implementation slice. Pinned Qwen3 1.7B candidate is developer evaluation only. Runtime bundle is now prepared for macOS arm64; real-model smoke remains gated on a local GGUF. |
+| M13 — native chat transport | implemented | Fresh review is clear. Pinned Qwen3 1.7B candidate is developer evaluation only; real-model smoke remains gated on a local GGUF. |
 | Task 111 — macOS arm64 runtime package | implemented | Commit `3603613` adds pinned b11429 preparation, Tauri resource mapping and startup flag/version check. Read-only review found loader aliases were not revalidated before spawn; follow-up now checks all nine expected relative symlinks and adds a focused test. No model download or inference. |
 | M16a — resource envelope | not started | Use exact candidate controls in native policy; no certification claims. |
 | M14 — LangChain/LangGraph chat client | implemented | One model node streams ChatOpenAI through the native M13 bridge; deterministic mock proof passes. No tools, persistence or UI. |
