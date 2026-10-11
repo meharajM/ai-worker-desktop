@@ -1,5 +1,5 @@
 import { AIMessage, HumanMessage } from '@langchain/core/messages'
-import type { LocalChatEvent, LocalChatMessage } from '../src/desktop-bridge'
+import { MAX_LOCAL_CHAT_MESSAGES, type LocalChatEvent, type LocalChatMessage } from '../src/desktop-bridge'
 import { createLocalChatGraph, localChatFetch, LOCAL_CHAT_URL } from '../src/local-chat'
 
 type MockBridge = {
@@ -165,18 +165,21 @@ export async function runM14MockAssertions(onResult?: (result: Result) => void):
     return 'AbortError surfaced; native cancel sent once after acknowledgement'
   })
 
-  await check('tool-call and multimodal graph inputs are rejected', async () => {
-    const bridge = mock(() => undefined)
+  await check('unsupported and over-limit graph inputs are rejected before native start', async () => {
+    let starts = 0
+    const bridge = mock(() => { starts++ })
     for (const messages of [
       [new AIMessage({ content: '', tool_calls: [{ id: 'call', name: 'x', args: {}, type: 'tool_call' }] })],
       [new HumanMessage([{ type: 'text', text: 'structured' } as never])],
+      Array.from({ length: MAX_LOCAL_CHAT_MESSAGES + 1 }, () => new HumanMessage('too long')),
     ]) {
       try {
         for await (const _state of await createLocalChatGraph(bridge).stream(messages)) { /* consume */ }
         throw new Error('unsupported input was accepted')
       } catch (error) { assert(String(error).includes('Unsupported local chat message') || String(error).includes('tool calls'), String(error)) }
     }
-    return 'tool calls and content blocks rejected'
+    assert(starts === 0, `native started ${starts} unsupported requests`)
+    return 'tool calls, content blocks, and over-limit histories rejected'
   })
 
   return results

@@ -8,6 +8,8 @@ fn main() {
         "model_catalog",
         "model_import",
         "model_cancel_import",
+        "local_chat_start",
+        "local_chat_cancel",
     ];
     const WITH_PROOF: &[&str] = &[
         "status",
@@ -18,6 +20,8 @@ fn main() {
         "model_catalog",
         "model_import",
         "model_cancel_import",
+        "local_chat_start",
+        "local_chat_cancel",
         "proof_stream",
         "proof_cancel",
         "proof_fixture_action",
@@ -31,6 +35,8 @@ fn main() {
         "model_catalog",
         "model_import",
         "model_cancel_import",
+        "local_chat_start",
+        "local_chat_cancel",
         "history_proof_context",
         "history_proof_finish",
     ];
@@ -43,6 +49,8 @@ fn main() {
         "model_catalog",
         "model_import",
         "model_cancel_import",
+        "local_chat_start",
+        "local_chat_cancel",
         "proof_stream",
         "proof_cancel",
         "proof_fixture_action",

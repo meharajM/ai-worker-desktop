@@ -1,7 +1,7 @@
 import { AIMessage, AIMessageChunk, type BaseMessage } from '@langchain/core/messages'
 import { ChatOpenAI } from '@langchain/openai'
 import { END, MessagesValue, START, StateGraph, StateSchema } from '@langchain/langgraph'
-import { desktopBridge, type LocalChatEvent, type LocalChatMessage } from './desktop-bridge'
+import { desktopBridge, MAX_LOCAL_CHAT_MESSAGES, type LocalChatEvent, type LocalChatMessage } from './desktop-bridge'
 
 /** One fixed pseudo endpoint keeps every model request inside this Fetch adapter. */
 export const LOCAL_CHAT_URL = 'http://local-chat.invalid/v1'
@@ -16,7 +16,7 @@ function abortError() {
 }
 
 function graphMessages(value: unknown): LocalChatMessage[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 32) throw new Error('Unsupported local chat messages')
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_LOCAL_CHAT_MESSAGES) throw new Error('Unsupported local chat messages')
   const encoder = new TextEncoder()
   let total = 0
   return value.map((message: unknown) => {
@@ -38,7 +38,7 @@ function graphMessages(value: unknown): LocalChatMessage[] {
 }
 
 function wireMessages(value: unknown): LocalChatMessage[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 32) throw new Error('Unsupported local chat messages')
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_LOCAL_CHAT_MESSAGES) throw new Error('Unsupported local chat messages')
   const encoder = new TextEncoder()
   let total = 0
   return value.map((message: unknown) => {

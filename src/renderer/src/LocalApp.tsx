@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { AIMessage, HumanMessage, type BaseMessage } from '@langchain/core/messages'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from './components/primitives/Button'
 import { TextArea } from './components/input/TextArea'
-import { DesktopBridgeError, desktopBridge, type DesktopPreferences, type ModelCatalog, type ModelImportProgress } from './desktop-bridge'
+import { DesktopBridgeError, desktopBridge, MAX_LOCAL_CHAT_MESSAGES, type DesktopPreferences, type ModelCatalog, type ModelImportProgress } from './desktop-bridge'
+import { createLocalChatGraph } from './local-chat'
 
 type View = 'chat' | 'settings'
 type PreferencePreset = DesktopPreferences['resourcePreset']
@@ -23,8 +25,12 @@ function safeError(error: unknown) {
 export function LocalApp() {
   const [view, setView] = useState<View>('chat')
   const [status, setStatus] = useState('Checking native bridge…')
-  const [text, setText] = useState('')
-  const [draft, setDraft] = useState('')
+  const [chatInput, setChatInput] = useState('')
+  const [chatTurns, setChatTurns] = useState<{ role: 'user' | 'assistant'; content: string }[]>([])
+  const [streamingAnswer, setStreamingAnswer] = useState('')
+  const [chatError, setChatError] = useState('')
+  const [chatNotice, setChatNotice] = useState('')
+  const [chatBusy, setChatBusy] = useState(false)
   const [preferenceLoadState, setPreferenceLoadState] = useState<PreferenceLoadState>('idle')
   const [preferences, setPreferences] = useState<DesktopPreferences>()
   const [selectedPreset, setSelectedPreset] = useState<PreferencePreset | ''>('')
@@ -37,9 +43,14 @@ export function LocalApp() {
   const [modelRequestId, setModelRequestId] = useState<string>()
   const [modelError, setModelError] = useState('')
   const saveBusy = useRef(false)
+  const chatBusyRef = useRef(false)
+  const chatAbort = useRef<AbortController | null>(null)
+  const chatHistory = useRef<BaseMessage[]>([])
   const preferencesGeneration = useRef(0)
   const checkGeneration = useRef(0)
   const mounted = useRef(false)
+  const chatGraph = useMemo(() => createLocalChatGraph(), [])
+  const chatLimitReached = chatHistory.current.length >= MAX_LOCAL_CHAT_MESSAGES
 
   const checkStatus = useCallback(async () => {
     const generation = ++checkGeneration.current
@@ -166,10 +177,59 @@ export function LocalApp() {
     }
   }, [modelRequestId])
 
-  function saveDraft() {
-    if (!text.trim()) return
-    setDraft(text)
-    setText('')
+  async function sendChat() {
+    const content = chatInput.trim()
+    if (!content || chatBusyRef.current || !modelCatalog?.developerCandidate?.installed) return
+    if (chatHistory.current.length >= MAX_LOCAL_CHAT_MESSAGES) {
+      setChatNotice(`This chat reached the ${MAX_LOCAL_CHAT_MESSAGES}-message context limit. Start a new chat to continue.`)
+      return
+    }
+    const history = [...chatHistory.current, new HumanMessage(content)]
+    const abort = new AbortController()
+    chatBusyRef.current = true
+    chatAbort.current = abort
+    chatHistory.current = history
+    setChatTurns((turns) => [...turns, { role: 'user', content }])
+    setChatInput('')
+    setChatError('')
+    setChatNotice('')
+    setStreamingAnswer('')
+    setChatBusy(true)
+    let answer = ''
+    try {
+      for await (const [chunk] of await chatGraph.stream(history, abort.signal)) {
+        if (typeof chunk.content !== 'string' || !chunk.content) continue
+        answer += chunk.content
+        setStreamingAnswer(answer)
+      }
+      if (!answer) throw new Error('The local model returned an empty response.')
+      chatHistory.current = [...history, new AIMessage(answer)]
+      setChatTurns((turns) => [...turns, { role: 'assistant', content: answer }])
+    } catch (error) {
+      if (answer) {
+        chatHistory.current = [...history, new AIMessage(answer)]
+        setChatTurns((turns) => [...turns, { role: 'assistant', content: answer }])
+      }
+      if (abort.signal.aborted) setChatNotice('Response stopped.')
+      else setChatError(error instanceof Error && error.message.length < 500 ? error.message : 'Local chat failed.')
+    } finally {
+      chatAbort.current = null
+      chatBusyRef.current = false
+      setStreamingAnswer('')
+      setChatBusy(false)
+    }
+  }
+
+  function stopChat() {
+    chatAbort.current?.abort()
+  }
+
+  function newChat() {
+    chatHistory.current = []
+    setChatTurns([])
+    setStreamingAnswer('')
+    setChatError('')
+    setChatNotice('')
   }
 
   useEffect(() => {
@@ -184,6 +244,7 @@ export function LocalApp() {
   useEffect(() => {
     if (view !== 'settings') {
       preferencesGeneration.current += 1
+      void loadModelCatalog()
       return
     }
     void loadPreferences()
@@ -225,41 +286,64 @@ export function LocalApp() {
           <>
             <header className="border-b border-[var(--color-border)] px-8 py-5">
               <h2 className="text-lg font-medium">Local chat</h2>
-              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Your workspace stays on this device.</p>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">The selected local model runs on this device. Chat is kept in this window for now.</p>
             </header>
-            <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-6 p-8">
-              <div>
-                <h3 className="text-xl font-semibold">Set up a local model to start chatting</h3>
-                <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-                  No model is configured yet. You can write a draft now; it will stay in this window and will not be sent.
+            <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-8">
+              <div className="flex items-start justify-between gap-4">
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  {!desktopBridge.isAvailable()
+                    ? 'Open the desktop app and import a supported model in Settings to chat.'
+                  : !modelCatalog
+                      ? modelError || 'Checking for an installed local model…'
+                      : modelCatalog.developerCandidate?.installed
+                        ? `Ready · ${modelCatalog.developerCandidate.name}`
+                        : 'Import the developer model from Settings to start chatting.'}
                 </p>
+                <Button type="button" variant="ghost" size="sm" onClick={newChat} disabled={chatBusy || chatTurns.length === 0}>New chat</Button>
               </div>
-              {draft && (
-                <p className="whitespace-pre-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm" aria-live="polite">
-                  <span className="mb-2 block text-xs text-[var(--color-text-secondary)]">Local draft · not sent</span>
-                  {draft}
-                </p>
-              )}
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-                <label htmlFor="local-draft" className="sr-only">Write a local draft</label>
+              <div className="flex-1 space-y-4 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4" aria-live="polite" aria-label="Conversation">
+                {chatTurns.length === 0 && !streamingAnswer && <p className="text-sm text-[var(--color-text-secondary)]">Send a message to begin a local conversation.</p>}
+                {chatTurns.map((turn, index) => (
+                  <article key={`${index}-${turn.role}`} className="whitespace-pre-wrap text-sm">
+                    <p className="mb-1 text-xs font-medium capitalize text-[var(--color-text-secondary)]">{turn.role}</p>
+                    <p>{turn.content}</p>
+                  </article>
+                ))}
+                {chatBusy && (
+                  <article className="whitespace-pre-wrap text-sm">
+                    <p className="mb-1 text-xs font-medium text-[var(--color-text-secondary)]">assistant · generating</p>
+                    <p>{streamingAnswer || 'Starting local model…'}</p>
+                  </article>
+                )}
+              </div>
+              {chatError && <p role="alert" className="text-sm text-red-300">Local chat failed: {chatError}</p>}
+              {chatLimitReached && <p role="status" aria-live="polite" className="text-sm text-[var(--color-text-secondary)]">This chat reached the {MAX_LOCAL_CHAT_MESSAGES}-message context limit. Start a new chat to continue.</p>}
+              {chatNotice && <p role="status" aria-live="polite" className="text-sm text-[var(--color-text-secondary)]">{chatNotice}</p>}
+              <form
+                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
+                onSubmit={(event) => { event.preventDefault(); void sendChat() }}
+              >
+                <label htmlFor="local-chat-input" className="sr-only">Message the local model</label>
                 <TextArea
-                  id="local-draft"
-                  value={text}
-                  onChange={(event) => setText(event.target.value)}
+                  id="local-chat-input"
+                  value={chatInput}
+                  disabled={chatBusy || chatLimitReached || !modelCatalog?.developerCandidate?.installed}
+                  onChange={(event) => setChatInput(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && !event.shiftKey) {
                       event.preventDefault()
-                      saveDraft()
+                      void sendChat()
                     }
                   }}
-                  placeholder="Write a draft… (Enter saves, Shift+Enter adds a line)"
+                  placeholder="Message the local model… (Enter sends, Shift+Enter adds a line)"
                 />
-                <div className="flex justify-end pt-2">
-                  <Button type="button" size="sm" variant="secondary" onClick={saveDraft} disabled={!text.trim()}>
-                    Save draft
+                <div className="flex justify-end gap-2 pt-2">
+                  {chatBusy && <Button type="button" size="sm" variant="ghost" onClick={stopChat}>Stop</Button>}
+                  <Button type="submit" size="sm" variant="secondary" disabled={chatBusy || chatLimitReached || !chatInput.trim() || !modelCatalog?.developerCandidate?.installed}>
+                    Send
                   </Button>
                 </div>
-              </div>
+              </form>
             </div>
           </>
         ) : (
@@ -307,7 +391,7 @@ export function LocalApp() {
               <section aria-labelledby="preferences-heading" aria-busy={preferenceLoadState === 'loading' || saving} className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
                 <h3 id="preferences-heading" className="font-semibold">Chat preferences</h3>
                 <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-                  Choose a saved resource preference. Its paired idle policy is selected automatically; runtime behavior is not available until model support is added.
+                  Choose a saved resource preference. Its paired idle policy is selected automatically; these preferences do not change model resource limits yet.
                 </p>
                 {preferenceLoadState === 'unavailable' && (
                   <p role="status" className="mt-4 text-sm text-[var(--color-text-secondary)]">Native preferences are available in the desktop app only.</p>

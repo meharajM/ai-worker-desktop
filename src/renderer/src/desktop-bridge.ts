@@ -58,6 +58,7 @@ export type DesktopPreferencesReply = {
 
 type Identity = { protocolVersion: number; ownerId: string; sessionId: string; requestId: string }
 type OpenRequest = Omit<Identity, 'sessionId'>
+export const MAX_LOCAL_CHAT_MESSAGES = 32
 export type LocalChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 export type LocalChatEvent =
   | { event: 'started'; data: { taskId: string; requestId: string } }
@@ -254,7 +255,7 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
     startLocalChat(taskId: string, messages: LocalChatMessage[], onEvent: (event: LocalChatEvent) => void): Promise<{ taskId: string; requestId: string }> {
       const encoder = new TextEncoder()
       let promptBytes = 0
-      const validMessages = Array.isArray(messages) && messages.length > 0 && messages.length <= 32 && messages.every((message) => {
+      const validMessages = Array.isArray(messages) && messages.length > 0 && messages.length <= MAX_LOCAL_CHAT_MESSAGES && messages.every((message) => {
         if (!object(message) || Object.keys(message).sort().join(',') !== 'content,role' ||
           !['system', 'user', 'assistant'].includes(message.role) || typeof message.content !== 'string' ||
           !message.content.length || message.content.includes('\0')) return false

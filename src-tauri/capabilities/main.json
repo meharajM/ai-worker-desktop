@@ -11,6 +11,8 @@
     "allow-bridge-update-preferences",
     "allow-model-catalog",
     "allow-model-import",
-    "allow-model-cancel-import"
+    "allow-model-cancel-import",
+    "allow-local-chat-start",
+    "allow-local-chat-cancel"
   ]
 }

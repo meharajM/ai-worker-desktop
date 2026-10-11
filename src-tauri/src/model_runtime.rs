@@ -439,15 +439,33 @@ fn verify_runtime_assets(assets: &Assets) -> Result<(), &'static str> {
 
 #[cfg(target_os = "macos")]
 fn verify_runtime_alias(path: &Path, target: &str) -> Result<(), &'static str> {
+    let expected = RUNTIME_LIBRARIES
+        .iter()
+        .find(|(name, _)| *name == target)
+        .map(|(_, digest)| *digest)
+        .ok_or("verified runtime loader alias invalid")?;
+    verify_runtime_alias_with_digest(path, target, expected)
+}
+
+#[cfg(target_os = "macos")]
+fn verify_runtime_alias_with_digest(
+    path: &Path,
+    target: &str,
+    expected: &str,
+) -> Result<(), &'static str> {
     let metadata =
         fs::symlink_metadata(path).map_err(|_| "verified runtime loader alias invalid")?;
-    if !metadata.file_type().is_symlink()
-        || fs::read_link(path).map_err(|_| "verified runtime loader alias invalid")?
-            != Path::new(target)
-    {
-        return Err("verified runtime loader alias invalid");
+    if metadata.file_type().is_symlink() {
+        if fs::read_link(path).map_err(|_| "verified runtime loader alias invalid")?
+            == Path::new(target)
+        {
+            return Ok(());
+        }
+    } else if metadata.is_file() && sha256_file(path).is_ok_and(|digest| digest == expected) {
+        // Tauri's macOS bundler copies resource symlinks as files; accept only the pinned payload bytes.
+        return Ok(());
     }
-    Ok(())
+    Err("verified runtime loader alias invalid")
 }
 
 #[cfg(target_os = "macos")]
@@ -751,7 +769,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn runtime_alias_must_be_relative_symlink_to_expected_payload() {
+    fn runtime_alias_accepts_expected_symlink_or_exact_bundled_copy() {
         use std::os::unix::fs::symlink;
 
         let root = std::env::temp_dir().join(format!(
@@ -765,27 +783,44 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let payload = root.join("libfoo.1.2.3.dylib");
         let alias = root.join("libfoo.0.dylib");
-        fs::write(&payload, b"verified payload").unwrap();
+        let bytes = b"verified payload";
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        fs::write(&payload, bytes).unwrap();
 
         symlink("libfoo.1.2.3.dylib", &alias).unwrap();
-        assert_eq!(verify_runtime_alias(&alias, "libfoo.1.2.3.dylib"), Ok(()));
+        assert_eq!(
+            verify_runtime_alias_with_digest(&alias, "libfoo.1.2.3.dylib", &digest),
+            Ok(())
+        );
 
         fs::remove_file(&alias).unwrap();
         symlink("wrong.dylib", &alias).unwrap();
         assert_eq!(
-            verify_runtime_alias(&alias, "libfoo.1.2.3.dylib"),
+            verify_runtime_alias_with_digest(&alias, "libfoo.1.2.3.dylib", &digest),
             Err("verified runtime loader alias invalid")
         );
 
         fs::remove_file(&alias).unwrap();
         assert_eq!(
-            verify_runtime_alias(&alias, "libfoo.1.2.3.dylib"),
+            verify_runtime_alias_with_digest(&alias, "libfoo.1.2.3.dylib", &digest),
             Err("verified runtime loader alias invalid")
         );
 
+        fs::copy(&payload, &alias).unwrap();
+        assert_eq!(
+            verify_runtime_alias_with_digest(&alias, "libfoo.1.2.3.dylib", &digest),
+            Ok(())
+        );
+        fs::write(&alias, b"different payload").unwrap();
+        assert_eq!(
+            verify_runtime_alias_with_digest(&alias, "libfoo.1.2.3.dylib", &digest),
+            Err("verified runtime loader alias invalid")
+        );
+
+        fs::remove_file(&alias).unwrap();
         fs::write(&alias, b"not a symlink").unwrap();
         assert_eq!(
-            verify_runtime_alias(&alias, "libfoo.1.2.3.dylib"),
+            verify_runtime_alias_with_digest(&alias, "libfoo.1.2.3.dylib", &digest),
             Err("verified runtime loader alias invalid")
         );
         fs::remove_dir_all(root).unwrap();
