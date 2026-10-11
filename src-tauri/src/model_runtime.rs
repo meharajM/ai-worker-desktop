@@ -240,10 +240,7 @@ impl ModelRuntime {
             return Err("chat response timed out");
         }
 
-        let mut current = self
-            .server
-            .lock()
-            .map_err(|_| "runtime state unavailable")?;
+        let mut current = self.lock_server_for_start(generation, chat_abort)?;
         if let Some(server) = current.as_mut() {
             if server
                 .child
@@ -264,6 +261,10 @@ impl ModelRuntime {
         }
         let port = forced_port.unwrap_or(reserve_port()?);
         let (private_dir, auth_file, auth) = private_auth()?;
+        if let Some(error) = startup_abort(&self.cancel_generation, generation, chat_abort) {
+            let _ = fs::remove_dir_all(&private_dir);
+            return Err(error);
+        }
         let mut command = Command::new(&assets.executable);
         command
             .arg("-m")
@@ -331,6 +332,10 @@ impl ModelRuntime {
             }
         }
 
+        if let Some(error) = startup_abort(&self.cancel_generation, generation, chat_abort) {
+            let _ = fs::remove_dir_all(&private_dir);
+            return Err(error);
+        }
         let child = command.spawn().map_err(|_| {
             let _ = fs::remove_dir_all(&private_dir);
             "runtime could not start"
@@ -351,6 +356,21 @@ impl ModelRuntime {
             return Err(error);
         }
         Ok(port)
+    }
+
+    fn lock_server_for_start(
+        &self,
+        generation: u64,
+        chat_abort: Option<(Instant, &AtomicBool)>,
+    ) -> Result<std::sync::MutexGuard<'_, Option<OwnedServer>>, &'static str> {
+        let current = self
+            .server
+            .lock()
+            .map_err(|_| "runtime state unavailable")?;
+        if let Some(error) = startup_abort(&self.cancel_generation, generation, chat_abort) {
+            return Err(error);
+        }
+        Ok(current)
     }
 }
 
@@ -868,6 +888,31 @@ mod tests {
             Err("chat response timed out")
         );
         assert!(runtime.server.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn chat_deadline_expiring_while_waiting_for_runtime_lock_does_not_start_work() {
+        let runtime = std::sync::Arc::new(ModelRuntime::default());
+        let held = runtime.server.lock().unwrap();
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let cancelled = std::sync::Arc::new(AtomicBool::new(false));
+        let did_start = std::sync::Arc::new(AtomicBool::new(false));
+        let worker_runtime = runtime.clone();
+        let worker_cancelled = cancelled.clone();
+        let worker_did_start = did_start.clone();
+        let worker = thread::spawn(move || {
+            let guard =
+                worker_runtime.lock_server_for_start(0, Some((deadline, &worker_cancelled)));
+            if guard.is_ok() {
+                worker_did_start.store(true, Ordering::SeqCst);
+            }
+            guard.map(|_| ())
+        });
+        thread::sleep(Duration::from_millis(30));
+        drop(held);
+
+        assert_eq!(worker.join().unwrap(), Err("chat response timed out"));
+        assert!(!did_start.load(Ordering::SeqCst));
     }
 
     #[cfg(unix)]
