@@ -74,6 +74,19 @@ const RUNTIME_LIBRARIES: &[(&str, &str)] = &[
     ),
 ];
 
+#[cfg(target_os = "macos")]
+const RUNTIME_ALIASES: &[(&str, &str)] = &[
+    ("libllama-common.0.dylib", "libllama-common.0.6.0.dylib"),
+    ("libllama.0.dylib", "libllama.0.6.0.dylib"),
+    ("libmtmd.0.dylib", "libmtmd.0.6.0.dylib"),
+    ("libggml-blas.0.dylib", "libggml-blas.0.26.0.dylib"),
+    ("libggml-metal.0.dylib", "libggml-metal.0.26.0.dylib"),
+    ("libggml-cpu.0.dylib", "libggml-cpu.0.26.0.dylib"),
+    ("libggml.0.dylib", "libggml.0.26.0.dylib"),
+    ("libggml-base.0.dylib", "libggml-base.0.26.0.dylib"),
+    ("libggml-rpc.0.dylib", "libggml-rpc.0.26.0.dylib"),
+];
+
 #[derive(Default)]
 pub struct ModelRuntime {
     server: Mutex<Option<OwnedServer>>,
@@ -417,6 +430,23 @@ fn verify_runtime_assets(assets: &Assets) -> Result<(), &'static str> {
     for (name, digest) in RUNTIME_LIBRARIES {
         verify_file(&assets.library_dir.join(name), None, digest)?;
     }
+    #[cfg(target_os = "macos")]
+    for (alias, target) in RUNTIME_ALIASES {
+        verify_runtime_alias(&assets.library_dir.join(alias), target)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn verify_runtime_alias(path: &Path, target: &str) -> Result<(), &'static str> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_| "verified runtime loader alias invalid")?;
+    if !metadata.file_type().is_symlink()
+        || fs::read_link(path).map_err(|_| "verified runtime loader alias invalid")?
+            != Path::new(target)
+    {
+        return Err("verified runtime loader alias invalid");
+    }
     Ok(())
 }
 
@@ -717,6 +747,48 @@ mod tests {
             library_dir: root,
             model: models.join(MODEL_NAME),
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn runtime_alias_must_be_relative_symlink_to_expected_payload() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "m111-runtime-alias-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let payload = root.join("libfoo.1.2.3.dylib");
+        let alias = root.join("libfoo.0.dylib");
+        fs::write(&payload, b"verified payload").unwrap();
+
+        symlink("libfoo.1.2.3.dylib", &alias).unwrap();
+        assert_eq!(verify_runtime_alias(&alias, "libfoo.1.2.3.dylib"), Ok(()));
+
+        fs::remove_file(&alias).unwrap();
+        symlink("wrong.dylib", &alias).unwrap();
+        assert_eq!(
+            verify_runtime_alias(&alias, "libfoo.1.2.3.dylib"),
+            Err("verified runtime loader alias invalid")
+        );
+
+        fs::remove_file(&alias).unwrap();
+        assert_eq!(
+            verify_runtime_alias(&alias, "libfoo.1.2.3.dylib"),
+            Err("verified runtime loader alias invalid")
+        );
+
+        fs::write(&alias, b"not a symlink").unwrap();
+        assert_eq!(
+            verify_runtime_alias(&alias, "libfoo.1.2.3.dylib"),
+            Err("verified runtime loader alias invalid")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
