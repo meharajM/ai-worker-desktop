@@ -4,6 +4,7 @@ import { normalizeGraphMessage } from '../src/proof/proof-graph'
 import { restoreProofHistory, serializeProofHistory } from '../src/proof/proof-history'
 import { hasExpectedFixtureToolPairs } from '../src/proof/proof-assertions'
 import { runM14MockAssertions } from './m14-local-chat-check'
+import { runM15CancellationAssertions, runM15HistoryAssertions } from './m15-assistant-check'
 
 const results = document.querySelector<HTMLUListElement>('#results')!
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -28,6 +29,8 @@ async function test(name: string, run: () => Promise<void>) {
 }
 
 async function run() {
+  await test('M15 history adapter commits one atomic terminal turn and restores it', runM15HistoryAssertions)
+  await test('M15 Stop aborts graph and preserves partial output', runM15CancellationAssertions)
   await runM14MockAssertions((result) => {
     const row = document.createElement('li')
     row.textContent = `${result.passed ? 'PASS' : 'FAIL'} — ${result.name}: ${result.detail}`

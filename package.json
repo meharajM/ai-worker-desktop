@@ -105,6 +105,7 @@
         "hooks:install": "git config core.hooksPath .githooks && chmod +x .githooks/pre-commit"
     },
     "dependencies": {
+        "@assistant-ui/react": "^0.15.27",
         "@electron-toolkit/preload": "^3.0.0",
         "@electron-toolkit/utils": "^3.0.0",
         "@langchain/core": "1.2.17",

@@ -1,9 +1,8 @@
-import { AIMessage, HumanMessage, type BaseMessage } from '@langchain/core/messages'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './components/primitives/Button'
-import { TextArea } from './components/input/TextArea'
-import { DesktopBridgeError, desktopBridge, MAX_LOCAL_CHAT_MESSAGES, type DesktopPreferences, type ModelCatalog, type ModelImportProgress } from './desktop-bridge'
-import { createLocalChatGraph } from './local-chat'
+import { DesktopBridgeError, desktopBridge, type DesktopPreferences, type ModelCatalog, type ModelImportProgress } from './desktop-bridge'
+import { LocalAssistantChat } from './LocalAssistantChat'
+import { openChatHistory, type ChatSession } from './lib/chat-history'
 
 type View = 'chat' | 'settings'
 type PreferencePreset = DesktopPreferences['resourcePreset']
@@ -25,12 +24,10 @@ function safeError(error: unknown) {
 export function LocalApp() {
   const [view, setView] = useState<View>('chat')
   const [status, setStatus] = useState('Checking native bridge…')
-  const [chatInput, setChatInput] = useState('')
-  const [chatTurns, setChatTurns] = useState<{ role: 'user' | 'assistant'; content: string }[]>([])
-  const [streamingAnswer, setStreamingAnswer] = useState('')
-  const [chatError, setChatError] = useState('')
-  const [chatNotice, setChatNotice] = useState('')
-  const [chatBusy, setChatBusy] = useState(false)
+  const [chatHistory, setChatHistory] = useState<Awaited<ReturnType<typeof openChatHistory>>>()
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string>()
+  const [historyError, setHistoryError] = useState('')
   const [preferenceLoadState, setPreferenceLoadState] = useState<PreferenceLoadState>('idle')
   const [preferences, setPreferences] = useState<DesktopPreferences>()
   const [selectedPreset, setSelectedPreset] = useState<PreferencePreset | ''>('')
@@ -43,14 +40,9 @@ export function LocalApp() {
   const [modelRequestId, setModelRequestId] = useState<string>()
   const [modelError, setModelError] = useState('')
   const saveBusy = useRef(false)
-  const chatBusyRef = useRef(false)
-  const chatAbort = useRef<AbortController | null>(null)
-  const chatHistory = useRef<BaseMessage[]>([])
   const preferencesGeneration = useRef(0)
   const checkGeneration = useRef(0)
   const mounted = useRef(false)
-  const chatGraph = useMemo(() => createLocalChatGraph(), [])
-  const chatLimitReached = chatHistory.current.length >= MAX_LOCAL_CHAT_MESSAGES
 
   const checkStatus = useCallback(async () => {
     const generation = ++checkGeneration.current
@@ -177,61 +169,6 @@ export function LocalApp() {
     }
   }, [modelRequestId])
 
-  async function sendChat() {
-    const content = chatInput.trim()
-    if (!content || chatBusyRef.current || !modelCatalog?.developerCandidate?.installed) return
-    if (chatHistory.current.length >= MAX_LOCAL_CHAT_MESSAGES) {
-      setChatNotice(`This chat reached the ${MAX_LOCAL_CHAT_MESSAGES}-message context limit. Start a new chat to continue.`)
-      return
-    }
-    const history = [...chatHistory.current, new HumanMessage(content)]
-    const abort = new AbortController()
-    chatBusyRef.current = true
-    chatAbort.current = abort
-    chatHistory.current = history
-    setChatTurns((turns) => [...turns, { role: 'user', content }])
-    setChatInput('')
-    setChatError('')
-    setChatNotice('')
-    setStreamingAnswer('')
-    setChatBusy(true)
-    let answer = ''
-    try {
-      for await (const [chunk] of await chatGraph.stream(history, abort.signal)) {
-        if (typeof chunk.content !== 'string' || !chunk.content) continue
-        answer += chunk.content
-        setStreamingAnswer(answer)
-      }
-      if (!answer) throw new Error('The local model returned an empty response.')
-      chatHistory.current = [...history, new AIMessage(answer)]
-      setChatTurns((turns) => [...turns, { role: 'assistant', content: answer }])
-    } catch (error) {
-      if (answer) {
-        chatHistory.current = [...history, new AIMessage(answer)]
-        setChatTurns((turns) => [...turns, { role: 'assistant', content: answer }])
-      }
-      if (abort.signal.aborted) setChatNotice('Response stopped.')
-      else setChatError(error instanceof Error && error.message.length < 500 ? error.message : 'Local chat failed.')
-    } finally {
-      chatAbort.current = null
-      chatBusyRef.current = false
-      setStreamingAnswer('')
-      setChatBusy(false)
-    }
-  }
-
-  function stopChat() {
-    chatAbort.current?.abort()
-  }
-
-  function newChat() {
-    chatHistory.current = []
-    setChatTurns([])
-    setStreamingAnswer('')
-    setChatError('')
-    setChatNotice('')
-  }
-
   useEffect(() => {
     mounted.current = true
     void checkStatus()
@@ -240,6 +177,40 @@ export function LocalApp() {
       checkGeneration.current += 1
     }
   }, [checkStatus])
+
+  useEffect(() => {
+    let active = true
+    let store: Awaited<ReturnType<typeof openChatHistory>> | undefined
+    void (async () => {
+      try {
+        store = await openChatHistory()
+        const sessions = (await store.listSessions()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        if (!active) { store.close(); return }
+        if (sessions.length === 0) sessions.push(await store.createSession('New chat'))
+        if (!active) { store.close(); return }
+        setChatHistory(store)
+        setChatSessions(sessions)
+        setActiveSessionId(sessions[0].id)
+      } catch (error) {
+        if (active) setHistoryError(error instanceof Error ? error.message : 'Chat history could not be opened.')
+        store?.close()
+      }
+    })()
+    return () => { active = false; store?.close() }
+  }, [])
+
+  async function newChat() {
+    if (!chatHistory) return
+    try {
+      const session = await chatHistory.createSession('New chat')
+      setChatSessions((sessions) => [session, ...sessions])
+      setActiveSessionId(session.id)
+      setView('chat')
+      setHistoryError('')
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : 'A new chat could not be created.')
+    }
+  }
 
   useEffect(() => {
     if (view !== 'settings') {
@@ -272,6 +243,23 @@ export function LocalApp() {
             </Button>
           ))}
         </div>
+        {view === 'chat' && (
+          <section aria-label="Chat sessions" className="mt-6 min-h-0 flex-1 overflow-y-auto border-t border-[var(--color-border)] pt-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-xs font-medium text-[var(--color-text-secondary)]">Chats</h2>
+              <Button type="button" variant="ghost" size="sm" onClick={() => void newChat()} disabled={!chatHistory}>New</Button>
+            </div>
+            <div className="flex flex-col gap-1">
+              {chatSessions.map((session) => (
+                <Button key={session.id} type="button" variant={session.id === activeSessionId ? 'secondary' : 'ghost'} className="justify-start truncate text-xs" onClick={() => setActiveSessionId(session.id)}>
+                  {session.title} · {new Date(session.createdAt).toLocaleTimeString()}
+                </Button>
+              ))}
+            </div>
+            {!chatHistory && !historyError && <p role="status" className="mt-2 text-xs text-[var(--color-text-secondary)]">Loading chat history…</p>}
+            {historyError && <p role="alert" className="mt-2 break-words text-xs text-red-300">{historyError}</p>}
+          </section>
+        )}
         <div className="mt-auto border-t border-[var(--color-border)] pt-4">
           <p className="mb-2 text-xs text-[var(--color-text-secondary)]">Native status</p>
           <p role="status" aria-live="polite" className="break-words text-xs text-[var(--color-text-primary)]">{status}</p>
@@ -286,65 +274,10 @@ export function LocalApp() {
           <>
             <header className="border-b border-[var(--color-border)] px-8 py-5">
               <h2 className="text-lg font-medium">Local chat</h2>
-              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">The selected local model runs on this device. Chat is kept in this window for now.</p>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">The selected local model runs on this device. Chat history stays on this device.</p>
             </header>
-            <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-8">
-              <div className="flex items-start justify-between gap-4">
-                <p className="text-sm text-[var(--color-text-secondary)]">
-                  {!desktopBridge.isAvailable()
-                    ? 'Open the desktop app and import a supported model in Settings to chat.'
-                  : !modelCatalog
-                      ? modelError || 'Checking for an installed local model…'
-                      : modelCatalog.developerCandidate?.installed
-                        ? `Ready · ${modelCatalog.developerCandidate.name}`
-                        : 'Import the developer model from Settings to start chatting.'}
-                </p>
-                <Button type="button" variant="ghost" size="sm" onClick={newChat} disabled={chatBusy || chatTurns.length === 0}>New chat</Button>
-              </div>
-              <div className="flex-1 space-y-4 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4" aria-live="polite" aria-label="Conversation">
-                {chatTurns.length === 0 && !streamingAnswer && <p className="text-sm text-[var(--color-text-secondary)]">Send a message to begin a local conversation.</p>}
-                {chatTurns.map((turn, index) => (
-                  <article key={`${index}-${turn.role}`} className="whitespace-pre-wrap text-sm">
-                    <p className="mb-1 text-xs font-medium capitalize text-[var(--color-text-secondary)]">{turn.role}</p>
-                    <p>{turn.content}</p>
-                  </article>
-                ))}
-                {chatBusy && (
-                  <article className="whitespace-pre-wrap text-sm">
-                    <p className="mb-1 text-xs font-medium text-[var(--color-text-secondary)]">assistant · generating</p>
-                    <p>{streamingAnswer || 'Starting local model…'}</p>
-                  </article>
-                )}
-              </div>
-              {chatError && <p role="alert" className="text-sm text-red-300">Local chat failed: {chatError}</p>}
-              {chatLimitReached && <p role="status" aria-live="polite" className="text-sm text-[var(--color-text-secondary)]">This chat reached the {MAX_LOCAL_CHAT_MESSAGES}-message context limit. Start a new chat to continue.</p>}
-              {chatNotice && <p role="status" aria-live="polite" className="text-sm text-[var(--color-text-secondary)]">{chatNotice}</p>}
-              <form
-                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
-                onSubmit={(event) => { event.preventDefault(); void sendChat() }}
-              >
-                <label htmlFor="local-chat-input" className="sr-only">Message the local model</label>
-                <TextArea
-                  id="local-chat-input"
-                  value={chatInput}
-                  disabled={chatBusy || chatLimitReached || !modelCatalog?.developerCandidate?.installed}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      void sendChat()
-                    }
-                  }}
-                  placeholder="Message the local model… (Enter sends, Shift+Enter adds a line)"
-                />
-                <div className="flex justify-end gap-2 pt-2">
-                  {chatBusy && <Button type="button" size="sm" variant="ghost" onClick={stopChat}>Stop</Button>}
-                  <Button type="submit" size="sm" variant="secondary" disabled={chatBusy || chatLimitReached || !chatInput.trim() || !modelCatalog?.developerCandidate?.installed}>
-                    Send
-                  </Button>
-                </div>
-              </form>
-            </div>
+            {chatHistory && activeSessionId && <LocalAssistantChat history={chatHistory} sessionId={activeSessionId} modelReady={Boolean(modelCatalog?.developerCandidate?.installed)} />}
+            {!chatHistory && <p role="status" className="p-8 text-sm text-[var(--color-text-secondary)]">{historyError || 'Loading chat history…'}</p>}
           </>
         ) : (
           <>
