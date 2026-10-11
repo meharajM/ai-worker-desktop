@@ -20,13 +20,15 @@ npm install
 npm run tauri:dev
 ```
 
-To build the current platform's Tauri bundle:
+`npm run tauri:build` requires that this checkout already has llama runtime resources staged for the target platform. Runtime resource preparation is currently available only for the verified macOS arm64 target; Windows and Linux preparation is not available yet.
+
+To build a platform bundle when its resources are staged:
 
 ```sh
 npm run tauri:build
 ```
 
-For macOS arm64, prepare the pinned runtime and build with:
+For macOS arm64, use the combined command that prepares the verified runtime before building:
 
 ```sh
 npm run tauri:build:mac:arm64

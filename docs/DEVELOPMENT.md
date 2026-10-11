@@ -21,7 +21,7 @@ npm run web:build
 npm run tauri:build
 ```
 
-The macOS arm64 runtime build path is `npm run tauri:build:mac:arm64`; `npm run tauri:prepare:runtime` prepares its pinned llama runtime. Proof commands are `npm run tauri:proof`, `npm run web:proof-build`, `npm run test:rust:chat`, and `npm run test:rust:proof`.
+`npm run tauri:build` requires the target platform’s staged llama runtime resources in this checkout. `npm run tauri:build:mac:arm64` runs `npm run tauri:prepare:runtime` first to prepare the verified macOS arm64 runtime. Runtime resource preparation for Windows and Linux is not available yet. `npm run tauri:proof` launches the isolated proof app. Other proof checks: `npm run web:proof-build`, `npm run test:rust:chat`, and `npm run test:rust:proof`.
 
 ## Current scope
 

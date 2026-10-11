@@ -20,15 +20,17 @@ Key scripts:
 | Script | Purpose |
 | --- | --- |
 | `tauri:dev` | Run Tauri desktop app in development |
-| `tauri:proof` | Run isolated proof build |
-| `tauri:build` | Build Tauri app |
+| `tauri:proof` | Launch isolated proof app |
+| `tauri:build` | Build Tauri app when platform llama runtime resources are staged |
 | `tauri:prepare:runtime` | Prepare pinned macOS arm64 llama runtime |
-| `tauri:build:mac:arm64` | Prepare runtime and build macOS arm64 app |
+| `tauri:build:mac:arm64` | Prepare verified macOS arm64 runtime and build app |
 | `web:typecheck` | Typecheck Tauri web UI |
 | `web:build` | Build Tauri web assets |
 | `web:proof-build` | Build proof web assets |
 | `test:rust:chat` | Run focused Rust chat tests |
 | `test:rust:proof` | Run focused Rust proof tests |
+
+`tauri:build` expects this checkout to already contain the target platform’s staged llama runtime resources. `tauri:build:mac:arm64` prepares the verified macOS arm64 runtime first; Windows and Linux runtime preparation is not available yet.
 
 See [Quick Start](./docs/QUICK_START.md), [Development](./docs/DEVELOPMENT.md), and the [docs index](./docs/README.md).
 
