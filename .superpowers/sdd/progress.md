@@ -40,6 +40,7 @@ Branch: `codex/local-chat-e2e`
 
 - Added `src/renderer/src/local-chat.ts`: one LangGraph model node streams pinned `ChatOpenAI` through the M13 native bridge adapter. The adapter accepts only the fixed pseudo-endpoint and exact streaming chat-completions body, converts only text system/user/assistant messages, and never calls browser network APIs.
 - Native events become SSE frames for LangChain's parser. Abort and stream teardown cancel once after start acknowledgement; early events are held until the accepted request ID is known; errors, completion and deadline settle once.
-- Added deterministic cases to the existing browser proof check for graph token streaming, endpoint/body rejection, native failure, acknowledgement-race cancellation and unsupported tool/multimodal input.
+- Public `stream()` uses LangGraph `messages` mode to expose model chunks live; nested model calls retain graph-injected child callbacks while outer graph callbacks stay disabled. `streamState()` preserves access to final graph state.
+- Added deterministic cases to the existing browser proof check for live graph token streaming before native completion, endpoint/body rejection, native failure, acknowledgement-race cancellation and unsupported tool/multimodal input.
 - M14 checks: `npm run web:typecheck`, `npm run web:build`, `npx tsc --noEmit --project tsconfig.proof.json`, `npm run web:proof-build`, headless Chromium mock proof, and `git diff --check`.
 - Real model inference remains gated: no GGUF is present, and available disk capacity is below the candidate import requirement. No model was downloaded.

@@ -157,7 +157,7 @@ export function createLocalChatGraph(bridge: LocalChatBridge = desktopBridge) {
   const graph = new StateGraph(State)
     .addNode('model', async (state, config) => {
       let full: AIMessageChunk | undefined
-      for await (const chunk of await model.stream(graphMessages(state.messages), { ...config, callbacks: [] })) {
+      for await (const chunk of await model.stream(graphMessages(state.messages), config)) {
         full = full ? full.concat(chunk) : chunk
       }
       if (!full) throw new Error('ChatOpenAI returned an empty stream')
@@ -171,6 +171,9 @@ export function createLocalChatGraph(bridge: LocalChatBridge = desktopBridge) {
 
   return {
     stream: (messages: BaseMessage[], signal?: AbortSignal) => graph.stream(
+      { messages }, { signal, callbacks: [], streamMode: 'messages' },
+    ),
+    streamState: (messages: BaseMessage[], signal?: AbortSignal) => graph.stream(
       { messages }, { signal, callbacks: [], streamMode: 'values' },
     ),
   }

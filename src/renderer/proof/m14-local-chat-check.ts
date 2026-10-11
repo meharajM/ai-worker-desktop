@@ -13,6 +13,13 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
 }
 
+function bounded<T>(promise: Promise<T>, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), 3000)
+    promise.then((value) => { clearTimeout(timer); resolve(value) }, (error) => { clearTimeout(timer); reject(error) })
+  })
+}
+
 function mock(events: (taskId: string, callback: (event: LocalChatEvent) => void) => void): MockBridge {
   return {
     startLocalChat: async (taskId, _messages, callback) => {
@@ -39,10 +46,53 @@ export async function runM14MockAssertions(onResult?: (result: Result) => void):
       onEvent({ event: 'complete', data: base })
     })
     let final: { messages: unknown[] } | undefined
-    for await (const state of await createLocalChatGraph(bridge).stream([new HumanMessage('greet')])) final = state
+    for await (const state of await createLocalChatGraph(bridge).streamState([new HumanMessage('greet')])) final = state
     const answer = final?.messages.at(-1)
     assert(answer instanceof AIMessage && answer.content === 'café', `unexpected final message: ${String(answer)}`)
     return `assistant=${answer.content}`
+  })
+
+  await check('graph messages stream before native completion and retain final state', async () => {
+    let releaseCompletion!: () => void
+    const completion = new Promise<void>((resolve) => { releaseCompletion = resolve })
+    const bridge: MockBridge = {
+      startLocalChat: async (taskId, _messages, onEvent) => {
+        const base = { taskId, requestId: 'request-1' }
+        queueMicrotask(() => {
+          onEvent({ event: 'started', data: base })
+          onEvent({ event: 'chunk', data: { ...base, content: 'live' } })
+        })
+        void completion.then(() => onEvent({ event: 'complete', data: base }))
+        return { taskId, requestId: 'request-1' }
+      },
+      cancelLocalChat: async () => undefined,
+    }
+    try {
+      const iterable = await bounded(createLocalChatGraph(bridge).stream([new HumanMessage('stream')]), 'graph did not create message stream')
+      const iterator = iterable[Symbol.asyncIterator]()
+      let token = ''
+      while (!token) {
+        const next = await bounded(iterator.next(), 'graph did not stream token before native completion')
+        assert(!next.done, 'message stream ended before native completion')
+        const [chunk] = next.value
+        if (typeof chunk.content === 'string') token += chunk.content
+      }
+      assert(token === 'live', `unexpected live token: ${token}`)
+      releaseCompletion()
+      while (!(await bounded(iterator.next(), 'graph did not finish after native completion')).done) { /* drain */ }
+    } finally {
+      releaseCompletion()
+    }
+
+    let final: { messages: unknown[] } | undefined
+    for await (const state of await createLocalChatGraph(mock((taskId, onEvent) => {
+      const base = { taskId, requestId: 'request-1' }
+      onEvent({ event: 'chunk', data: { ...base, content: 'final' } })
+      onEvent({ event: 'complete', data: base })
+    })).streamState([new HumanMessage('state')])) final = state
+    const answer = final?.messages.at(-1)
+    assert(answer instanceof AIMessage && answer.content === 'final', `final graph state missing: ${String(answer)}`)
+    return 'received live token before native completion; final state remains available via streamState'
   })
 
   await check('fixed endpoint and strict request body reject before native start', async () => {
@@ -95,15 +145,17 @@ export async function runM14MockAssertions(onResult?: (result: Result) => void):
       cancelLocalChat: async (id) => { assert(id === taskId, 'cancel task mismatch'); cancelCalls++ },
     }
     const abort = new AbortController()
-    const iterator = (await createLocalChatGraph(bridge).stream([new HumanMessage('cancel')], abort.signal))[Symbol.asyncIterator]()
-    await iterator.next()
-    const next = iterator.next()
-    await started
+    const stream = createLocalChatGraph(bridge).stream([new HumanMessage('cancel')], abort.signal)
+    await bounded(started, 'graph did not start')
     abort.abort()
     await new Promise((resolve) => setTimeout(resolve, 0))
     assert(cancelCalls === 0, 'cancel sent before native acknowledgement')
     acknowledge({ taskId, requestId: 'request-1' })
-    try { await next; throw new Error('expected abort') } catch (error) {
+    try {
+      const iterable = await bounded(stream, 'graph stream did not abort')
+      await bounded(iterable[Symbol.asyncIterator]().next(), 'graph stream did not abort')
+      throw new Error('expected abort')
+    } catch (error) {
       assert(String(error).includes('AbortError'), `unexpected graph result: ${String(error)}`)
     }
     await new Promise((resolve) => setTimeout(resolve, 0))
