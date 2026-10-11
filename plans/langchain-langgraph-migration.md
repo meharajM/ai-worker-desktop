@@ -1,6 +1,9 @@
 # LangChain.js + LangGraph.js migration decision
 
-Decision recorded 10 October 2026; implementation checkpoint `d394789` on 11 October 2026. This plan supersedes earlier AI SDK Core selections and proof instructions. M14's one-node LangGraph graph is implemented with mocked proof. Public `stream()` emits LangGraph `messages` mode live; `streamState()` emits final `values` state. No production UI calls it yet. Real inference remains unverified because no GGUF is available and disk space is below import needs. macOS arm64 runtime packaging and alias verification are implemented; the candidate is pinned Qwen3 1.7B for development E2E, then revisit Qwen3.5. Windows and performance remain unverified.
+
+**Current status (11 October 2026):** M14 now serves the production chat UI. One real UI→graph→native→model→UI response succeeded on the 16 GiB Apple Silicon development Mac; this is one-run E2E evidence only, not repeatable or certified profile evidence. M15 and M16a are complete. M16b packaged-app interaction/restart and matching-hardware resource/cancellation proof remain unverified; 8 GiB Mac and Windows evidence are open.
+
+**Historical implementation checkpoint (10–11 October 2026):** Decision recorded before production UI and real-model E2E integration. This plan supersedes earlier AI SDK Core selections and proof instructions. M14’s one-node LangGraph graph and mocked proof were committed at `d394789`; public `stream()` emits LangGraph `messages` mode live and `streamState()` emits final `values` state. At that checkpoint, no production UI caller or real-model E2E existed. Later integration and current evidence are summarized above. The pinned Qwen3 1.7B remains a development candidate; revisit Qwen3.5 afterward. Windows and performance certification remain unverified.
 
 ## Decision
 
@@ -42,7 +45,7 @@ Keep change focused across provider transport, graph adapter, history translatio
 
 Required for every new AI-layer, bridge, fixture and proof module from this point onward: one clear responsibility, explicit export contract, and short module/export comments. Add targeted comments only where code does not explain non-obvious graph transitions, native trust/limit boundaries, cancellation order, or canonical history invariants. Keep comments tied to why the invariant exists; avoid narrating each statement.
 
-Implemented M14 mock proof covers graph chunk streaming, delivery before native completion, final state access, local endpoint/body rejection, native error propagation, abort before start acknowledgement, and rejection of unsupported tool/multimodal inputs. It is not real model E2E: no GGUF is available and disk space is below import needs. No production UI caller, persistence or UI Stop integration exists yet. Keep the following real-candidate checks open: real prompt/stream, history round trip, empty final output, provider failure, abort before/during streaming, late events, task identity and native cleanup. Confirm no cloud tracing/checkpointer or automatic framework/provider fallback.
+**Historical M14 implementation checkpoint:** Mock proof covered graph chunk streaming, delivery before native completion, final state access, local endpoint/body rejection, native error propagation, abort before start acknowledgement, and rejection of unsupported tool/multimodal inputs. The statements that no GGUF or production UI caller existed describe that earlier checkpoint and are superseded by the current status above. Matching-hardware real-model/resource/cancellation, repeated-cycle, quit-cleanup and packaged-app restart checks remain under M16b. Confirm no cloud tracing/checkpointer or automatic framework/provider fallback.
 
 ### M19b — Native-broker read-tool route
 

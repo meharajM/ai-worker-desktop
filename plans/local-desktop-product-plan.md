@@ -241,4 +241,4 @@ The first beta targets this 16 GiB Apple silicon class. An 8 GiB tier is a final
 Source status: standalone journal and TypeScript bridge are implemented and checked
 locally on macOS; M15 and M16a are complete, and one real-model E2E response succeeded on the 16 GiB development Mac. Fresh packaged-app interaction/restart proof, 8 GiB hardware proof, and Windows proof remain open. Journal host integration is planned at M21 after M17–M20 read-only work.
 Their [local evidence and integration cards](./operation-journal-integration.md)
-record what has actually been verified. No model has been downloaded or benchmarked.
+record what has actually been verified. No broad model-quality or comparative benchmark has been performed; one real Qwen3 1.7B E2E response succeeded on the 16 GiB development Mac.
