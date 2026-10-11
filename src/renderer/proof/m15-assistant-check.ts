@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import type { ThreadHistoryAdapter } from '@assistant-ui/react'
 import { AIMessageChunk } from '@langchain/core/messages'
@@ -70,7 +71,7 @@ export async function runM15CancellationAssertions(): Promise<void> {
 
 export async function runM15NativePolicyErrorAssertions(): Promise<void> {
   async function failureText(error: Error): Promise<string> {
-    const graph = { async *stream() { throw error } }
+    const graph = { stream() { return Promise.reject(error) } }
     const adapter = createAssistantChatAdapter(graph as never)
     const result = adapter.run({
       messages: [{ id: 'user_1', role: 'user', createdAt: new Date(), content: [{ type: 'text', text: 'question' }], attachments: [], metadata: { custom: {} } }],
@@ -96,8 +97,7 @@ export async function runM15LimitAndPersistenceAssertions(): Promise<void> {
   document.body.append(target)
   const root = createRoot(target)
   try {
-    root.render(createElement(ChatLimitNotice, { messageCount: 32 }))
-    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    flushSync(() => root.render(createElement(ChatLimitNotice, { messageCount: 32 })))
     assert(isLocalChatAtLimit(32), 'send must be disabled once 32 thread messages exist')
     assert(!isLocalChatAtLimit(31), 'send should remain available below the context limit')
     assert(!canSendLocalChat(true, 32) && canSendLocalChat(true, 31) && !canSendLocalChat(false, 0), 'send eligibility should match cap and model readiness')
@@ -121,12 +121,10 @@ export async function runM15LimitAndPersistenceAssertions(): Promise<void> {
       status: { type: 'complete', reason: 'stop' }, metadata: { unstable_state: null, unstable_annotations: [], unstable_data: [], steps: [], custom: {} },
     } })
     assert(persistedMessage === 'assistant_full' && (persistenceError as { code?: string })?.code === 'history_full', 'failed commit must identify the affected response')
-    root.render(createElement(HistoryPersistenceNotice, { error: persistenceError }))
-    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    flushSync(() => root.render(createElement(HistoryPersistenceNotice, { error: persistenceError })))
     const alert = target.querySelector('[role="alert"]')
     assert(alert?.textContent?.includes('This reply was not saved') && alert.textContent.includes('will not return after restart'), 'history_full must clearly say response is not durable')
-    root.render(createElement(HistoryPersistenceNotice, { error: new Error('quota') }))
-    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    flushSync(() => root.render(createElement(HistoryPersistenceNotice, { error: new Error('quota') })))
     assert(target.querySelector('[role="alert"]')?.textContent?.includes('could not be saved to chat history'), 'generic persistence failure must also be surfaced')
   } finally {
     root.unmount()
