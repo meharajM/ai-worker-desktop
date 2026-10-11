@@ -68,6 +68,29 @@ export async function runM15CancellationAssertions(): Promise<void> {
   assert(updates.at(-1)?.content?.[0]?.text === 'partial', 'canceled partial text should remain visible')
 }
 
+export async function runM15NativePolicyErrorAssertions(): Promise<void> {
+  async function failureText(error: Error): Promise<string> {
+    const graph = { async *stream() { throw error } }
+    const adapter = createAssistantChatAdapter(graph as never)
+    const result = adapter.run({
+      messages: [{ id: 'user_1', role: 'user', createdAt: new Date(), content: [{ type: 'text', text: 'question' }], attachments: [], metadata: { custom: {} } }],
+      runConfig: {}, context: {}, abortSignal: new AbortController().signal, unstable_getMessage: () => ({} as never),
+    })
+    let text = ''
+    if (Symbol.asyncIterator in result) {
+      for await (const update of result) text = update.content[0]?.text ?? ''
+    } else {
+      const update = await result
+      text = update.content[0]?.text ?? ''
+    }
+    return text
+  }
+
+  const policyMessage = 'local model load stopped to preserve the system memory reserve'
+  assert(await failureText(new Error(policyMessage)) === policyMessage, 'native policy refusal should be visible')
+  assert(await failureText(new Error('backend internals')) === 'Local chat failed.', 'unrelated errors should remain generic')
+}
+
 export async function runM15LimitAndPersistenceAssertions(): Promise<void> {
   const target = document.createElement('div')
   document.body.append(target)

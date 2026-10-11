@@ -33,6 +33,10 @@ const START_TIMEOUT: Duration = Duration::from_secs(60);
 const STOP_GRACE: Duration = Duration::from_millis(2_500);
 const STOP_KILL_WAIT: Duration = Duration::from_secs(2);
 pub(crate) const MINIMUM_MEMORY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const GIB: u64 = 1024 * 1024 * 1024;
+const MEMORY_RESERVE_FLOOR: u64 = 2 * GIB;
+const CANDIDATE_PEAK_MEMORY_BYTES: u64 = 3 * GIB;
+const MEMORY_PRESSURE_POLL: Duration = Duration::from_secs(1);
 const IDLE_UNLOAD: Duration = Duration::from_secs(60);
 const GENERATION_ARGS: &[&str] = &[
     "--no-webui",
@@ -56,11 +60,74 @@ const GENERATION_ARGS: &[&str] = &[
     "off",
 ];
 
-fn admit_candidate(memory_bytes: u64) -> Result<(), &'static str> {
-    if memory_bytes < MINIMUM_MEMORY_BYTES {
-        return Err("local model requires at least 8 GiB physical memory (evaluation only)");
+fn memory_reserve_bytes(physical_bytes: u64) -> u64 {
+    MEMORY_RESERVE_FLOOR.max(physical_bytes / 4)
+}
+
+fn admit_candidate(physical_bytes: u64) -> Result<(), &'static str> {
+    let required_bytes = MINIMUM_MEMORY_BYTES
+        .max(memory_reserve_bytes(physical_bytes).saturating_add(CANDIDATE_PEAK_MEMORY_BYTES));
+    if physical_bytes < required_bytes {
+        return Err("local model needs more physical memory for its reserve and load estimate");
     }
     Ok(())
+}
+
+fn parse_free_memory_percent(output: &str) -> Option<u64> {
+    output.lines().find_map(|line| {
+        line.strip_prefix("System-wide memory free percentage:")?
+            .trim()
+            .strip_suffix('%')?
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|percent| *percent <= 100)
+    })
+}
+
+fn conservative_free_percent(free_percent: u64) -> u64 {
+    free_percent.saturating_sub(1)
+}
+
+fn load_pressure_decision(physical_bytes: u64, free_percent: u64, peak_bytes: u64) -> bool {
+    (u128::from(physical_bytes) * u128::from(free_percent) / 100)
+        >= u128::from(memory_reserve_bytes(physical_bytes).saturating_add(peak_bytes))
+}
+
+fn ensure_memory_headroom(candidate_load: bool) -> Result<(), &'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        let physical_bytes = physical_memory_bytes()?;
+        let output = Command::new("/usr/bin/memory_pressure")
+            .arg("-Q")
+            .output()
+            .map_err(|_| "live memory pressure could not be determined")?;
+        if !output.status.success() {
+            return Err("live memory pressure could not be determined");
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let free_percent = parse_free_memory_percent(&text)
+            .ok_or("live memory pressure could not be determined")?;
+        // The CLI reports whole percentages; subtract one point to stay conservative against rounding.
+        let estimated_free_percent = conservative_free_percent(free_percent);
+        let peak_bytes = if candidate_load {
+            CANDIDATE_PEAK_MEMORY_BYTES
+        } else {
+            0
+        };
+        if !load_pressure_decision(physical_bytes, estimated_free_percent, peak_bytes) {
+            return Err(if candidate_load {
+                "local model startup stopped because available memory cannot fit the load estimate and system reserve"
+            } else {
+                "local model load stopped to preserve the system memory reserve"
+            });
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("local model requires the Apple Silicon evaluation build")
+    }
 }
 
 fn physical_memory_bytes() -> Result<u64, &'static str> {
@@ -439,6 +506,9 @@ impl ModelRuntime {
             let _ = fs::remove_dir_all(&private_dir);
             return Err(error);
         }
+        ensure_memory_headroom(true).inspect_err(|_| {
+            let _ = fs::remove_dir_all(&private_dir);
+        })?;
         let child = command.spawn().map_err(|_| {
             let _ = fs::remove_dir_all(&private_dir);
             "runtime could not start"
@@ -751,6 +821,7 @@ fn await_ready(
     chat_abort: Option<(Instant, &AtomicBool)>,
 ) -> Result<(), &'static str> {
     let deadline = Instant::now() + START_TIMEOUT;
+    let mut next_pressure_check = Instant::now();
     while Instant::now() < deadline {
         if chat_abort.is_some_and(|(deadline, cancelled)| {
             ModelRuntime::chat_start_aborted(deadline, cancelled)
@@ -759,6 +830,10 @@ fn await_ready(
         }
         if cancellation.load(Ordering::SeqCst) != generation {
             return Err("runtime start cancelled");
+        }
+        if Instant::now() >= next_pressure_check {
+            ensure_memory_headroom(false)?;
+            next_pressure_check = Instant::now() + MEMORY_PRESSURE_POLL;
         }
         if server
             .child
@@ -862,13 +937,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn evaluation_admission_rejects_memory_below_8_gib_and_accepts_floor() {
+    fn memory_reserve_is_maximum_of_two_gib_or_quarter_ram() {
+        assert_eq!(memory_reserve_bytes(8 * GIB), 2 * GIB);
+        assert_eq!(memory_reserve_bytes(16 * GIB), 4 * GIB);
+    }
+
+    #[test]
+    fn evaluation_admission_requires_existing_floor_and_candidate_fit() {
         assert_eq!(
             admit_candidate(MINIMUM_MEMORY_BYTES - 1),
-            Err("local model requires at least 8 GiB physical memory (evaluation only)")
+            Err("local model needs more physical memory for its reserve and load estimate")
         );
         assert_eq!(admit_candidate(MINIMUM_MEMORY_BYTES), Ok(()));
         assert_eq!(admit_candidate(MINIMUM_MEMORY_BYTES * 2), Ok(()));
+    }
+
+    #[test]
+    fn memory_pressure_output_parses_free_percentage() {
+        assert_eq!(
+            parse_free_memory_percent(
+                "physical bytes 123\nSystem-wide memory free percentage: 46%\n"
+            ),
+            Some(46)
+        );
+        assert_eq!(
+            parse_free_memory_percent("System-wide memory free percentage: 101%"),
+            None
+        );
+        assert_eq!(parse_free_memory_percent("pressure unavailable"), None);
+    }
+
+    #[test]
+    fn memory_pressure_percentage_rounding_is_conservative() {
+        assert_eq!(conservative_free_percent(26), 25);
+        assert_eq!(conservative_free_percent(25), 24);
+        assert_eq!(conservative_free_percent(0), 0);
+    }
+
+    #[test]
+    fn load_pressure_decision_preserves_reserve() {
+        assert!(load_pressure_decision(16 * GIB, 44, 3 * GIB));
+        assert!(!load_pressure_decision(16 * GIB, 43, 3 * GIB));
+        assert!(load_pressure_decision(16 * GIB, 25, 0));
+        assert!(!load_pressure_decision(16 * GIB, 24, 0));
     }
 
     #[test]

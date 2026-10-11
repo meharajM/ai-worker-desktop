@@ -48,10 +48,20 @@ export function createAssistantChatAdapter(graph: ChatGraph = createLocalChatGra
         } else {
           yield { content: result(), status: { type: 'complete', reason: 'stop' } }
         }
-      } catch {
+      } catch (error) {
         if (controller.signal.aborted) yield { content: result(), status: { type: 'incomplete', reason: 'cancelled' } }
         else {
-          if (!answer) answer = 'Local chat failed.'
+          const message = error instanceof Error ? error.message : ''
+          if (!answer) answer = [
+            'physical memory could not be determined',
+            'local model needs more physical memory for its reserve and load estimate',
+            'local model requires the Apple Silicon evaluation build',
+            'local model startup stopped because available memory cannot fit the load estimate and system reserve',
+            'local model load stopped to preserve the system memory reserve',
+            'live memory pressure could not be determined',
+          ].includes(message)
+            ? message
+            : 'Local chat failed.'
           yield { content: result(), status: { type: 'incomplete', reason: 'other' } }
         }
       } finally {
