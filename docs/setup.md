@@ -1,3 +1,47 @@
+# Development Setup
+
+Current setup targets the Tauri local chat app.
+
+## Prerequisites
+
+- Node.js ≥22.12 and npm
+- Rust toolchain
+- macOS: Xcode Command Line Tools
+- Windows: MSVC C++ build tools and WebView2
+
+The app UI is bundled locally. Tauri's `beforeDevCommand` and `beforeBuildCommand` require `npm run web:build`.
+
+## Install and run
+
+```sh
+npm install
+npm run tauri:dev
+```
+
+Useful commands:
+
+```sh
+npm run web:typecheck
+npm run web:build
+npm run tauri:build
+npm run test:rust:chat
+npm run test:rust:proof
+```
+
+For isolated proof builds use `npm run tauri:proof` and `npm run web:proof-build`. On macOS arm64, `npm run tauri:build:mac:arm64` prepares the pinned llama runtime and builds the app.
+
+## Current app behavior
+
+The current Tauri app is a local chat UI with Assistant UI, LangChain/LangGraph, bounded IndexedDB history, Stop, and native RAM reserve policy. Qwen3 1.7B is a pinned development candidate, not a certified profile. The 3 GiB load estimate and macOS `memory_pressure` heuristic are uncalibrated. One successful real-model run on a 16 GiB Apple Silicon dev Mac is E2E evidence only; packaged app interaction/restart proof, 8 GiB proof, and Windows proof remain open.
+
+Voice, cloud providers, WhatsApp, MCP, filesystem, CLI, and browser tools are not available in this app. Existing setup-dependencies scripts install tools for historical Electron/MCP workflows; they are not prerequisites for current Tauri development.
+
+---
+
+## Historical Electron document retained for migration reference
+
+> The following content is preserved as historical context. Commands and capabilities in it do not apply to the current Tauri app. Use the current sections above for runnable guidance.
+
 # AI-Worker Setup Guide
 
 This guide covers local setup for development, first-run configuration, and the main environment dependencies required by AI-Worker.

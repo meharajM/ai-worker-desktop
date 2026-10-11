@@ -1,3 +1,39 @@
+# FAQ
+
+### What is AI-Worker today?
+
+A local Tauri desktop chat app with an offline web UI, small Rust native bridge, Assistant UI, and a LangChain/LangGraph chat path.
+
+### Does chat use a cloud provider?
+
+The current Tauri chat path targets a local model. The pinned Qwen3 1.7B is a development candidate, not a certified profile. Cloud providers are not available in this app.
+
+### What is stored locally?
+
+Bounded chat history is stored in IndexedDB. Model setup is explicit. The native host owns model process lifecycle and RAM reserve checks.
+
+### Does the app support voice, WhatsApp, MCP, files, CLI, or browser automation?
+
+No. Those capabilities appear in legacy Electron source and older docs, or in future roadmap plans; they are not available in the current Tauri app.
+
+### Is the model profile certified?
+
+No. One real UI-to-graph-to-native-to-model response succeeded on a 16 GiB Apple Silicon development Mac. That single run is not repeatable or certified profile evidence. The packaged-app interaction/restart matrix remains unverified; 8 GiB Mac and Windows evidence remain open.
+
+### What are the RAM policy limits?
+
+The native host applies an 8 GiB RAM floor and reserves `max(2 GiB, 25% of RAM)`. It currently uses a provisional 3 GiB model peak-load estimate and macOS `memory_pressure` heuristic; neither is calibrated or an OOM guarantee.
+
+### What do I need to build it?
+
+Node.js ≥22.12, npm, Rust, and platform tools: Xcode Command Line Tools on macOS; MSVC C++ build tools and WebView2 on Windows. Tauri runs `npm run web:build` before dev/build.
+
+---
+
+## Historical Electron document retained for migration reference
+
+> The following content is preserved as historical context. Commands and capabilities in it do not apply to the current Tauri app. Use the current sections above for runnable guidance.
+
 # Frequently Asked Questions
 
 ## General Questions

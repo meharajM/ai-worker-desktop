@@ -1,5 +1,8 @@
 # AI-Worker: System Architecture
 
+> **Historical migration journal:** Entries below are dated implementation checkpoints and may be superseded. For current architecture and status, see [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) and [chat-first plan](./plans/chat-first-delivery.md).
+
+
 This document provides a comprehensive overview of the AI-Worker application architecture, including system design, component relationships, data flow, and integration patterns.
 
 > **Migration status (M05b):** Electron remains the existing runnable host. Tauri builds its separate React 18 local core UI with Vite into `src-tauri/static/`; `LocalApp` provides Chat/Settings navigation, an in-memory unsent draft composer, and version-ready status through `desktop-bridge.ts`. The client lazily opens one in-memory protocol-v1 session per WebView, validates request/reply correlation, and exposes only status operations. Browser preview reports bridge unavailability; native errors are reduced to safe codes/messages. Model setup is explicitly unavailable, and no inference or optional integrations load. See [migration baseline](./plans/reports/migration-baseline.md) for measured facts and unverified target assumptions.

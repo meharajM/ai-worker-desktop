@@ -1,5 +1,8 @@
 # AI-Worker: Detailed Development & Handoff Plan
 
+> **Historical Electron plan:** This document describes the earlier Electron/MCP product direction. Current Tauri scope and runnable commands are documented in [README](./README.md) and [Development](./docs/DEVELOPMENT.md).
+
+
 AI-Worker is a desktop AI workspace that uses the Model Context Protocol (MCP) to bridge LLMs with local tools and files.
 
 ## 🎯 Architecture & Tech Stack

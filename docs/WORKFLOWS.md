@@ -1,3 +1,28 @@
+# Current and Planned Workflows
+
+## Available now: local chat
+
+1. Open the Tauri app and start a conversation.
+2. Send a text prompt to the explicitly configured local model.
+3. Stop an active response when needed.
+4. Return to bounded local conversation history or start a new chat at the limit.
+
+The pinned Qwen3 1.7B profile is a development candidate. One successful real-model E2E on a 16 GiB Apple Silicon development Mac does not certify a hardware profile. See [FAQ](./FAQ.md).
+
+## Not available in current Tauri app
+
+Voice, cloud providers, WhatsApp, MCP, filesystem access, CLI execution, browser automation, and attachment processing are legacy Electron capabilities or roadmap work.
+
+## Roadmap order
+
+After M16b matching-hardware real-model/resource/cancel/repeated-cycle/quit-cleanup proof, M07 adds attachments and M08/M09 add explicit legacy export/import migration; M16c is the chat-only beta. Later milestones add read-only workspace/context-grounded tasks, reviewed file changes and operation journal recovery, confirmed workspace CLI, optional curated MCP, certification, packaging, and release gates. See [chat-first delivery plan](../plans/chat-first-delivery.md).
+
+---
+
+## Historical Electron document retained for migration reference
+
+> The following content is preserved as historical context. Commands and capabilities in it do not apply to the current Tauri app. Use the current sections above for runnable guidance.
+
 # Common Workflows in AI-Worker
 
 This guide outlines common tasks and workflows you can perform using **AI-Worker**.

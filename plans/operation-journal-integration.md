@@ -15,9 +15,7 @@ User decision: Rust crate plus TypeScript bridge, provisionally named
   transport, authentication, task scope and semantic validation.
 - Assert-based recovery and real Rust/TypeScript wire-contract checks.
 
-This does not complete M21–M27. No Electron service is replaced yet; the Tauri
-scaffold has no journal host integration, registry publication or claim of Windows/whole-app verification.
-Begin host integration at M21/J01. Do not add Temporal, a daemon, scheduler, ORM, MCP wrapper or
+This remains standalone; no Electron service is replaced and the Tauri app has no journal host integration, registry publication or Windows/whole-app verification. M21 is planned after M17–M20 read-only workspace/context-grounded work. Begin host integration at M21/J01, then bind intents at J02 before M21–M24 reviewed file-write/recovery work. Do not add Temporal, a daemon, scheduler, ORM, MCP wrapper or
 another storage backend for this integration.
 
 ### Local evidence, 10 October 2026

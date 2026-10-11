@@ -1,6 +1,6 @@
 # AI-Worker Desktop: small Tauri bridge and offline web UI
 
-Revision 6, 11 October 2026. The product is a local offline web UI hosted by Tauri, macOS first and Windows next; approved workspace CLI actions come later. M13 native chat transport and M14 one-node LangChain/LangGraph chat graph are implemented. M14's mocked proof exercises live `messages` streaming only; real model inference remains unverified because no GGUF is available and disk space is below import needs. Task111 macOS arm64 llama runtime bundling and alias verification are implemented. The runtime package is verified; Qwen3 1.7B is the pinned development candidate, not a certified profile. Windows and performance are unverified.
+Revision 7, 11 October 2026. Product is a local offline Tauri chat app, macOS first and Windows next. M15 Assistant UI, bounded IndexedDB history and Stop are complete (`b803854`, `c38d02d`, `50803e0`); M16a resource policy is complete (`1719c04`) and all 21 browser proof checks pass after the flushSync harness fix. Scripts/CI updated (`46ac0b8`, `2200280`). One real UI→graph→native→model→UI response succeeded on a 16 GiB Apple Silicon development Mac; this is one-run E2E evidence, not repeatable/certified profile evidence. Packaged-app interaction/restart proof remains unverified. The pinned Qwen3 1.7B development candidate uses an uncalibrated 3 GiB peak estimate and macOS memory-pressure heuristic. 8 GiB and Windows evidence remain open.
 
 Repository: `meharajM/ai-worker-desktop`, clean published baseline `e56f8d2`. Do not bring the original `ai-worker.app` history into this repository. Keep its published credential sanitization.
 
@@ -120,7 +120,7 @@ Windows uses system Evergreen WebView2 where available. A small installer may ne
 
 ### Local model policy
 
-Use the pinned Qwen3 1.7B candidate for current development E2E. It is not certified: real inference has not run because no GGUF is available and disk space is below import needs. Revisit Qwen3.5 after the Qwen3 candidate E2E. Verify each exact GGUF, quantization, template, license and resource envelope before use. Do not infer peak RAM from artifact size or make performance claims from model-family benchmarks.
+Use pinned Qwen3 1.7B candidate for current development E2E; revisit Qwen3.5 afterward. One real response succeeded on the 16 GiB Apple Silicon development Mac, but this one-run E2E does not certify a profile. Verify exact GGUF, quantization, template, license and resource envelope before use. The 3 GiB peak estimate and macOS `memory_pressure` heuristic remain uncalibrated; do not infer peak RAM from artifact size or make performance claims from model-family benchmarks.
 
 Start Low impact at 4,096 context / 512 output tokens; Balanced at 8,192 / 1,024. One inference slot, thinking disabled where supported, 6/8 tool calls, 8/10 model turns and 90/120 seconds active work. Consecutive errors stop after two; a third identical call stops the loop. Bound tool results to 8/16 KiB within aggregate context. These are tuning starting points, not quality guarantees.
 
@@ -222,7 +222,7 @@ No `clean:state`/`dev:clean`, global package upgrades, model acquisition on ordi
 
 ## 8. Next action and remaining evidence
 
-M00–M13 are implemented. M14 is implemented with mock proof; public `stream()` emits LangGraph `messages` mode live, while `streamState()` exposes final state. No production UI calls the graph. M16a has not started; M15 Assistant UI/history/Stop is pending. Resume at M16a, then M15. Real inference is blocked by missing GGUF and insufficient import disk space; M14 real-candidate E2E and M16b remain open. The candidate is pinned Qwen3 1.7B for development, then revisit Qwen3.5. The [final goal](./chat-first-delivery.md#final-goal) remains M41; macOS comes first, Windows next, approved workspace CLI actions later.
+Current status: M15 and M16a are complete; all 21 browser proof checks pass after the flushSync harness fix. One real Qwen3 1.7B UI→graph→native→model→UI response succeeded on the 16 GiB development Mac, but remains one-run E2E evidence only. Resume at M16b matching-hardware resource/cancel/repeated-cycle/quit-cleanup proof; fresh packaged-app interaction/restart matrix, 8 GiB certification, and Windows evidence remain open. Next: M07–M09 then M16c. The [final goal](./chat-first-delivery.md#final-goal) remains M41.
 
 ### Remaining development gates
 
@@ -239,6 +239,6 @@ The first beta targets this 16 GiB Apple silicon class. An 8 GiB tier is a final
 | Clean installs, supported OS versions and signing | Verify macOS/Windows prerequisites, runtime libraries, offline setup and distribution identity. | M35–M37, before supported release/publication |
 
 Source status: standalone journal and TypeScript bridge are implemented and checked
-locally on macOS; M13 native chat transport and M14 mock graph proof are implemented. M16a and M15 remain pending; journal host integration starts at M21.
+locally on macOS; M15 and M16a are complete, and one real-model E2E response succeeded on the 16 GiB development Mac. Fresh packaged-app interaction/restart proof, 8 GiB hardware proof, and Windows proof remain open. Journal host integration is planned at M21 after M17–M20 read-only work.
 Their [local evidence and integration cards](./operation-journal-integration.md)
 record what has actually been verified. No model has been downloaded or benchmarked.

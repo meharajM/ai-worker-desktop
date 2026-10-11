@@ -27,3 +27,10 @@
 ## Controller audit after task review
 
 The approved full memory policy is implemented in native candidate admission and loading. Startup remains one attempt per explicit chat task; renderer chat setup uses `maxRetries: 0`, and the native worker has no automatic startup retry loop.
+
+
+## Status update (2026-10-11)
+
+M16a and M15 are complete. The browser proof suite passes all 21 checks after fixing the proof harness to use `flushSync` for React updates; this supersedes the earlier report of 20 passing checks and the cap-notice assertion failure. A real UI→graph→native→model→UI response succeeded once on the 16 GiB Apple Silicon development Mac. This is one-run E2E evidence only, not repeatable or certified profile evidence. The packaged Tauri interaction/restart matrix remains unverified. The 3 GiB Qwen3 peak estimate and macOS `memory_pressure` heuristic remain uncalibrated. Actual 8 GiB Mac and Windows evidence remain open.
+
+Next: M16b matching-hardware resource/cancel/repeated-cycle/quit-cleanup proof; then M07 attachments, M08/M09 explicit legacy export/import, and M16c chat-only beta.

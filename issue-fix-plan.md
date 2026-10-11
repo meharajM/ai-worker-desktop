@@ -1,5 +1,8 @@
 # Issue Fix Plan (Open Issues)
 
+> **Historical issue plan:** Scope and branch below refer to the April 2026 Electron codebase and are not the current Tauri roadmap. See [current delivery plan](./plans/chat-first-delivery.md).
+
+
 Last Updated: 2026-04-04
 Owner Branch: `codex/issues-fixes`
 

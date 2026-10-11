@@ -1,5 +1,8 @@
 # AI Worker Identified Issues
 
+> **Historical test log:** Dates, commands, and Electron behavior below record the April 2026 validation state; they are not current Tauri verification instructions. See [current development guide](./docs/DEVELOPMENT.md).
+
+
 This log contains the issues tracked during end-to-end testing of the AI Worker execution flow.
 
 ## Status Snapshot (Apr 4, 2026)

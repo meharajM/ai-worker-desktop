@@ -1,5 +1,8 @@
 # AI-Worker Improvement Plan
 
+> **Historical proposal:** Command examples and product assumptions below describe an earlier Electron-era proposal. Current scripts and scope are in [Development](../DEVELOPMENT.md).
+
+
 Comprehensive improvement roadmap for enterprise users targeting US/EU markets (GDPR compliance).
 
 ## User Review Required

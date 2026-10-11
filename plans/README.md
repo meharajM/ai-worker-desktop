@@ -1,6 +1,6 @@
 # Current implementation plan
 
-Latest user decisions: local offline web UI hosted by Tauri; macOS first, Windows next; approved workspace CLI actions later. Linux-first was superseded. M13 native local chat transport is implemented; Task111 macOS arm64 llama runtime bundling and loader-alias verification are implemented; M14 adds a one-node LangChain/LangGraph chat graph with live `messages` streaming. M14 proof is mocked: no GGUF is available and disk space is below import needs, so real inference is unverified. The candidate is pinned Qwen3 1.7B for development E2E; revisit Qwen3.5 afterward. The macOS arm64 runtime package is verified, but the candidate is not certified; Windows and performance remain unverified.
+Latest status (11 October 2026): Tauri local chat app uses an offline bundled web UI, small Rust bridge, Assistant UI, LangChain/LangGraph, bounded IndexedDB history, Stop, and native RAM reserve policy. M15 is complete (`b803854`, `c38d02d`, `50803e0`); M16a is complete (`1719c04`). All 21 browser proof checks pass after the proof harness flushSync fix. Scripts/CI updated (`46ac0b8`, `2200280`). One real UI→graph→native→model→UI response succeeded on the 16 GiB Apple Silicon development Mac; it is one-run E2E evidence, not a repeatable or certified profile. The provisional 3 GiB peak estimate and macOS `memory_pressure` heuristic remain uncalibrated. Packaged-app interaction/restart matrix, 8 GiB Mac evidence, and Windows evidence remain open.
 
 - [Chat-first delivery, early beta and final goal](./chat-first-delivery.md)
 - [Product, architecture and footprint plan](./local-desktop-product-plan.md)
@@ -10,6 +10,6 @@ Latest user decisions: local offline web UI hosted by Tauri; macOS first, Window
 - [Small sequential Luna implementation cards](./luna-implementation-cards.md)
 - [Reusable journal integration cards](./operation-journal-integration.md)
 
-Branch checkpoint: `d394789` (`fix(m14): stream local chat graph messages live`), after M05c (`767b016`), M12 (`9430512`), M13 (`519bc02`), Task111 runtime bundling (`3603613`) and alias verification (`708728b`), and M14 graph implementation (`05aef10`). M00–M13 are implemented; M14 has mocked proof. M16a is not started; M15 Assistant UI/history/Stop is pending. Resume at M16a, then M15. Real Qwen3 1.7B inference and M16b certification remain gated on a GGUF and sufficient import disk space; Windows behavior and performance remain unverified.
+Completed checkpoints: M15 (`b803854`, `c38d02d`, `50803e0`), M16a (`1719c04`), scripts/CI (`46ac0b8`, `2200280`). Resume with M16b real model/resource/cancel/repeated-cycle/quit-cleanup proof per matching hardware; then M07 attachments and M08/M09 explicit legacy export/import; then M16c chat-only beta. Do not treat single-run E2E or 21 browser proof checks as packaged-app or hardware certification.
 
 The [original Electron plan](./archive/electron-v1/local-desktop-product-plan.md) and [original task cards](./archive/electron-v1/luna-implementation-cards.md) are archived for history. Their T00–T36 tasks are obsolete; do not dispatch them.

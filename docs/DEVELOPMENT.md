@@ -1,3 +1,44 @@
+# Development Guide
+
+Current product is a Tauri 2 desktop shell with a bundled offline web UI, a Rust native bridge, Assistant UI, and a LangChain/LangGraph local chat path. Electron source remains for migration history and is not the current app entry point.
+
+## Prerequisites
+
+- Node.js ≥22.12 and npm
+- Rust toolchain
+- macOS: Xcode Command Line Tools
+- Windows: MSVC C++ build tools and WebView2
+
+Tauri's `beforeDevCommand` and `beforeBuildCommand` both invoke `npm run web:build`.
+
+## Run and build
+
+```sh
+npm install
+npm run tauri:dev
+npm run web:typecheck
+npm run web:build
+npm run tauri:build
+```
+
+The macOS arm64 runtime build path is `npm run tauri:build:mac:arm64`; `npm run tauri:prepare:runtime` prepares its pinned llama runtime. Proof commands are `npm run tauri:proof`, `npm run web:proof-build`, `npm run test:rust:chat`, and `npm run test:rust:proof`.
+
+## Current scope
+
+The app provides local chat, bounded IndexedDB history, Stop, and a native RAM reserve policy. Model candidate peak estimate and macOS memory-pressure heuristic remain uncalibrated. Voice, cloud providers, WhatsApp, MCP, filesystem, CLI, and browser tools are not available in the current Tauri app.
+
+## Rust and web changes
+
+Keep OS authority, process ownership, resource limits, and cancellation in the native bridge. Renderer state does not grant native permissions. Build the web UI before Tauri dev/package runs. Use the focused Rust scripts for chat/proof behavior and `web:typecheck` / `web:build` for renderer changes.
+
+See [Architecture](./ARCHITECTURE.md), [current roadmap](../plans/chat-first-delivery.md), and [scripts reference](../package.json).
+
+---
+
+## Historical Electron document retained for migration reference
+
+> The following content is preserved as historical context. Commands and capabilities in it do not apply to the current Tauri app. Use the current sections above for runnable guidance.
+
 # Developer Guide 🛠️
 
 Welcome! This document outlines developer workflows, environment setup, coding guidelines, and testing frameworks for contributing to AI-Worker.

@@ -1,5 +1,8 @@
 # Implementation Plan: Remote LLM Model Config
 
+> **Historical proposal:** This Electron-era model-selection note and its commands do not describe current Tauri setup. See [current FAQ](../FAQ.md).
+
+
 ## Goal
 On app start, fetch a remote JSON file defining the recommended default model per provider. Non-technical users never have to pick a model. App owners can change defaults without shipping an update. Designed to later swap the hardcoded JSON constant for a live URL (GitHub raw, CDN, etc).
 

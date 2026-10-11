@@ -1,3 +1,17 @@
+# MCP Guide: Historical and Future Scope
+
+> **Not available in current Tauri app.** This page records legacy Electron MCP integration and design context. Do not use it as current setup instructions.
+
+The current Tauri chat graph has no tools and no MCP connections. Future roadmap cards place opt-in curated MCP after read-only workspace tasks, reviewed file changes, and confirmed CLI actions. Native capability, consent, and resource limits must be designed before enabling any MCP integration.
+
+Legacy Electron implementations and examples below are retained for migration research only. They do not establish that MCP is shipped or supported by the Tauri app.
+
+---
+
+## Historical Electron document retained for migration reference
+
+> The following content is preserved as historical context. Commands and capabilities in it do not apply to the current Tauri app. Use the current sections above for runnable guidance.
+
 # Model Context Protocol (MCP) Guide 🔌
 
 AI-Worker integrates Anthropic's **Model Context Protocol (MCP)** as its primary extensibility framework. MCP enables LLMs to safely query data, execute commands, and interact with the local filesystem and remote services via standardized tool schemas.

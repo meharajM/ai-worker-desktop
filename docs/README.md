@@ -1,20 +1,27 @@
-# AI-Worker Documentation
+# Documentation
 
-Welcome to the documentation index for AI-Worker. Start here to install, configure, develop, or contribute.
+AI-Worker's current app is a local Tauri desktop chat with an offline web UI and a small native bridge. Legacy Electron documents describe historical capabilities unless explicitly marked as current.
 
-## 🚀 Getting Started
-- **[Quick Start](./QUICK_START.md)** — Get up and running in 5 minutes.
-- **[Setup Guide](./setup.md)** — Detailed system setup, prerequisites, and developer configurations.
-- **[Usage Guide](./usage.md)** — Learn about voice inputs, provider setup, and MCP tool bindings.
+## Start here
 
-## 🧠 Architecture & Technical Guides
-- **[System Architecture](./ARCHITECTURE.md)** — The 3 core engineering paradigms of AI-Worker.
-- **[MCP Integration](./MCP_GUIDE.md)** — How to build and connect custom Model Context Protocol servers.
-- **[FAQ](./FAQ.md)** — Frequently Asked Questions about local models, privacy, and tools.
-- **[Workflows](./WORKFLOWS.md)** — Walkthroughs of common automation scenarios.
+- [Quick Start](./QUICK_START.md): prerequisites and first launch.
+- [Installation](./INSTALLATION.md): platform requirements and build steps.
+- [Setup](./setup.md): environment and troubleshooting.
+- [User Guide](./USER_GUIDE.md): current chat, Stop, and history.
+- [FAQ](./FAQ.md): current behavior and known limits.
 
-## 🛠️ Contributor Resources
-- **[Development Guide](./DEVELOPMENT.md)** — Contribution workflows, code style, testing.
-- **[Self-Healing Analysis](./self-healing-analysis.md)** — Error diagnostics and recovery logic.
-- **[Screenshots](./screenshots/)** — Application interface previews.
-- **[Social Preview](./social-preview.png)** — Main social sharing graphic.
+## Development
+
+- [Development Guide](./DEVELOPMENT.md): current scripts and Rust/web workflow.
+- [Architecture](./ARCHITECTURE.md): current Tauri chat architecture.
+- [Workflows](./WORKFLOWS.md): workflows available now and roadmap scope.
+- [Scripts](../scripts/README.md): historical setup scripts and their status.
+
+## Historical guides
+
+- [Usage guide](./usage.md): Electron-era feature reference; not current Tauri instructions.
+- [MCP guide](./MCP_GUIDE.md): future/legacy MCP design reference; MCP is not available in the Tauri app.
+- [Self-healing analysis](./self-healing-analysis.md): historical analysis.
+- [Screenshots](./screenshots/): retained interface references; some show legacy UI.
+
+See [current delivery plan](../plans/chat-first-delivery.md) for milestone status and order.

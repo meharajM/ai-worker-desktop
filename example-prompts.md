@@ -1,5 +1,8 @@
 # Sub-Agent Orchestration System Test Prompts
 
+> **Legacy examples:** Prompts below describe Electron-era sub-agent, browser, and tool capabilities; they are not supported by the current Tauri chat app.
+
+
 Use these prompts to verify the comprehensive sub-agent orchestration features including token efficiency, parallelism, context safety, and smart reporting capabilities.
 
 ---

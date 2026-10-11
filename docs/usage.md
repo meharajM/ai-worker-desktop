@@ -1,3 +1,17 @@
+# Historical Electron Usage Guide
+
+> **Legacy reference:** This guide describes Electron-era UI and capabilities. It is not a user guide for the current Tauri app.
+
+The current Tauri app provides local chat, bounded IndexedDB history, Stop, and native RAM reserve policy. It does not provide the voice, cloud-provider, WhatsApp, MCP, filesystem, CLI, or browser workflows described in this document. For current behavior, see [User Guide](./USER_GUIDE.md).
+
+The sections below remain as historical migration context; screenshots and names may no longer match the current app.
+
+---
+
+## Historical Electron document retained for migration reference
+
+> The following content is preserved as historical context. Commands and capabilities in it do not apply to the current Tauri app. Use the current sections above for runnable guidance.
+
 # AI-Worker Usage Guide
 
 This guide explains the main workflows available in AI-Worker once the app is installed and running.

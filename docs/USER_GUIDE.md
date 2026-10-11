@@ -1,3 +1,31 @@
+# User Guide: Current Tauri Chat
+
+The current Tauri app is a local, chat-first desktop UI. It uses a native Rust bridge for local model transport and resource policy, with a LangChain/LangGraph chat flow rendered through Assistant UI.
+
+## Chat
+
+- Start a conversation from the chat composer.
+- Responses stream from the locally configured model.
+- Select **Stop** to cancel the active response.
+- Start a new conversation when the bounded history limit is reached.
+- Conversation history is stored locally in bounded IndexedDB storage.
+
+Model setup is explicit. The pinned Qwen3 1.7B model is a development candidate, not a certified general-use profile. Inference stays local in the current chat path.
+
+## Resource behavior
+
+The native host applies a RAM admission floor and reserve policy before model startup and during loading. The 3 GiB peak estimate and macOS `memory_pressure` heuristic are not calibrated. The current default idle policy may unload the model between tasks.
+
+## Current limitations
+
+The Tauri app does not currently offer voice, cloud model providers, WhatsApp, MCP, filesystem access, CLI execution, or browser automation. These are future roadmap or historical Electron features. The packaged-app interaction/restart matrix and matching-hardware certification remain open.
+
+---
+
+## Historical Electron document retained for migration reference
+
+> The following content is preserved as historical context. Commands and capabilities in it do not apply to the current Tauri app. Use the current sections above for runnable guidance.
+
 # User Guide 📖
 
 AI-Worker is a local-first intelligent assistant workspace that runs directly on your desktop. It integrates seamlessly with external tools using the Model Context Protocol (MCP) and automates tasks directly on your computer.

@@ -1,3 +1,17 @@
+# Historical Setup Scripts
+
+> These scripts support legacy Electron/MCP workflows. They do not install prerequisites for, or configure, the current Tauri chat app.
+
+Current Tauri development prerequisites: Node.js ≥22.12, npm, Rust, Xcode Command Line Tools on macOS, and MSVC C++ build tools plus WebView2 on Windows. Tauri runs `npm run web:build` before development and packaging.
+
+`setup-dependencies.sh` and `setup-dependencies.ps1` historically install Node.js, Python, and `uv` for MCP servers. They may install packages through Homebrew, apt/yum/dnf, Chocolatey, or upstream installers. Use current platform guidance for the actual Tauri app in [Installation](../docs/INSTALLATION.md).
+
+---
+
+## Historical Electron document retained for migration reference
+
+> The following content is preserved as historical context. Commands and capabilities in it do not apply to the current Tauri app. Use the current sections above for runnable guidance.
+
 # Setup Scripts
 
 This directory contains automated setup scripts to install dependencies required for AI Worker's MCP servers.

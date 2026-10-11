@@ -7,9 +7,9 @@ Branch: `codex/local-chat-e2e`
 | --- | --- | --- |
 | M13 — native chat transport | implemented | Pinned Qwen3 1.7B is developer evaluation only. Real-model smoke now succeeds through the Tauri app on the development Mac; no profile certification. |
 | Task 111 — macOS arm64 runtime package | implemented | Commit `3603613` adds pinned b11429 preparation, Tauri resource mapping and startup flag/version check. Read-only review found loader aliases were not revalidated before spawn; follow-up now checks all nine expected relative symlinks and adds a focused test. No model download or inference. |
-| M16a — resource envelope | not started | Use exact candidate controls in native policy; no certification claims. |
+| M16a — resource envelope | complete | Commit `1719c04`; five focused Rust policy tests and all 21 browser proof checks pass after flushSync harness fix. 3 GiB peak estimate and macOS memory-pressure heuristic remain uncalibrated. |
 | M14 — LangChain/LangGraph chat client | implemented | One model node streams through the native M13 bridge; mock proof and one real local-model response pass. No tools or persistence. |
-| M15 — Assistant UI + persistence + Stop | partial | Minimal `LocalApp` streams a real response and has New chat/Stop controls. Assistant UI, durable history and runtime verification of Stop/follow-up/restart remain. |
+| M15 — Assistant UI + persistence + Stop | complete | Commits `b803854`, `c38d02d`, `50803e0`: Assistant UI, bounded IndexedDB history, session switching, Stop, visible cap/persistence notices. Fresh packaged-app interaction/restart matrix remains open. |
 
 ## Existing checked-in state
 
@@ -53,4 +53,14 @@ Branch: `codex/local-chat-e2e`
 - Quit the app; process inspection confirmed both the Tauri host and owned `llama-server` exited.
 - Cold start in this single run took roughly 1–2 minutes while verifying/loading the 1.1 GB GGUF. This is not a certified latency result.
 - Chat requests are capped at 32 messages; the UI clearly directs users to New chat at the limit. Proof-page assertion rejects oversized graph history before native work starts.
-- Still pending: formal M16a resource envelope; Assistant UI; durable bounded history; verified Stop-to-compute; follow-up turn and restart; model footprint/pressure evidence; 8 GiB certification; Windows proof.
+- M16a resource policy is implemented in `1719c04`: native admission retains the 8 GiB floor, reserves `max(2 GiB, 25% RAM)`, uses a provisional 3 GiB Qwen3 load estimate, checks macOS free-memory telemetry before spawn and during load, and stops the owned server on reserve breach. Five focused Rust tests and formatting checks pass. The Luna review found no blocking defects; the estimate and telemetry remain advisory and uncalibrated.
+- Historical checkpoint superseded: M15 is complete (`b803854`, `c38d02d`, `50803e0`); all 21 browser proof checks now pass after the flushSync harness fix. Fresh packaged-app session/restart/real-model Stop matrix remains unverified.
+- Current remaining: M16b real-model footprint/pressure, repeated-cycle and quit-cleanup measurements per matching hardware; matching 8 GiB certification; separate Windows platform proof.
+
+
+## Resolved M15/M16a proof status (2026-10-11)
+
+- Browser proof suite passes all 21 checks after the proof harness was fixed to flush React updates with `flushSync`; earlier 20-pass/notice-assertion failure is superseded.
+- M15 and M16a are complete. M16b remains open: real model/resource/cancel/repeated-cycle/quit-cleanup evidence per matching hardware, plus fresh packaged-app interaction/restart matrix. 8 GiB needs an actual 8 GiB Mac; Windows remains separate.
+- One real UI→graph→native→model→UI response succeeded on the 16 GiB Apple Silicon development Mac. This is one-run E2E evidence, not repeatable/certified profile evidence. The 3 GiB peak estimate and macOS `memory_pressure` heuristic remain uncalibrated.
+- Remaining order: M16b → M07 attachments + M08/M09 explicit legacy export/import → M16c chat-only beta → M17–M20 read-only/context-grounded tasks → J01/J02 + M21–M24 reviewed file-write/journal/recovery → M25–M28 confirmed CLI → M29–M31 opt-in curated MCP → M32–M34 certification → M35–M37 macOS/Windows packaging and recovery/update → M38–M41 legacy pruning/full release.

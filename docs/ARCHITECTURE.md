@@ -1,3 +1,43 @@
+# Current Tauri Architecture
+
+The current product is a local chat app: bundled offline web UI, Tauri native host, and one local-model chat path.
+
+```text
+Assistant UI
+    ↓ custom chat adapter
+LangChain / one-node LangGraph chat
+    ↓ bounded task stream
+Tauri bridge (Rust)
+    ↓ owned local process
+pinned llama runtime + local model
+```
+
+## Web UI
+
+Vite builds static web assets for Tauri. Assistant UI owns chat presentation and renderer interaction state. Bounded IndexedDB stores conversation history. The UI does not directly own model processes or native permissions.
+
+## Chat orchestration
+
+LangChain/LangGraph handles the chat request and streaming. Current graph is chat-only and has no tools. The selected Qwen3 1.7B is a pinned development candidate; model profile certification remains open.
+
+## Native host
+
+Rust owns the local model process, task identity, streaming transport, cancellation, fixed generation bounds, RAM admission/reserve policy, and process cleanup. The current policy uses a provisional 3 GiB peak estimate and macOS `memory_pressure` heuristic; both remain uncalibrated.
+
+## Storage and scope
+
+Chat history is bounded and persisted in IndexedDB. Model setup is explicit. Current Tauri app has no voice, cloud providers, WhatsApp, MCP, filesystem, CLI, or browser tools. Historical Electron modules remain in the repository but are outside the Tauri runtime path.
+
+## Evidence limits
+
+One real UI-to-graph-to-native-to-model response succeeded on a 16 GiB Apple Silicon development Mac. This is a one-run E2E, not repeatable or certified profile evidence. Fresh packaged-app interaction/restart proof, 8 GiB Mac proof, and Windows proof remain open. See [delivery plan](../plans/chat-first-delivery.md).
+
+---
+
+## Historical Electron document retained for migration reference
+
+> The following content is preserved as historical context. Commands and capabilities in it do not apply to the current Tauri app. Use the current sections above for runnable guidance.
+
 # AI-Worker Architecture Overview
 
 This document details the core design principles and architecture of **AI-Worker**. The application is structured around three main engineering pillars that enable local-first agentic workflows.

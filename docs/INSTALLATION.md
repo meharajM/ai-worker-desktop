@@ -1,3 +1,47 @@
+# Installation and Build
+
+This guide covers building the current Tauri desktop app from source. A generally supported packaged release is not yet certified.
+
+## Requirements
+
+- Node.js ≥22.12 and npm
+- Rust toolchain
+- macOS: Xcode Command Line Tools
+- Windows: MSVC C++ build tools and WebView2
+
+Tauri invokes `npm run web:build` before development and packaging.
+
+## Build from source
+
+```sh
+git clone https://github.com/meharajM/ai-worker-desktop.git
+cd ai-worker-desktop
+npm install
+npm run tauri:dev
+```
+
+To build the current platform's Tauri bundle:
+
+```sh
+npm run tauri:build
+```
+
+For macOS arm64, prepare the pinned runtime and build with:
+
+```sh
+npm run tauri:build:mac:arm64
+```
+
+The bundled model is not implied by these commands; model setup is explicit. Windows packaging and runtime behavior still require actual Windows proof. See [Setup](./setup.md) and [Development](./DEVELOPMENT.md).
+
+The existing Electron installer workflows and setup scripts are historical; they do not build or configure the current Tauri app.
+
+---
+
+## Historical Electron document retained for migration reference
+
+> The following content is preserved as historical context. Commands and capabilities in it do not apply to the current Tauri app. Use the current sections above for runnable guidance.
+
 # Installation Guide 🎯
 
 This guide provides step-by-step instructions to install and configure AI-Worker on your local machine.

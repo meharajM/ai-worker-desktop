@@ -1,5 +1,8 @@
 # No-Code Visual Regression Guide for AI Agents
 
+> **Legacy workflow:** This guide references Electron-era browser subagents and `npm run dev`; use current Tauri scripts from [Development](../docs/DEVELOPMENT.md) and do not treat the legacy workflow as current app verification.
+
+
 This document provides a standardized protocol for performing **manual-visual regressions** and **UI audits** using browser subagents. Since this project moves fast and leverages a premium design system, every PR should be audited for visual consistency without necessarily writing brittle E2E code tests for every small UI tweak.
 
 ---
