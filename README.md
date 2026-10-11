@@ -43,3 +43,5 @@ The [MIT Rust journal](./crates/local-operation-journal/) and [TypeScript bridge
 The [chat-first plan](./plans/chat-first-delivery.md) and [implementation cards](./plans/luna-implementation-cards.md) track current work. Next: M16b real model/resource/cancel/repeated-cycle/quit-cleanup proof per matching hardware; M07 attachments and M08/M09 explicit legacy export/import; then M16c chat-only beta. Later phases add read-only workspace tasks, reviewed file changes, confirmed CLI, optional curated MCP, and release certification.
 
 Legacy Electron feature guides and dated research remain for migration context; they do not describe current Tauri capabilities.
+
+Contributing: [guide](./CONTRIBUTING.md) · [issues](https://github.com/meharajM/ai-worker-desktop/issues) · [security](./SECURITY.md) · [Code of Conduct](./CODE_OF_CONDUCT.md).
