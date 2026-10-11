@@ -1,6 +1,7 @@
 use tauri::Manager;
 
 mod bridge;
+mod chat;
 mod model_runtime;
 mod model_setup;
 mod preferences;
@@ -30,6 +31,7 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(bridge::BridgeState::default())
+        .manage(chat::ChatState::default())
         .manage(model_runtime::ModelRuntime::default())
         .manage(model_setup::ModelSetup::default())
         .manage(preferences::PreferenceState::default())
@@ -50,6 +52,16 @@ fn main() {
                     .app_handle()
                     .state::<bridge::BridgeState>()
                     .owner_destroyed(window.label());
+                let stop_chat = window
+                    .app_handle()
+                    .state::<chat::ChatState>()
+                    .owner_destroyed(window.label());
+                if stop_chat {
+                    window
+                        .app_handle()
+                        .state::<model_runtime::ModelRuntime>()
+                        .stop();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -58,6 +70,8 @@ fn main() {
             bridge::bridge_get_status,
             bridge::bridge_get_preferences,
             bridge::bridge_update_preferences,
+            chat::local_chat_start,
+            chat::local_chat_cancel,
             model_setup::model_catalog,
             model_setup::model_import,
             model_setup::model_cancel_import,

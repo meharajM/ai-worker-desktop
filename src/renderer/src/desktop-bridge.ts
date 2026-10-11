@@ -58,9 +58,17 @@ export type DesktopPreferencesReply = {
 
 type Identity = { protocolVersion: number; ownerId: string; sessionId: string; requestId: string }
 type OpenRequest = Omit<Identity, 'sessionId'>
-type NativeRequest = OpenRequest | Identity | (Identity & { preferences: DesktopPreferences })
-type NativeCommand = 'bridge_open_session' | 'bridge_get_status' | 'bridge_get_preferences' | 'bridge_update_preferences' | 'model_catalog' | 'model_import' | 'model_cancel_import'
-type Invoke = <T>(command: NativeCommand, args: { request: NativeRequest; onProgress?: Channel<ModelImportProgress>; importRequestId?: string }) => Promise<T>
+export type LocalChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+export type LocalChatEvent =
+  | { event: 'started'; data: { taskId: string; requestId: string } }
+  | { event: 'chunk'; data: { taskId: string; requestId: string; content: string } }
+  | { event: 'complete'; data: { taskId: string; requestId: string } }
+  | { event: 'failed'; data: { taskId: string; requestId: string; message: string } }
+  | { event: 'cancelled'; data: { taskId: string; requestId: string } }
+
+type NativeRequest = OpenRequest | Identity | (Identity & { preferences: DesktopPreferences }) | (Identity & { taskId: string; messages: LocalChatMessage[] })
+type NativeCommand = 'bridge_open_session' | 'bridge_get_status' | 'bridge_get_preferences' | 'bridge_update_preferences' | 'model_catalog' | 'model_import' | 'model_cancel_import' | 'local_chat_start' | 'local_chat_cancel'
+type Invoke = <T>(command: NativeCommand, args: { request: NativeRequest; onProgress?: Channel<ModelImportProgress>; onEvent?: Channel<LocalChatEvent>; importRequestId?: string; taskId?: string }) => Promise<T>
 
 export type ModelCandidate = {
   id: string
@@ -147,7 +155,7 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
     command: Exclude<NativeCommand, 'bridge_open_session'>,
     preferences: DesktopPreferences | undefined,
     validate: (reply: unknown, identity: Identity) => T,
-    extraArgs: { onProgress?: Channel<ModelImportProgress>; importRequestId?: string } = {},
+    extraArgs: { onProgress?: Channel<ModelImportProgress>; importRequestId?: string; onEvent?: Channel<LocalChatEvent>; taskId?: string } = {},
   ): Promise<T> {
     if (!platform.isTauri()) throw new DesktopBridgeError('unavailable')
     if (preferences !== undefined && !validPreferences(preferences)) throw new DesktopBridgeError('invalid_request')
@@ -242,6 +250,45 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
           throw new DesktopBridgeError('protocol_error')
         }
       }, { importRequestId })
+    },
+    startLocalChat(taskId: string, messages: LocalChatMessage[], onEvent: (event: LocalChatEvent) => void): Promise<{ taskId: string; requestId: string }> {
+      const encoder = new TextEncoder()
+      let promptBytes = 0
+      const validMessages = Array.isArray(messages) && messages.length > 0 && messages.length <= 32 && messages.every((message) => {
+        if (!object(message) || Object.keys(message).sort().join(',') !== 'content,role' ||
+          !['system', 'user', 'assistant'].includes(message.role) || typeof message.content !== 'string' ||
+          !message.content.length || message.content.includes('\0')) return false
+        const bytes = encoder.encode(message.content).length
+        promptBytes += bytes
+        return bytes <= 8192
+      }) && promptBytes <= 32768
+      if (!validId(taskId) || !validMessages) {
+        return Promise.reject(new DesktopBridgeError('invalid_request'))
+      }
+      if (!platform.isTauri()) return Promise.reject(new DesktopBridgeError('unavailable'))
+      const channel = new Channel<LocalChatEvent>()
+      let requestId = ''
+      channel.onmessage = (event) => {
+        if (!object(event) || !object(event.data) || event.data.taskId !== taskId || event.data.requestId !== requestId) return
+        if ((event.event === 'chunk' && typeof event.data.content === 'string') ||
+          (event.event === 'failed' && typeof event.data.message === 'string') ||
+          ['started', 'complete', 'cancelled'].includes(String(event.event))) onEvent(event)
+      }
+      return openSession().then(async (sessionId) => {
+        const identity = { protocolVersion: PROTOCOL_VERSION, ownerId: OWNER_ID, sessionId, requestId: nextRequestId() }
+        requestId = identity.requestId
+        const reply = await platform.invoke('local_chat_start', { request: { ...identity, taskId, messages }, onEvent: channel })
+        const accepted = validateIdentity(reply, identity)
+        if (accepted.taskId !== taskId) throw new DesktopBridgeError('protocol_error')
+        return { taskId, requestId }
+      }).catch((error: unknown) => { throw error instanceof DesktopBridgeError ? error : nativeError(error) })
+    },
+    cancelLocalChat(taskId: string): Promise<void> {
+      if (!validId(taskId)) return Promise.reject(new DesktopBridgeError('invalid_request'))
+      return correlatedRequest('local_chat_cancel', undefined, (value, identity) => {
+        const reply = validateIdentity(value, identity)
+        if (reply.taskId !== taskId || reply.cancelled !== true) throw new DesktopBridgeError('protocol_error')
+      }, { taskId })
     },
   }
 }

@@ -363,9 +363,15 @@ pub fn bridge_open_session(
     request: OpenSessionRequest,
     window: WebviewWindow,
     state: State<'_, BridgeState>,
+    chat: State<'_, crate::chat::ChatState>,
+    runtime: State<'_, crate::model_runtime::ModelRuntime>,
 ) -> Result<OpenSessionReply, BridgeError> {
     let caller = Caller::from_window(&window)?;
-    state.open(&caller, request)
+    let reply = state.open(&caller, request)?;
+    if chat.invalidate_sessions(&reply.owner_id, &reply.session_id) {
+        runtime.stop();
+    }
+    Ok(reply)
 }
 
 #[tauri::command]

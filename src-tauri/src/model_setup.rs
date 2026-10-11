@@ -25,7 +25,7 @@ pub struct ModelSetup {
     active: Arc<Mutex<Option<(String, Arc<AtomicBool>)>>>,
 }
 
-fn developer_candidate_available() -> bool {
+pub(crate) fn developer_candidate_available() -> bool {
     cfg!(all(
         debug_assertions,
         target_os = "macos",

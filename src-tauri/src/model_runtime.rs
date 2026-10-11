@@ -101,6 +101,19 @@ impl ModelRuntime {
         self.start_assets_at_generation(assets, None, generation)
     }
 
+    pub(crate) fn chat_endpoint<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+    ) -> Result<(u16, String), &'static str> {
+        let port = self.start(app)?;
+        let current = self
+            .server
+            .lock()
+            .map_err(|_| "runtime state unavailable")?;
+        let server = current.as_ref().ok_or("runtime unavailable")?;
+        Ok((port, server.auth.clone()))
+    }
+
     fn live_server_port(&self, generation: u64) -> Result<Option<u16>, &'static str> {
         if self.cancel_generation.load(Ordering::SeqCst) != generation {
             return Err("runtime start cancelled");
