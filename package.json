@@ -45,6 +45,8 @@
         "tauri:dev": "tauri dev",
         "tauri:proof": "tauri dev --features proof --config src-tauri/tauri.proof.conf.json",
         "tauri:build": "tauri build",
+        "tauri:prepare:runtime": "bash scripts/prepare-llama-runtime-macos-arm64.sh",
+        "tauri:build:mac:arm64": "npm run tauri:prepare:runtime && tauri build",
         "web:typecheck": "tsc --noEmit --project tsconfig.web.json",
         "web:build": "vite build --config vite.tauri.config.ts",
         "web:proof-build": "vite build --config vite.proof.config.ts",
