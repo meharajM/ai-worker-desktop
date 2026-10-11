@@ -46,6 +46,8 @@
         "build": "electron-vite build",
         "preview": "electron-vite preview",
         "tauri:dev": "tauri dev",
+        "tauri:prepare:runtime": "bash scripts/prepare-llama-runtime-macos-arm64.sh",
+        "tauri:build:mac:arm64": "npm run tauri:prepare:runtime && tauri build",
         "tauri:proof": "tauri dev --features proof --config src-tauri/tauri.proof.conf.json",
         "tauri:build": "tauri build",
         "web:typecheck": "tsc --noEmit --project tsconfig.web.json",

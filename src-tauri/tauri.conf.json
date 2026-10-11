@@ -4,7 +4,11 @@
   "version": "0.1.2",
   "identifier": "com.aiworker.app.tauri",
   "bundle": {
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
+    "resources": {
+      "resources/llama-v0.6.0/bin/": "llama-v0.6.0/bin/",
+      "resources/llama-v0.6.0/LICENSE": "llama-v0.6.0/LICENSE"
+    }
   },
   "build": {
     "frontendDist": "static",

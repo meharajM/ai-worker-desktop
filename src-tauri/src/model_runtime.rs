@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, Runtime};
 
 pub(crate) const SERVER_SHA256: &str =
-    "93c9a6ddd5870fae262f728f54be710b5d3c5436b8980f4ab684bba87b5c34f7";
+    "1bf5602a2be50097c44282a6ecc63234d94ee8f96d39fd45fed6eff4e74b6b41";
 pub(crate) const MODEL_NAME: &str = "Qwen3-1.7B-Q4_K_M.gguf";
 pub(crate) const MODEL_SIZE: u64 = 1_107_408_544;
 pub(crate) const MODEL_SHA256: &str =
@@ -34,39 +34,43 @@ const STOP_KILL_WAIT: Duration = Duration::from_secs(2);
 const RUNTIME_LIBRARIES: &[(&str, &str)] = &[
     (
         "libllama-common.0.6.0.dylib",
-        "e6f474c60a5be78638327abfbf97ac3c97f71cde70e6e3bc0d16ed07dc9d04a0",
+        "febeef087a261b0eb4eeee09b43239b6bf0863c58ad1dc30d0b610ef4308a411",
     ),
     (
         "libllama.0.6.0.dylib",
-        "b285d66178ee8c3435647e36cc6bd083e378b1bbbe76a2b5052858052bc4c535",
+        "c5da330c56d4627d18714188350c14150a84237e38c1e6fd5f1d25997afd1046",
     ),
     (
         "libmtmd.0.6.0.dylib",
-        "83d59ebecd1bcacff005cc9e839bd0b5ed468c1b4c58ece511c2b2d1804e2634",
+        "2de2c7d40b72dc5fa14aed03cb8d7521ec5ab262bbb6038d6110666f3852232b",
     ),
     (
         "libggml-blas.0.26.0.dylib",
-        "01935cdd416e53248b33c41de233e18eebe12b4843efca5d1dd73df0321ae471",
+        "6526259e8f70a5b3a394df3ba082050c290d7653846efbdc84b3710b22fb4eac",
     ),
     (
         "libllama-server-impl.dylib",
-        "468bc05071b997ab87898d5223e28a56c6ed624b09ce6fbdfdc307a2a098ea3b",
+        "8bd39e3755fe1e6b5f08736e131cb94eb741a7f64ca4ab2a10725ea4ea3e6815",
     ),
     (
         "libggml-metal.0.26.0.dylib",
-        "83f75ce4bacb85184ac2bd36db138365e444ea482f8f7f709970dd85da363748",
+        "3b0e401627c00dc2843c0cdae08bd73639c21cdf97c64290dd88dd827c976045",
     ),
     (
         "libggml-cpu.0.26.0.dylib",
-        "93796499f59ecfca66cc4063081fbf8bcce26417db83fed59db2ef1107345428",
+        "75d7c5c73bad915b536d402eae361163f69c124762fdfdd9e1d2c4bd1b4adc04",
     ),
     (
         "libggml.0.26.0.dylib",
-        "faa5a0c8b3120e4f4339df525d5a34d005c3d688687e6a517a60f687daf5cbc2",
+        "85ac40d540a5cc86f28a70270ddcdde677e92eb585c3bacd1b7e82270fe8934b",
     ),
     (
         "libggml-base.0.26.0.dylib",
-        "867d2eef449e1e513ed9160b26eee4b9d29ef014e70fe97475da0c9f94ce2a93",
+        "4d483957511852e398564fe248da19e9c6b2f81ba668e4591ee4c29bccfbacdc",
+    ),
+    (
+        "libggml-rpc.0.26.0.dylib",
+        "5a75e884d5feff030067ed7867925366c552c68f1b36653f03bc2b0bd87e8a56",
     ),
 ];
 
