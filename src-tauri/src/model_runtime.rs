@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+use std::ffi::CString;
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
@@ -6,7 +8,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Mutex,
+        Arc, Mutex, Weak,
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -30,6 +32,73 @@ pub(crate) const MODEL_DISK_REQUIREMENT: u64 = MODEL_SIZE * 2;
 const START_TIMEOUT: Duration = Duration::from_secs(60);
 const STOP_GRACE: Duration = Duration::from_millis(2_500);
 const STOP_KILL_WAIT: Duration = Duration::from_secs(2);
+pub(crate) const MINIMUM_MEMORY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const IDLE_UNLOAD: Duration = Duration::from_secs(60);
+const GENERATION_ARGS: &[&str] = &[
+    "--no-webui",
+    "--no-agent",
+    "--no-ui-mcp-proxy",
+    "--parallel",
+    "1",
+    "-c",
+    "2048",
+    "-n",
+    "128",
+    "-b",
+    "128",
+    "-ub",
+    "64",
+    "--threads",
+    "4",
+    "--threads-batch",
+    "4",
+    "--reasoning",
+    "off",
+];
+
+fn admit_candidate(memory_bytes: u64) -> Result<(), &'static str> {
+    if memory_bytes < MINIMUM_MEMORY_BYTES {
+        return Err("local model requires at least 8 GiB physical memory (evaluation only)");
+    }
+    Ok(())
+}
+
+fn physical_memory_bytes() -> Result<u64, &'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::{ffi::c_void, mem::size_of};
+        let name = CString::new("hw.memsize").expect("static sysctl key");
+        let mut bytes = 0u64;
+        let mut length = size_of::<u64>();
+        let result = unsafe {
+            unsafe extern "C" {
+                fn sysctlbyname(
+                    name: *const std::ffi::c_char,
+                    old_value: *mut c_void,
+                    old_length: *mut usize,
+                    new_value: *mut c_void,
+                    new_length: usize,
+                ) -> i32;
+            }
+            sysctlbyname(
+                name.as_ptr(),
+                (&mut bytes as *mut u64).cast(),
+                &mut length,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if result == 0 && length == size_of::<u64>() {
+            Ok(bytes)
+        } else {
+            Err("physical memory could not be determined")
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("local model requires the Apple Silicon evaluation build")
+    }
+}
 
 const RUNTIME_LIBRARIES: &[(&str, &str)] = &[
     (
@@ -89,8 +158,9 @@ const RUNTIME_ALIASES: &[(&str, &str)] = &[
 
 #[derive(Default)]
 pub struct ModelRuntime {
-    server: Mutex<Option<OwnedServer>>,
-    cancel_generation: AtomicU64,
+    server: Arc<Mutex<Option<OwnedServer>>>,
+    cancel_generation: Arc<AtomicU64>,
+    idle_generation: Arc<AtomicU64>,
 }
 
 struct Assets {
@@ -110,6 +180,8 @@ impl ModelRuntime {
     /// Called by the native chat path only; no UI or boot hook calls this yet.
     #[allow(dead_code)]
     pub fn start<R: Runtime>(&self, app: &AppHandle<R>) -> Result<u16, &'static str> {
+        admit_candidate(physical_memory_bytes()?)?;
+        self.cancel_idle_unload();
         let generation = self.cancel_generation.load(Ordering::SeqCst);
         if let Some(port) = self.live_server_port(generation)? {
             return Ok(port);
@@ -124,6 +196,11 @@ impl ModelRuntime {
         deadline: Instant,
         cancelled: &AtomicBool,
     ) -> Result<(u16, String), &'static str> {
+        if Self::chat_start_aborted(deadline, cancelled) {
+            return Err("chat response timed out");
+        }
+        admit_candidate(physical_memory_bytes()?)?;
+        self.cancel_idle_unload();
         let generation = self.cancel_generation.load(Ordering::SeqCst);
         if let Some(port) = self.live_server_port(generation)? {
             if Self::chat_start_aborted(deadline, cancelled) {
@@ -194,11 +271,40 @@ impl ModelRuntime {
     }
 
     pub fn stop(&self) {
+        self.cancel_idle_unload();
         self.cancel_generation.fetch_add(1, Ordering::SeqCst);
         let Ok(mut owned) = self.server.lock() else {
             return;
         };
         stop_owned(&mut owned);
+    }
+
+    pub(crate) fn unload_after_task(&self, short_idle: bool) {
+        if !short_idle {
+            self.stop();
+            return;
+        }
+        self.schedule_idle_unload(IDLE_UNLOAD);
+    }
+
+    fn schedule_idle_unload(&self, delay: Duration) {
+        let generation = self.idle_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let idle_generation = Arc::downgrade(&self.idle_generation);
+        let cancel_generation = Arc::downgrade(&self.cancel_generation);
+        let server = Arc::downgrade(&self.server);
+        thread::spawn(move || {
+            idle_unload_after(
+                delay,
+                generation,
+                idle_generation,
+                cancel_generation,
+                server,
+            )
+        });
+    }
+
+    fn cancel_idle_unload(&self) {
+        self.idle_generation.fetch_add(1, Ordering::SeqCst);
     }
 
     #[cfg(test)]
@@ -290,27 +396,7 @@ impl ModelRuntime {
             .arg(port.to_string())
             .arg("--api-key-file")
             .arg(auth_file)
-            .args([
-                "--no-webui",
-                "--no-agent",
-                "--no-ui-mcp-proxy",
-                "--parallel",
-                "1",
-                "-c",
-                "2048",
-                "-n",
-                "128",
-                "-b",
-                "128",
-                "-ub",
-                "64",
-                "--threads",
-                "4",
-                "--threads-batch",
-                "4",
-                "--reasoning",
-                "off",
-            ])
+            .args(GENERATION_ARGS)
             .current_dir(&private_dir)
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
@@ -391,10 +477,34 @@ impl ModelRuntime {
     }
 }
 
+fn idle_unload_after(
+    delay: Duration,
+    generation: u64,
+    idle_generation: Weak<AtomicU64>,
+    cancel_generation: Weak<AtomicU64>,
+    server: Weak<Mutex<Option<OwnedServer>>>,
+) {
+    thread::sleep(delay);
+    let (Some(idle_generation), Some(cancel_generation), Some(server)) = (
+        idle_generation.upgrade(),
+        cancel_generation.upgrade(),
+        server.upgrade(),
+    ) else {
+        return;
+    };
+    let Ok(mut server) = server.lock() else {
+        return;
+    };
+    if idle_generation.load(Ordering::SeqCst) == generation {
+        cancel_generation.fetch_add(1, Ordering::SeqCst);
+        stop_owned(&mut server);
+    }
+}
+
 impl Drop for ModelRuntime {
     fn drop(&mut self) {
-        if let Ok(owned) = self.server.get_mut() {
-            stop_owned(owned);
+        if let Ok(mut owned) = self.server.lock() {
+            stop_owned(&mut owned);
         }
     }
 }
@@ -751,6 +861,44 @@ fn process_group_alive(_pid: u32) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn evaluation_admission_rejects_memory_below_8_gib_and_accepts_floor() {
+        assert_eq!(
+            admit_candidate(MINIMUM_MEMORY_BYTES - 1),
+            Err("local model requires at least 8 GiB physical memory (evaluation only)")
+        );
+        assert_eq!(admit_candidate(MINIMUM_MEMORY_BYTES), Ok(()));
+        assert_eq!(admit_candidate(MINIMUM_MEMORY_BYTES * 2), Ok(()));
+    }
+
+    #[test]
+    fn candidate_generation_limits_are_fixed_in_native_policy() {
+        assert_eq!(
+            GENERATION_ARGS,
+            [
+                "--no-webui",
+                "--no-agent",
+                "--no-ui-mcp-proxy",
+                "--parallel",
+                "1",
+                "-c",
+                "2048",
+                "-n",
+                "128",
+                "-b",
+                "128",
+                "-ub",
+                "64",
+                "--threads",
+                "4",
+                "--threads-batch",
+                "4",
+                "--reasoning",
+                "off",
+            ]
+        );
+    }
+
     fn artifact_assets() -> Assets {
         let root = PathBuf::from(
             std::env::var_os("M11_ARTIFACT_BIN")
@@ -863,6 +1011,49 @@ mod tests {
         unrelated.kill().unwrap();
         unrelated.wait().unwrap();
         assert!(!private_dir.exists(), "owned temporary directory removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn idle_unload_fires_after_deadline_and_is_cancelled_by_new_task() {
+        use std::os::unix::process::CommandExt;
+
+        let runtime = ModelRuntime::default();
+        let private_dir = std::env::temp_dir().join(format!("m16a-idle-{}", std::process::id()));
+        fs::create_dir(&private_dir).unwrap();
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("60")
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = command.spawn().unwrap();
+        *runtime.server.lock().unwrap() = Some(OwnedServer {
+            child,
+            port: 0,
+            auth: String::new(),
+            private_dir,
+        });
+
+        runtime.schedule_idle_unload(Duration::from_millis(30));
+        thread::sleep(Duration::from_millis(5));
+        runtime.cancel_idle_unload();
+        thread::sleep(Duration::from_millis(45));
+        assert!(runtime
+            .server
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .child
+            .try_wait()
+            .unwrap()
+            .is_none());
+
+        runtime.schedule_idle_unload(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(60));
+        assert!(runtime.server.lock().unwrap().is_none());
     }
 
     #[cfg(unix)]

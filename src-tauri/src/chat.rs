@@ -17,6 +17,7 @@ use tauri::{ipc::Channel, AppHandle, Manager, State, WebviewWindow};
 use crate::{
     bridge::{BridgeState, StatusRequest},
     model_runtime::{ModelRuntime, MODEL_NAME},
+    preferences::{self, IdlePolicy},
 };
 
 const MAX_QUEUED: usize = 10;
@@ -406,6 +407,9 @@ fn worker(queue: Arc<Mutex<Queue>>, app: AppHandle) {
         if let Some(event) = terminal {
             let _ = task.channel.send(event);
         }
+        let short_idle = preferences::get(&app)
+            .is_ok_and(|preferences| preferences.idle_policy == IdlePolicy::ShortIdle);
+        app.state::<ModelRuntime>().unload_after_task(short_idle);
     }
 }
 
@@ -681,6 +685,21 @@ fn trim_ascii(bytes: &[u8]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_ipc_rejects_renderer_supplied_generation_limits() {
+        let tampered = serde_json::json!({
+            "protocolVersion": 1,
+            "ownerId": "main",
+            "sessionId": "s1",
+            "requestId": "r1",
+            "taskId": "t1",
+            "context": 32768,
+            "maxTokens": 4096,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        assert!(serde_json::from_value::<ChatRequest>(tampered).is_err());
+    }
 
     fn read_http_request(socket: &mut TcpStream) {
         let mut request = Vec::new();
