@@ -6,7 +6,7 @@
 
 **Platform order:** macOS first, Windows next.
 
-**Canonical cards:** [Luna implementation cards](./luna-implementation-cards.md); this file defines their delivery order and gates.
+**Canonical cards:** [Luna implementation cards](../luna-implementation-cards.md); this file defines their delivery order and gates.
 
 ## Goal
 

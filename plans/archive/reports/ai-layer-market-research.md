@@ -108,6 +108,6 @@ Continue with the planned stack:
 - **SQLite/rusqlite through `local-operation-journal`** for operation state/recovery, with the reusable TypeScript bridge.
 - **One pinned llama.cpp server/profile** for local inference, with model footprint reported separately.
 
-The repo contains Tauri scaffolding, React assets and an isolated LangChain/LangGraph proof harness. [M03's report](./stack-proof.md) records 11/11 fixture checks in macOS WKWebView, including native tool turns, history and cancellation. WebView2, real GGUF/runtime behavior and complete production footprint remain unproven. A failed gate requires a reviewed architecture decision. Do not bundle Python, a Node server, a workflow service or an additional framework for market keywords.
+The repo contains Tauri scaffolding, React assets and an isolated LangChain/LangGraph proof harness. [M03's report](../../reports/stack-proof.md) records 11/11 fixture checks in macOS WKWebView, including native tool turns, history and cancellation. WebView2, real GGUF/runtime behavior and complete production footprint remain unproven. A failed gate requires a reviewed architecture decision. Do not bundle Python, a Node server, a workflow service or an additional framework for market keywords.
 
 Exact package/model licenses and transitive notices remain a release check; an open-source SDK does not establish that every hosted service, add-on or model is open source. No dependency, implementation test, build or footprint measurement was added in this research pass.

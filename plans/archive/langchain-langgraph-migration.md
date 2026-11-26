@@ -1,6 +1,6 @@
 # LangChain.js + LangGraph.js migration decision
 
-Decision recorded 10 October 2026. This plan supersedes earlier AI SDK Core selections and proof instructions. The [M03 report](./reports/stack-proof.md) records 11/11 macOS WKWebView fixture checks; Windows WebView2, real model/runtime and full app footprint remain unproven.
+Decision recorded 10 October 2026. This plan supersedes earlier AI SDK Core selections and proof instructions. The [M03 report](../reports/stack-proof.md) records 11/11 macOS WKWebView fixture checks; Windows WebView2, real model/runtime and full app footprint remain unproven.
 
 ## Decision
 

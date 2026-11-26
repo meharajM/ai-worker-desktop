@@ -68,7 +68,7 @@ The inventory covers application subsystems, not a claim that every helper/funct
 
 ## 3. Shortlist, licenses, and stability evidence
 
-Snapshot from official repositories/releases and registry metadata on 10 October 2026. These versions are **research candidates**, not a tested compatible stack; the selected LangChain/LangGraph fixture pins and measured result are in the [M03 report](./reports/stack-proof.md). A recent release or a large star count does not prove reliability.
+Snapshot from official repositories/releases and registry metadata on 10 October 2026. These versions are **research candidates**, not a tested compatible stack; the selected LangChain/LangGraph fixture pins and measured result are in the [M03 report](../reports/stack-proof.md). A recent release or a large star count does not prove reliability.
 
 | Candidate | Observed release/version | License / selection reason |
 | --- | --- | --- |
@@ -109,4 +109,4 @@ Preserve the old user-data directory. Electron localStorage/LevelDB is not direc
 
 Keep the old implementation runnable during migration, but exclude it from the new production bundle. Remove feature families and Electron tooling only after new paths pass their checks. Update Electron-specific repository rules for Tauri during implementation; user-directed shell migration supersedes those old framework assumptions, while authority/validation/data-protection requirements remain.
 
-Next: execute the early compatibility and footprint proof in the [revised task cards](./luna-implementation-cards.md), then follow the [current product plan](./local-desktop-product-plan.md).
+Next: execute the early compatibility and footprint proof in the [revised task cards](../luna-implementation-cards.md), then follow the [current product plan](../local-desktop-product-plan.md).
