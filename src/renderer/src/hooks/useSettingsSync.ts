@@ -12,13 +12,14 @@ export function useSettingsSync() {
         hydrateSettings, // New action
         setIsSyncing
     } = useSettingsStore()
+    const privacyMode = useSettingsStore((state) => state.privacyMode)
     const mcpStore = useMcpStore()
     
     const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
     // 1. Unified Hydration on Login
     useEffect(() => {
-        if (user?.uid) {
+        if (privacyMode === 'connected' && user?.uid) {
             console.log('[Sync] User logged in, hydrating data...')
             setIsSyncing(true)
             
@@ -40,11 +41,11 @@ export function useSettingsSync() {
                 setIsSyncing(false)
             })
         }
-    }, [user?.uid, hydrateSettings, setIsSyncing, mcpStore.syncServers])
+    }, [user?.uid, privacyMode, hydrateSettings, setIsSyncing, mcpStore.syncServers])
 
     // 2. Unified Auto-Save
     useEffect(() => {
-        if (!user?.uid) return
+        if (privacyMode !== 'connected' || !user?.uid) return
 
         const handleSave = () => {
              // Debounce save
@@ -55,7 +56,7 @@ export function useSettingsSync() {
                  const mcpState = useMcpStore.getState()
                  
                  // Don't save if we are currently syncing FROM cloud (avoid loops)
-                 if (state.isSyncing) return
+                 if (state.privacyMode !== 'connected' || state.isSyncing) return
 
                  console.log('[Sync] Saving data to cloud...')
                  
@@ -118,5 +119,5 @@ export function useSettingsSync() {
              unsubMcp()
              if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
         }
-    }, [user?.uid])
+    }, [user?.uid, privacyMode])
 }

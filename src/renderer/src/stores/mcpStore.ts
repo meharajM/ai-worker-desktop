@@ -68,7 +68,7 @@ const DEFAULT_MCP_SERVERS = [
         type: 'stdio',
         command: 'internal',
         args: [],
-        autoConnect: true
+        autoConnect: false
     },
     {
         name: 'memory',
@@ -76,7 +76,7 @@ const DEFAULT_MCP_SERVERS = [
         type: 'stdio',
         command: 'internal-memory',
         args: [],
-        autoConnect: true
+        autoConnect: false
     },
     {
         name: 'filesystem',
@@ -84,7 +84,7 @@ const DEFAULT_MCP_SERVERS = [
         type: 'stdio',
         command: 'internal-filesystem',
         args: [],
-        autoConnect: true
+        autoConnect: false
     },
     {
         name: 'markitdown',
@@ -92,9 +92,16 @@ const DEFAULT_MCP_SERVERS = [
         type: 'stdio',
         command: 'uvx',
         args: ['markitdown-mcp[all]'], // [all] ensures pdf, docx, xlsx, pptx, audio extras are included
-        autoConnect: true // Enable auto-connect (requires uv/python)
+        autoConnect: false
     }
 ]
+
+function hasDefaultServer(servers: MCPServer[], defaultServer: { name: string; command: string }): boolean {
+    if (defaultServer.command === 'internal-memory' || defaultServer.command === 'internal-filesystem') {
+        return servers.some(server => server.type === 'stdio' && !server.url && server.command === defaultServer.command)
+    }
+    return servers.some(server => server.name === defaultServer.name)
+}
 
 export const useMcpStore = create<McpState>()((set, get) => ({
     servers: [],
@@ -154,7 +161,7 @@ export const useMcpStore = create<McpState>()((set, get) => ({
                 initialServers = initialServers.filter(s => !s.name.toLowerCase().includes('whatsapp'));
                 let hasNewDefaults = beforeCount !== initialServers.length;
                 DEFAULT_MCP_SERVERS.forEach(def => {
-                    if (!initialServers.some(s => s.name === def.name)) {
+                    if (!hasDefaultServer(initialServers, def)) {
                         initialServers.push({
                             ...def,
                             id: generateId(),
@@ -186,13 +193,6 @@ export const useMcpStore = create<McpState>()((set, get) => ({
 
             set({ servers: initialServers, initialized: true })
 
-            // Lazy connect: Only auto-connect on startup if we don't have cached tool schemas.
-            // This prevents spawning expensive Node/Python child processes for unused servers.
-            const autoConnectServers = initialServers.filter(s => s.autoConnect && s.tools.length === 0)
-            for (const server of autoConnectServers) {
-                // Connect sequentially to avoid overwhelming
-                get().connectServer(server.id).catch(console.error)
-            }
 
         } catch (error) {
             console.error('Failed to initialize MCP store:', error)
@@ -227,15 +227,13 @@ export const useMcpStore = create<McpState>()((set, get) => ({
             id: generateId(),
             connected: false,
             tools: [],
-            autoConnect: true
+            autoConnect: false
         }
 
         const newServers = [...get().servers, server]
         set({ servers: newServers })
         await electron.store.set(storageKey, newServers)
 
-        // Auto-connect new server
-        get().connectServer(server.id)
     },
 
     updateServer: async (id, config) => {
@@ -245,6 +243,8 @@ export const useMcpStore = create<McpState>()((set, get) => ({
         const servers = get().servers
         const index = servers.findIndex(s => s.id === id)
         if (index === -1) return
+
+        if (servers[index].connected) await get().disconnectServer(id)
 
         const updatedServer = {
             ...servers[index],
@@ -261,10 +261,7 @@ export const useMcpStore = create<McpState>()((set, get) => ({
         set({ servers: newServers })
         await electron.store.set(storageKey, newServers)
 
-        // Reconnect if it was connected or auto-connect is on
-        if (updatedServer.autoConnect) {
-            get().connectServer(id)
-        }
+
     },
 
     removeServer: async (id) => {
@@ -303,6 +300,8 @@ export const useMcpStore = create<McpState>()((set, get) => ({
                 url: server.url,
                 env: server.env
             })
+
+            if (!result.success) throw new Error(result.error || 'MCP connection failed')
 
             if (result.success) {
                 console.info(`[mcpStore] connectServer success: ${server.name}`)
@@ -440,7 +439,7 @@ export const useMcpStore = create<McpState>()((set, get) => ({
                     args: remote.args,
                     url: remote.url,
                     env: {}, // No secrets from cloud
-                    autoConnect: remote.autoConnect ?? true,
+                    autoConnect: false,
                     connected: false,
                     tools: []
                 }
@@ -453,10 +452,7 @@ export const useMcpStore = create<McpState>()((set, get) => ({
             set({ servers: newServerList })
             await electron.store.set(storageKey, newServerList)
 
-            // Auto-connect any new/updated servers that are not connected
-            newServerList
-                .filter(s => s.autoConnect && !s.connected)
-                .forEach(s => get().connectServer(s.id))
+
         }
     },
 
@@ -473,7 +469,7 @@ export const useMcpStore = create<McpState>()((set, get) => ({
     getAllTools: () => {
         const toolMap: Map<string, MCPTool> = new Map();
         get().servers.forEach((server) => {
-            // No longer require `server.connected` -> we serve cached tools for lazy-connect
+            if (!server.connected) return
             server.tools.forEach(tool => {
                 const existing = toolMap.get(tool.name);
 
@@ -490,9 +486,9 @@ export const useMcpStore = create<McpState>()((set, get) => ({
     },
 
     findServerForTool: (toolName) => {
-        // Return server if it has the tool cached, regardless of connected state
+        // Tool execution only uses explicitly connected servers.
         return get().servers.find(s =>
-            s.tools.some(t => t.name === toolName)
+            s.connected && s.tools.some(t => t.name === toolName)
         ) || null
     }
 }))

@@ -5,7 +5,8 @@
  * All business logic lives in AntigravityAuthService — handlers are thin routers.
  */
 
-import { ipcMain, safeStorage } from 'electron'
+import { safeStorage } from 'electron'
+import { ipcMain } from './trustedIpc'
 import { Store } from '../lib/store-wrapper'
 import { AntigravityAuthService } from '../services/AntigravityAuthService'
 

@@ -23,7 +23,8 @@ import {
     Sparkles,
     Activity,
     Clock,
-    Zap
+    Zap,
+    Shield
 } from 'lucide-react'
 import { useLogStore } from '../stores/logStore'
 import { useSettingsStore, Theme, LLMProviderType } from '../stores/settingsStore'
@@ -51,14 +52,15 @@ import { LLMProviderSettings } from './settings/llm/LLMProviderSettings'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { ArrowLeft } from 'lucide-react'
 
-type SettingsSection = 'account' | 'llm' | 'voice' | 'memory' | 'browser' | 'appearance' | 'logs' | 'flags' | 'about'
+type SettingsSection = 'privacy' | 'account' | 'llm' | 'voice' | 'memory' | 'browser' | 'appearance' | 'logs' | 'flags' | 'about'
 
 interface SettingsPanelProps {
     onClose: () => void;
+    initialSection?: 'privacy' | 'llm';
 }
 
-export function SettingsPanel({ onClose }: SettingsPanelProps) {
-    const [activeSection, setActiveSection] = useState<SettingsSection>('llm')
+export function SettingsPanel({ onClose, initialSection = 'privacy' }: SettingsPanelProps) {
+    const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection)
 
     const [testingBrowser, setTestingBrowser] = useState(false)
     const [downloadingBrowser, setDownloadingBrowser] = useState(false)
@@ -71,6 +73,12 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     const auth = useAuthStore()
     const { openLogFolder, getLogPath } = useLogStore()
     const [logPath, setLogPath] = useState<string>('')
+
+    useEffect(() => {
+        if (settings.privacyMode !== 'connected' && activeSection === 'account') {
+            setActiveSection('privacy')
+        }
+    }, [activeSection, settings.privacyMode])
 
     useEffect(() => {
         getLogPath().then(setLogPath)
@@ -103,7 +111,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
 
     const sections: { id: SettingsSection; label: string; icon: React.ReactNode }[] = [
-        ...(FEATURE_FLAGS.AUTH_ENABLED ? [{ id: 'account' as const, label: 'Account', icon: <User size={20} /> }] : []),
+        { id: 'privacy', label: 'Privacy & Mode', icon: <Shield size={20} /> },
+        ...(FEATURE_FLAGS.AUTH_ENABLED && settings.privacyMode === 'connected' ? [{ id: 'account' as const, label: 'Account', icon: <User size={20} /> }] : []),
         { id: 'llm', label: 'LLM Provider', icon: <Cpu size={20} /> },
         { id: 'voice', label: 'Speech Recognition', icon: <Mic size={20} /> },
         { id: 'memory', label: 'Memory', icon: <HardDrive size={20} /> },
@@ -159,8 +168,60 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
             {/* Content pane with darker background for contrast with the Settings panel elements */}
             <div className="flex-1 min-w-0 overflow-y-auto p-10 bg-[var(--color-bg-dark)]">
+                {activeSection === 'privacy' && (
+                    <div className="max-w-3xl">
+                        <h3 className="text-xl font-bold mb-2">Privacy & Connectivity</h3>
+                        <p className="text-sm text-[var(--color-text-muted)] mb-6">
+                            Choose whether AI-Worker may use configured online services.
+                        </p>
+
+                        <div role="radiogroup" aria-label="Privacy mode" className="grid sm:grid-cols-2 gap-3 mb-5">
+                            {([
+                                ['local-only', 'Local-only'],
+                                ['connected', 'Connected services'],
+                            ] as const).map(([mode, label]) => (
+                                <button
+                                    key={mode}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={settings.privacyMode === mode}
+                                    onClick={() => { void settings.setPrivacyMode(mode) }}
+                                    className={`rounded-xl border p-4 text-left transition-colors ${settings.privacyMode === mode
+                                        ? 'border-[var(--color-brand-teal)] bg-[var(--color-brand-teal)]/10'
+                                        : 'border-[var(--color-border)] bg-[var(--color-card-elevated)] hover:border-[var(--color-brand-teal)]/50'
+                                    }`}
+                                >
+                                    <span className="block text-sm font-semibold text-[var(--color-text-primary)]">{label}</span>
+                                    <span className="block text-xs text-[var(--color-text-muted)] mt-1">
+                                        {mode === 'local-only'
+                                            ? 'Use on-device WebLLM or Ollama only.'
+                                            : 'Allow configured cloud providers and account sync.'}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card-elevated)] p-5 space-y-3 text-sm text-[var(--color-text-secondary)]">
+                            {settings.privacyMode === 'local-only' ? (
+                                <>
+                                    <p><strong className="text-[var(--color-text-primary)]">Local-only is active.</strong> Chat inference uses only an already-downloaded WebLLM model or an installed Ollama model on this device. It does not fall back to a cloud provider or perform IP-based location lookup.</p>
+                                    <p>Chats, memory, and selected workspace data stay in local app storage. Ollama requests are limited to loopback. Switching here from Connected services signs out this device and stops its saved Firebase session; sign in again if you later switch back.</p>
+                                    <p><strong className="text-[var(--color-text-primary)]">Network use:</strong> downloading an AI model uses the internet only when you choose Download. Local Vosk voice input is currently unavailable under the secure runtime; the microphone does not download speech models. Connected services remain unavailable until you switch modes and connect them explicitly.</p>
+                                </>
+                            ) : (
+                                <>
+                                    <p><strong className="text-[var(--color-text-primary)]">Connected services are enabled.</strong> Configured cloud providers and Firebase account sync may use the network. A saved Firebase session may be restored and synchronized while this mode is active.</p>
+                                    <p>Pending Firebase writes stay queued on this device while Local-only is active and may sync if you switch back to Connected services. Firebase App Check/reCAPTCHA is unavailable in this secure desktop build, so projects that require App Check cannot use account sync.</p>
+                                    <p>MCP servers, browser automation, and WhatsApp still require an explicit connection. Each service can access its configured data or pages you choose to visit.</p>
+                                    <p>AI model downloads also use the internet when you choose Download. Local Vosk voice input is currently unavailable under the secure runtime.</p>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {/* Account Section */}
-                {activeSection === 'account' && FEATURE_FLAGS.AUTH_ENABLED && (
+                {activeSection === 'account' && FEATURE_FLAGS.AUTH_ENABLED && settings.privacyMode === 'connected' && (
                     <AccountSettings />
                 )}
 
@@ -190,17 +251,18 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                                     <div>
                                         <p className="font-medium text-[var(--color-text-primary)]">Speech Recognition Engine</p>
                                         <p className="text-xs text-[var(--color-text-muted)]">
-                                            Using Native Vosk (Offline/Local) - WebAssembly
+                                            Local Vosk is currently unavailable under the secure runtime.
                                         </p>
                                     </div>
                                     <div className="px-3 py-1 rounded-full text-xs font-medium bg-[var(--color-success)]/20 text-[var(--color-success)] border border-[var(--color-success)]/30">
-                                        Offline Mode
+                                        Voice Unavailable
                                     </div>
                                 </div>
 
                                 <div className="mb-4">
                                     <label className="block text-sm text-[var(--color-text-secondary)] mb-2">Language Model</label>
                                     <select
+                                        disabled
                                         value={settings.voskModel}
                                         onChange={(e) => settings.setVoskModel(e.target.value)}
                                         className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-primary)] focus:border-[var(--color-primary)] focus:outline-none appearance-none"
@@ -219,7 +281,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                                 </div>
 
                                 <p className="text-xs text-[var(--color-text-dim)]">
-                                    Runs locally using Vosk engine. Changing the model will trigger a new download (~50MB) on next use.
+                                    Vosk currently requires dynamic code that this secure runtime blocks. Voice input and speech model downloads are disabled. Existing downloaded models are preserved.
                                 </p>
                             </div>
                         </div>
@@ -273,40 +335,11 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                                 </div>
                             </div>
 
-                            {/* Filesystem Safe Mode */}
                             <div className="bg-[var(--color-card-elevated)] border border-[var(--color-border)] rounded-xl p-4 mb-4">
-                                <div className="flex items-center justify-between gap-4">
-                                    <div>
-                                        <label className="block text-sm text-[var(--color-text-primary)] mb-1">Filesystem Safe Mode</label>
-                                        <p className="text-xs text-[var(--color-text-muted)]">
-                                            Stage AI file edits for approval before writing to disk.
-                                        </p>
-                                    </div>
-                                    <input
-                                        type="checkbox"
-                                        className="toggle toggle-success"
-                                        checked={settings.fileSystemSafeMode}
-                                        onChange={() => settings.setFileSystemSafeMode(!settings.fileSystemSafeMode)}
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Filesystem Auto-Approve */}
-                            <div className="bg-[var(--color-card-elevated)] border border-[var(--color-border)] rounded-xl p-4 mb-4">
-                                <div className="flex items-center justify-between gap-4">
-                                    <div>
-                                        <label className="block text-sm text-[var(--color-text-primary)] mb-1">Auto-Approve AI File Writes</label>
-                                        <p className="text-xs text-[var(--color-text-muted)]">
-                                            Automatically apply staged writes. Disable to review each change manually.
-                                        </p>
-                                    </div>
-                                    <input
-                                        type="checkbox"
-                                        className="toggle toggle-success"
-                                        checked={settings.fileSystemAutoApprove}
-                                        onChange={() => settings.setFileSystemAutoApprove(!settings.fileSystemAutoApprove)}
-                                    />
-                                </div>
+                                <p className="text-sm text-[var(--color-text-primary)] mb-1">File review required</p>
+                                <p className="text-xs text-[var(--color-text-muted)]">
+                                    File edits wait for your approval. Internal task records are saved automatically.
+                                </p>
                             </div>
 
                             {/* Info Box */}

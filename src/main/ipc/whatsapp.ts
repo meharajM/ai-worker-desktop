@@ -5,13 +5,12 @@
  * All business logic lives in WhatsAppService.ts.
  */
 
-import { ipcMain, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
+import { ipcMain } from './trustedIpc'
+import { getStoredPrivacyMode } from './store'
 import { whatsappService } from '../services/WhatsAppService'
 
 export function registerWhatsAppHandlers(): void {
-    // Attempt auto-restore of saved session credentials
-    whatsappService.init().catch(e => console.error('[whatsapp.ts] Init failed', e))
-
     // ── One-way state push: main → renderer ─────────────────────────────────
     // When connection state changes, push it to the primary renderer window.
     whatsappService.on('connectionChange', (state) => {
@@ -40,6 +39,7 @@ export function registerWhatsAppHandlers(): void {
     ipcMain.handle('whatsapp:connect', async (_event, phoneNumber: unknown) => {
         const phone = typeof phoneNumber === 'string' && phoneNumber.trim() !== '' ? phoneNumber.trim() : undefined
         try {
+            if (getStoredPrivacyMode() !== 'connected') throw new Error('Enable connected mode before connecting WhatsApp.')
             await whatsappService.connect(phone)
             return { success: true }
         } catch (error) {

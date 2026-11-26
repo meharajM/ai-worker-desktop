@@ -3,6 +3,7 @@ import { Plus, Database, MessageCircle, CheckCircle, XCircle, Loader2 } from "lu
 import { useMcpStore, MCPServer } from "../stores/mcpStore";
 import { useChatStore } from "../stores/chatStore";
 import { useWhatsAppStore } from "../stores/whatsappStore";
+import { useSettingsStore } from "../stores/settingsStore";
 import { McpServerCard } from "./mcp/McpServerCard";
 import { McpServerForm } from "./mcp/McpServerForm";
 
@@ -13,6 +14,7 @@ export function ConnectionsPanel() {
   const [expandedServer, setExpandedServer] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
   const { connectionState, openDialog } = useWhatsAppStore();
+  const connectedMode = useSettingsStore((state) => state.privacyMode === 'connected');
   const waStatus = connectionState.status;
 
 
@@ -102,12 +104,19 @@ Can you help me troubleshoot this?`;
     alert("Prompt sent to AI tutor! Check the Chat view for the solution.");
   }, []);
 
-  const connectedCount = servers.filter((s) => s.connected).length;
+  const localServers = servers.filter((server) =>
+    server.type === 'stdio' &&
+    !server.url &&
+    (server.command === 'internal-memory' || server.command === 'internal-filesystem')
+  );
+  const visibleServers = connectedMode ? servers.filter((s) => s.name !== 'playwright') : localServers;
+  const connectedCount = visibleServers.filter((s) => s.connected).length;
   const editingServer = servers.find((s) => s.id === editingServerId) || null;
 
   return (
     <div className="flex-1 min-w-0 p-6 overflow-y-auto">
 
+      {connectedMode ? <>
       {/* ── WhatsApp Section ──────────────────────────────── */}
       <div className="mb-8">
         <h2 className="text-xl font-bold mb-1">WhatsApp</h2>
@@ -164,17 +173,25 @@ Can you help me troubleshoot this?`;
           </div>
         </div>
       </div>
+      </> : (
+        <div className="mb-8 rounded-xl border border-[var(--color-border)] bg-[var(--color-card-elevated)] p-6">
+          <h2 className="text-lg font-semibold">Local services</h2>
+          <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+            Connect on-device memory and workspace file tools here. Browser automation, WhatsApp, and custom MCP servers require Connected services.
+          </p>
+        </div>
+      )}
 
       {/* ── MCP Servers Section ───────────────────────────── */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-xl font-bold">MCP Connections</h2>
+          <h2 className="text-xl font-bold">{connectedMode ? 'MCP Connections' : 'Local services'}</h2>
           <p className="text-sm text-white/40 mt-1">
-            {connectedCount} connected · {servers.length} configured
+            {connectedCount} connected · {visibleServers.length} {connectedMode ? 'configured' : 'available'}
           </p>
         </div>
 
-        <button
+        {connectedMode && <button
           onClick={() => {
             if (showForm && editingServerId) {
               setEditingServerId(null);
@@ -191,11 +208,11 @@ Can you help me troubleshoot this?`;
             : showForm
               ? "Hide Form"
               : "Add Connection"}
-        </button>
+        </button>}
       </div>
 
       {/* Add/Edit Server Form */}
-      {showForm && (
+      {connectedMode && showForm && (
         <McpServerForm
           editingServer={editingServer}
           onSubmit={handleFormSubmit}
@@ -207,19 +224,20 @@ Can you help me troubleshoot this?`;
       )}
 
       {/* Server List */}
-      {servers.length === 0 ? (
+      {visibleServers.length === 0 ? (
         <div className="text-center py-20 border-2 border-dashed border-white/5 rounded-xl">
           <Database size={48} className="mx-auto text-white/20 mb-4" />
           <p className="text-white/40 mb-2 font-medium">
-            No MCP servers configured
+            {connectedMode ? 'No MCP servers configured' : 'No local services configured'}
           </p>
         </div>
       ) : (
         <div className="space-y-4">
-          {servers.filter(s => s.name !== 'playwright').map((server) => (
+          {visibleServers.map((server) => (
             <McpServerCard
               key={server.id}
               server={server}
+              showManagementActions={connectedMode}
               isExpanded={expandedServer === server.id}
               isEditing={editingServerId === server.id}
               isConnecting={connecting === server.id}

@@ -3,12 +3,19 @@ import { WorkflowTiles } from '../WorkflowTiles'
 import { useWhatsAppStore } from '../../stores/whatsappStore'
 import { MessageCircle, Loader2 } from 'lucide-react'
 import { StatusBadge } from '../primitives/StatusDot'
+import { useSettingsStore } from '../../stores/settingsStore'
+
+interface EmptyStateProps {
+  llmReady: boolean
+  onOpenSettings?: () => void
+}
 
 /**
  * Co-Worker Hub Welcome Screen
  */
-export function EmptyState() {
+export function EmptyState({ llmReady, onOpenSettings }: EmptyStateProps) {
   const { connectionState, openDialog, whatsappEnabled, setWhatsAppEnabled } = useWhatsAppStore()
+  const connectedMode = useSettingsStore((state) => state.privacyMode === 'connected')
   const isConnected = connectionState.status === 'connected'
   const isConnecting = connectionState.status === 'connecting'
 
@@ -34,7 +41,11 @@ export function EmptyState() {
 
       {/* System Active Badge */}
       <div className="mb-8">
-        <StatusBadge variant="active" label="System Active" animated />
+        <StatusBadge
+          variant={llmReady ? 'active' : 'warning'}
+          label={llmReady ? 'Model ready' : 'Model setup needed'}
+          animated={llmReady}
+        />
       </div>
 
       {/* Greeting */}
@@ -49,8 +60,20 @@ export function EmptyState() {
 
       {/* Subtitle */}
       <p className="text-[var(--color-text-secondary)] text-[var(--text-base)] text-center max-w-2xl mb-8">
-        Your Co-Worker is ready. Delegate tasks across connected systems right here or press <span className="font-[var(--font-family-mono)] bg-[var(--color-surface)] px-1 py-0.5 rounded text-[var(--color-text-primary)] text-[var(--text-sm)]">Cmd+K</span> to quickly search.
+        {llmReady
+          ? <>Your Co-Worker is ready. Delegate tasks across connected systems right here or press <span className="font-[var(--font-family-mono)] bg-[var(--color-surface)] px-1 py-0.5 rounded text-[var(--color-text-primary)] text-[var(--text-sm)]">Cmd+K</span> to quickly search.</>
+          : <>AI-Worker needs a model before it can answer. Configure Ollama or download and load an on-device model in Settings. Local-only chat stays on this device.</>}
       </p>
+
+      {!llmReady && onOpenSettings && (
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="mb-8 rounded-lg bg-[var(--color-brand-teal)] px-4 py-2 text-sm font-medium text-[var(--color-bg-dark)] hover:bg-[var(--color-brand-teal-hover)]"
+        >
+          Open model settings
+        </button>
+      )}
 
       {/* Agent Cards Grid */}
       <div className="w-full">
@@ -58,7 +81,7 @@ export function EmptyState() {
       </div>
 
       {/* WhatsApp CTA */}
-      <div className="mt-8 w-full max-w-sm">
+      {connectedMode && <div className="mt-8 w-full max-w-sm">
         <button
           id="empty-state-whatsapp-btn"
           onClick={handleWhatsAppClick}
@@ -104,7 +127,7 @@ export function EmptyState() {
             <span className="ml-auto w-2 h-2 rounded-full bg-[#25D366] animate-pulse flex-shrink-0" />
           )}
         </button>
-      </div>
+      </div>}
 
     </div>
   )

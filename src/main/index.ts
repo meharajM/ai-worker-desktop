@@ -1,28 +1,14 @@
-import { app, shell, BrowserWindow } from 'electron'
-import { join } from 'path'
+import { app, BrowserWindow, Menu, nativeImage, Tray } from 'electron'
+import { basename, join } from 'path'
+import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initEnv, __dirname } from './utils/env'
 import { setupIpcHandlers } from './ipc'
 import { McpProcessManager } from './services/McpProcessManager'
-
-
-// Enable experimental on-device AI features (Gemini Nano / Chrome Prompt API)
-// These flags attempt to enable the window.ai API in Electron's Chromium
-app.commandLine.appendSwitch('enable-features',
-    'PromptAPIForGeminiNano,' +
-    'OptimizationGuideOnDeviceModel:bypass_perf_requirement/true,' +
-    'LanguageDetectionAPI,' +
-    'ExperimentalWebPlatformFeatures'  // Enables modern web APIs
-)
-app.commandLine.appendSwitch('optimization-guide-on-device-model-execution', 'performance_class:0')
-
-// Enable Web Speech API in Electron
-// These flags ensure speech recognition works properly
-app.commandLine.appendSwitch('enable-speech-dispatcher')  // Linux speech support
-app.commandLine.appendSwitch('enable-speech-input')       // Enable speech input
-app.commandLine.appendSwitch('enable-experimental-web-platform-features')  // Web Speech API
-app.commandLine.appendSwitch('allow-file-access-from-files') // Allow fetch from file:// in Workers
-
+import { trustRenderer, isTrustedRendererUrl } from './ipc/trustedIpc'
+import { getExternalServiceChoices } from './ipc/mcp'
+import { getStoredPrivacyMode } from './ipc/store'
+import { cancelExternalTask, startLocalMcpBridge, stopLocalMcpBridge } from './services/LocalMcpBridge'
 
 // Initialize environment (fix PATH, etc.)
 initEnv()
@@ -48,8 +34,44 @@ if (process.env.GOOGLE_DEFAULT_CLIENT_SECRET) {
     process.env.GOOGLE_DEFAULT_CLIENT_SECRET = process.env.GOOGLE_DEFAULT_CLIENT_SECRET
 }
 
-function createWindow(): void {
-    const mainWindow = new BrowserWindow({
+let mainWindow: BrowserWindow | null = null
+let taskWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
+let taskWindowReady = false
+let taskWindowShouldShow = false
+
+function rendererEntryUrl(rendererPath: string): string {
+    if (!is.dev || !process.env['ELECTRON_RENDERER_URL']) return pathToFileURL(rendererPath).href
+    const base = new URL(process.env['ELECTRON_RENDERER_URL'])
+    base.pathname = base.pathname.endsWith('/') ? base.pathname : `${base.pathname}/`
+    return new URL(basename(rendererPath), base).href
+}
+
+function protectWindow(window: BrowserWindow, rendererPath: string, query?: Record<string, string>): void {
+    const contents = window.webContents
+    const rendererUrl = rendererEntryUrl(rendererPath)
+    const route = new URL(rendererUrl)
+    if (query) Object.entries(query).forEach(([key, value]) => route.searchParams.set(key, value))
+    trustRenderer(contents, rendererUrl)
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    contents.on('will-navigate', (event, url) => {
+        if (!isTrustedRendererUrl(contents, url)) event.preventDefault()
+    })
+    contents.on('will-frame-navigate', (event) => {
+        if (!event.isMainFrame || !isTrustedRendererUrl(contents, event.url)) event.preventDefault()
+    })
+    contents.on('will-redirect', (event, url) => {
+        if (!isTrustedRendererUrl(contents, url)) event.preventDefault()
+    })
+    contents.on('will-attach-webview', (event) => event.preventDefault())
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) window.loadURL(route.href)
+    else window.loadFile(rendererPath, { query })
+}
+
+function createWindow(): BrowserWindow {
+    if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
+    const window = new BrowserWindow({
         width: 1000,
         height: 700,
         minWidth: 800,
@@ -61,109 +83,188 @@ function createWindow(): void {
         backgroundColor: '#0f1115',
         webPreferences: {
             preload: join(__dirname, '../preload/index.js'),
-            sandbox: false,
+            sandbox: true,
             contextIsolation: true,
             nodeIntegration: false,
-            webSecurity: false, // Required for Vosk Worker to fetch local model files (file://)
+            webSecurity: true,
+            webviewTag: false,
         }
     })
 
-    mainWindow.on('ready-to-show', () => {
-        mainWindow.show()
+    mainWindow = window
+    window.on('ready-to-show', () => {
+        window.show()
         if (is.dev) {
-            mainWindow.webContents.openDevTools()
+            window.webContents.openDevTools()
         }
     })
-
-    mainWindow.webContents.setWindowOpenHandler((details) => {
-        const url = details.url
-
-        // Allow Firebase/Google OAuth popups to open in new window
-        if (url.includes('accounts.google.com') ||
-            url.includes('.firebaseapp.com') ||
-            url.includes('googleapis.com')) {
-            return {
-                action: 'allow',
-                overrideBrowserWindowOptions: {
-                    width: 500,
-                    height: 600,
-                    autoHideMenuBar: true,
-                    webPreferences: {
-                        nodeIntegration: false,
-                        contextIsolation: true,
-                    }
-                }
-            }
-        }
-
-        // Open other external links in system browser
-        shell.openExternal(url)
-        return { action: 'deny' }
+    const rendererPath = join(__dirname, '../renderer/index.html')
+    protectWindow(window, rendererPath)
+    window.on('close', event => {
+        if (isQuitting) return
+        event.preventDefault()
+        window.hide()
+        if (process.platform === 'darwin') app.dock?.hide()
     })
+    window.on('closed', () => { if (mainWindow === window) mainWindow = null })
+    return window
+}
 
-    // Enable audio permissions for TTS/STT
-    mainWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
-        const allowedPermissions = ['media', 'mediaKeySystem', 'geolocation', 'notifications', 'midi', 'midiSysex']
-        if (allowedPermissions.includes(permission)) {
-            callback(true)
-        } else {
-            callback(false)
+function createTaskWindow(): BrowserWindow {
+    if (taskWindow && !taskWindow.isDestroyed()) return taskWindow
+    taskWindowReady = false
+    const window = new BrowserWindow({
+        width: 480,
+        height: 560,
+        minWidth: 420,
+        minHeight: 420,
+        maxWidth: 560,
+        maxHeight: 760,
+        resizable: true,
+        show: false,
+        autoHideMenuBar: true,
+        title: 'AI-Worker task approval',
+        backgroundColor: '#0f1115',
+        webPreferences: {
+            preload: join(__dirname, '../preload/index.js'),
+            additionalArguments: ['--ai-worker-task-window'],
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false,
+            webSecurity: true,
+            webviewTag: false,
         }
     })
+    taskWindow = window
+    window.on('ready-to-show', () => {
+        taskWindowReady = true
+        if (taskWindowShouldShow) { window.show(); window.focus() }
+    })
+    window.on('close', event => {
+        if (isQuitting) return
+        event.preventDefault()
+        cancelExternalTask('Task approval window closed.')
+        hideTaskWindow()
+    })
+    window.on('closed', () => {
+        if (taskWindow === window) taskWindow = null
+        taskWindowReady = false
+        taskWindowShouldShow = false
+    })
+    protectWindow(window, join(__dirname, '../renderer/index.html'), { window: 'task' })
+    return window
+}
 
-    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-        mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-    } else {
-        mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+function showHub(): void {
+    const window = createWindow()
+    if (process.platform === 'darwin') app.dock?.show()
+    window.show()
+    window.focus()
+}
+
+function showTaskWindow(): void {
+    taskWindowShouldShow = true
+    if (taskWindowReady && taskWindow && !taskWindow.isDestroyed()) {
+        taskWindow.show()
+        taskWindow.focus()
     }
 }
 
-app.whenReady().then(async () => {
+function hideTaskWindow(): void {
+    taskWindowShouldShow = false
+    if (taskWindow && !taskWindow.isDestroyed()) taskWindow.hide()
+}
+
+function createTray(): void {
+    const iconPath = app.isPackaged
+        ? join(process.resourcesPath, 'tray-icon.png')
+        : join(process.cwd(), 'build/icon.png')
+    const icon = nativeImage.createFromPath(iconPath).resize({ width: 18, height: 18 })
+    if (process.platform === 'darwin') icon.setTemplateImage(true)
+    tray = new Tray(icon)
+    tray.setToolTip('AI-Worker is running')
+    tray.setContextMenu(Menu.buildFromTemplate([
+        { label: 'Show AI-Worker', click: showHub },
+        { type: 'separator' },
+        { label: 'Quit AI-Worker', click: () => app.quit() },
+    ]))
+    tray.on('click', showHub)
+}
+
+function configureAudioPermission(): void {
+    const session = mainWindow!.webContents.session
+    session.setPermissionCheckHandler((webContents, permission, _origin, details) => {
+        return Boolean(webContents && BrowserWindow.fromWebContents(webContents) === mainWindow) && permission === 'media' &&
+            details.mediaType === 'audio' && details.isMainFrame &&
+            isTrustedRendererUrl(webContents, details.requestingUrl || '')
+    })
+    session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+        const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : undefined
+        callback(Boolean(webContents && BrowserWindow.fromWebContents(webContents) === mainWindow) && permission === 'media' &&
+            details.isMainFrame && isTrustedRendererUrl(webContents, details.requestingUrl) &&
+            mediaTypes?.length === 1 && mediaTypes[0] === 'audio')
+    })
+}
+
+function rendererLoaded(window: BrowserWindow): Promise<void> {
+    if (window.webContents.getURL() && !window.webContents.isLoadingMainFrame()) return Promise.resolve()
+    return new Promise(resolve => window.webContents.once('did-finish-load', () => resolve()))
+}
+
+const hasSingleInstance = app.requestSingleInstanceLock()
+if (!hasSingleInstance) {
+    app.quit()
+} else {
+    app.on('second-instance', showHub)
+    app.whenReady().then(async () => {
     electronApp.setAppUserModelId('com.aiworker.app')
 
     // Verify environment and paths
     setupIpcHandlers()
-
-    // Workers cannot fetch file:// URLs easily. We serve the model over HTTP locally.
-    // Check for production env explicitly to ensure it runs during e2e tests
-    // (Server code removed due to hang - reverting to file access attempt)
 
     app.on('browser-window-created', (_, window) => {
         optimizer.watchWindowShortcuts(window)
     })
 
     createWindow()
+    createTaskWindow()
+    configureAudioPermission()
+    createTray()
 
-    app.on('activate', function () {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    await Promise.all([rendererLoaded(mainWindow!), rendererLoaded(taskWindow!)])
+
+    try {
+        await startLocalMcpBridge({
+            userDataDirectory: app.getPath('userData'),
+            appVersion: app.getVersion(),
+            getPrivacyMode: getStoredPrivacyMode,
+            getServiceChoices: getExternalServiceChoices,
+            getInferenceWindow: () => mainWindow,
+            getPlannerWindow: () => mainWindow,
+            getTaskWindow: () => taskWindow,
+            showTaskWindow,
+            hideTaskWindow,
+        })
+    } catch (error) {
+        console.error('[Local MCP] Could not start local inference bridge:', error)
+    }
+
+    app.on('activate', showHub)
     })
-})
+}
 
-let isQuitting = false
 app.on('before-quit', async (event) => {
     if (isQuitting) return
     
     // Prevent default quit, cleanup, then quit
     event.preventDefault()
     isQuitting = true
+
+    await stopLocalMcpBridge()
     
     await McpProcessManager.getInstance().teardownAll()
+    tray?.destroy()
+    tray = null
     
     app.quit()
-})
-
-app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-        app.quit()
-    }
-})
-
-// Handle certificate errors for local development
-app.on('certificate-error', (event, _webContents, _url, _error, _certificate, callback) => {
-    if (is.dev) {
-        event.preventDefault()
-        callback(true)
-    } else {
-        callback(false)
-    }
 })

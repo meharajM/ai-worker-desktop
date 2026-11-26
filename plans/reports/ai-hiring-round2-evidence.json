@@ -1,0 +1,479 @@
+{
+  "observed_on": "2026-10-10",
+  "scope": "Qualitative corroboration for AI application and agent engineering; no global or regional market-share inference.",
+  "method": {
+    "sampling": "Convenience sample of employer public ATS boards, selected partly through framework searches.",
+    "title_deduplication": "One row per employer and case-insensitive job title; can merge genuinely distinct openings.",
+    "initial_keyword_subset": 62,
+    "initial_subset_limit": "Descriptions may contain corporate boilerplate; 62 is not an AI-job count.",
+    "narrow_title_groups": 16,
+    "manual_supplement_groups": 4,
+    "saved_title_groups": 20,
+    "saved_employers": 6,
+    "skills_limit": "Extracted keyword presence does not distinguish required skills, optional alternatives or company stack.",
+    "hashes_limit": "Description hashes retained as collected in the first feed pass; full descriptions not archived.",
+    "copyright": "Only role metadata and extracted technology facts retained; no full descriptions."
+  },
+  "feed_status": [
+    {
+      "employer": "Owner",
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/Owner",
+      "retrieved": true,
+      "all_public_roles": 47
+    },
+    {
+      "employer": "August Health",
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/august-health",
+      "retrieved": true,
+      "all_public_roles": 4
+    },
+    {
+      "employer": "Remy",
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/withremy",
+      "retrieved": true,
+      "all_public_roles": 4
+    },
+    {
+      "employer": "IconicShift",
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/iconicshift",
+      "retrieved": true,
+      "all_public_roles": 0
+    },
+    {
+      "employer": "Scalar",
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/scalar",
+      "retrieved": true,
+      "all_public_roles": 5
+    },
+    {
+      "employer": "Nextdata",
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/nextdata",
+      "retrieved": true,
+      "all_public_roles": 4
+    },
+    {
+      "employer": "Vibiz",
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/vibiz",
+      "retrieved": false,
+      "error": "Network retrieval failed; excluded from feed evidence."
+    },
+    {
+      "employer": "Esper",
+      "source_api": "https://api.lever.co/v0/postings/esper?mode=json",
+      "retrieved": true,
+      "all_public_roles": 2
+    },
+    {
+      "employer": "Focused",
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/focused/jobs?content=true",
+      "retrieved": true,
+      "all_public_roles": 25
+    },
+    {
+      "employer": "Downtown Music",
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/downtownmusic/jobs?content=true",
+      "retrieved": false,
+      "error": "Network retrieval failed; excluded from feed evidence."
+    },
+    {
+      "employer": "Encora/Coforge",
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/encora10/jobs?content=true",
+      "retrieved": true,
+      "all_public_roles": 288
+    }
+  ],
+  "selected_roles": [
+    {
+      "employer": "Remy",
+      "title": "Founding AI/ML Engineer",
+      "url": "https://jobs.ashbyhq.com/withremy/2bdde95a-620f-40b9-85dc-036c19d8bd1c",
+      "skills": [
+        "Python",
+        "TypeScript",
+        "Docker",
+        "AWS",
+        "RAG",
+        "Vercel AI SDK",
+        "PyTorch",
+        "Hugging Face",
+        "Evaluation"
+      ],
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/withremy",
+      "description_sha256": "7149dc40384dc9a43b2e4f1e19fa2b3268c3839d2760372d39e8cc7fa6aaba3d",
+      "selection": "AI/ML/agent title subset",
+      "interpretation": "Vercel AI SDK appears in the published tech stack; not a standalone mandatory-experience requirement."
+    },
+    {
+      "employer": "Scalar",
+      "title": "Senior Fullstack Engineer",
+      "url": "https://jobs.ashbyhq.com/scalar/aa017463-43c4-407c-b6c9-b59076f01d82",
+      "skills": [
+        "Python",
+        "TypeScript",
+        "MCP",
+        "Vercel AI SDK"
+      ],
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/scalar",
+      "description_sha256": "d95c772449ef981fbfdb70b3a2d4c8c658a5ef12ac0afb10b17cfe397d6808f1",
+      "selection": "manual product/integration supplement",
+      "interpretation": "Vercel AI SDK and MCP SDK are described as product stack; solutions-role experience is a plus."
+    },
+    {
+      "employer": "Scalar",
+      "title": "Founding Solutions Engineer",
+      "url": "https://jobs.ashbyhq.com/scalar/274bf7b1-be2a-45e4-9910-eb9bbced8366",
+      "skills": [
+        "Python",
+        "TypeScript",
+        "MCP",
+        "Vercel AI SDK",
+        "Evaluation"
+      ],
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/scalar",
+      "description_sha256": "7e0dc470d512336f8e8e01f47444fa41abdac3d0183953100e9d110253123899",
+      "selection": "manual product/integration supplement",
+      "interpretation": "Vercel AI SDK and MCP SDK are described as product stack; solutions-role experience is a plus."
+    },
+    {
+      "employer": "Nextdata",
+      "title": "Senior AI Platform Engineer Contract",
+      "url": "https://jobs.ashbyhq.com/nextdata/5ffeb13d-0266-459f-ba80-094be8818be3",
+      "skills": [
+        "Python",
+        "SQL",
+        "PostgreSQL",
+        "RAG",
+        "MCP",
+        "LangChain",
+        "LangGraph"
+      ],
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/nextdata",
+      "description_sha256": "96df5b05288cdf78dbedb09219dcb6d3d49a2a60939caf1c60381840049b6d40",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Nextdata",
+      "title": "Forward Deployed Engineer - Contract",
+      "url": "https://jobs.ashbyhq.com/nextdata/4feeb725-13e9-440b-984b-b173f943317b",
+      "skills": [
+        "Python",
+        "SQL",
+        "RAG",
+        "MCP",
+        "LangChain",
+        "LangGraph",
+        "Human review"
+      ],
+      "source_api": "https://api.ashbyhq.com/posting-api/job-board/nextdata",
+      "description_sha256": "f7a5a1f096a450f636e21f43294813d5f3be1fe4923fd1e32a77f7ea9c6aac49",
+      "selection": "manual product/integration supplement"
+    },
+    {
+      "employer": "Esper",
+      "title": "Staff Software Engineer",
+      "url": "https://jobs.lever.co/esper/20b2bfef-77c2-4e65-89b8-f3ef39d4ee32",
+      "skills": [
+        "Python",
+        "Docker",
+        "Kubernetes",
+        "AWS",
+        "LangGraph",
+        "Vercel AI SDK",
+        "PydanticAI",
+        "OpenAI Agents SDK",
+        "Evaluation"
+      ],
+      "source_api": "https://api.lever.co/v0/postings/esper?mode=json",
+      "description_sha256": "8d4a561f18a07e1db799e4acf1f2d9e9e6ce83366fb89e46eaa67455a1981e82",
+      "selection": "manual product/integration supplement",
+      "interpretation": "Agent-framework names are alternative bonus experience, not required skills."
+    },
+    {
+      "employer": "Focused",
+      "title": "Agent Engineer (Langchain)",
+      "url": "https://job-boards.greenhouse.io/focused/jobs/7773862003",
+      "skills": [
+        "Python",
+        "React",
+        "Next.js",
+        "FastAPI",
+        "LangChain",
+        "LangGraph",
+        "LangSmith"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/focused/jobs?content=true",
+      "description_sha256": "e08a91fa5010fd91290f49834f9c457814075663171d33faa6669f4ffc8a149b",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Focused",
+      "title": "Lead Agent Engineer (Langchain)",
+      "url": "https://job-boards.greenhouse.io/focused/jobs/7775082003",
+      "skills": [
+        "Python",
+        "React",
+        "Next.js",
+        "FastAPI",
+        "LangChain",
+        "LangGraph",
+        "LangSmith"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/focused/jobs?content=true",
+      "description_sha256": "f23b719bdbea536c1cb685e2a3218763fdc8fc5c922ecb5daa4c79b768a96e64",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Focused",
+      "title": "Lead Engineer: Agent Academy",
+      "url": "https://job-boards.greenhouse.io/focused/jobs/8008195003",
+      "skills": [
+        "Python",
+        "TypeScript",
+        "LangChain",
+        "LangGraph",
+        "LangSmith",
+        "Evaluation"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/focused/jobs?content=true",
+      "description_sha256": "4ef737d661ce068835d8ab51801aad3078fe4bc61d3303dfa0a2c6abee4d9919",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Focused",
+      "title": "Senior Agent Engineer - Flynn engagement",
+      "url": "https://job-boards.greenhouse.io/focused/jobs/7983492003",
+      "skills": [
+        "Python",
+        "TypeScript",
+        "React",
+        "FastAPI",
+        "AWS",
+        "RAG",
+        "LangChain",
+        "LangGraph",
+        "LangSmith",
+        "Evaluation"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/focused/jobs?content=true",
+      "description_sha256": "999d2199c6ec4ad8e1107f5bd41c05902f0b57610b92d16a068ab9a9993bc907",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Focused",
+      "title": "Senior Agent Engineer (Langchain)",
+      "url": "https://job-boards.greenhouse.io/focused/jobs/7998202003",
+      "skills": [
+        "Python",
+        "React",
+        "Next.js",
+        "FastAPI",
+        "LangChain",
+        "LangGraph",
+        "LangSmith"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/focused/jobs?content=true",
+      "description_sha256": "3db0d5df0441fd707050c3caad84c494b1b0dda2be90c141973dc4aab9fdedd0",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Focused",
+      "title": "Senior Engineer: Agent Academy",
+      "url": "https://job-boards.greenhouse.io/focused/jobs/8008397003",
+      "skills": [
+        "Python",
+        "TypeScript",
+        "React",
+        "FastAPI",
+        "Docker",
+        "LangChain",
+        "LangGraph",
+        "LangSmith",
+        "Evaluation"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/focused/jobs?content=true",
+      "description_sha256": "a90c818b91afc6aa6689df029a58ac3843942e9658d4868c9e30ed5112a58086",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Encora/Coforge",
+      "title": "AI Engineer",
+      "url": "https://job-boards.greenhouse.io/encora10/jobs/5211060007",
+      "skills": [
+        "Python",
+        "TypeScript",
+        "Docker",
+        "Kubernetes",
+        "AWS",
+        "Azure",
+        "GCP"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/encora10/jobs?content=true",
+      "description_sha256": "f5e34ef95834dbc08aad0e513e7c47a8c634c33d47443ace910b3b3bc7685795",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Encora/Coforge",
+      "title": "Mid AI Engineer",
+      "url": "https://job-boards.greenhouse.io/encora10/jobs/5228408007",
+      "skills": [
+        "Python",
+        "SQL",
+        "RAG",
+        "LangChain",
+        "LangGraph",
+        "LlamaIndex",
+        "Evaluation"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/encora10/jobs?content=true",
+      "description_sha256": "549f1eda3db984c5c2b3e9d1f5bebd41acbb8a79191c2a7e512722e740646d11",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Encora/Coforge",
+      "title": "Senior AI Agent Engineer",
+      "url": "https://job-boards.greenhouse.io/encora10/jobs/5248428007",
+      "skills": [
+        "Python",
+        "Azure",
+        "RAG",
+        "MCP",
+        "Evaluation"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/encora10/jobs?content=true",
+      "description_sha256": "4df48f87f0fd8a7b18e083cc7e8d1b956bbd7e6b84e33a3d5dacfdb5ddc1c70f",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Encora/Coforge",
+      "title": "Senior AI Engineer",
+      "url": "https://job-boards.greenhouse.io/encora10/jobs/5228413007",
+      "skills": [
+        "Python",
+        "RAG",
+        "LangChain",
+        "LangGraph",
+        "LlamaIndex",
+        "Evaluation"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/encora10/jobs?content=true",
+      "description_sha256": "be50405f1b3938adac668591c14e4d60f2edadb9da083d6779ac2585dfa5d968",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Encora/Coforge",
+      "title": "Senior Data Engineer + AI",
+      "url": "https://job-boards.greenhouse.io/encora10/jobs/5195629007",
+      "skills": [
+        "Python",
+        "TypeScript",
+        "SQL",
+        "AWS"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/encora10/jobs?content=true",
+      "description_sha256": "832ff6bab00a666fb5e05cd52525f81574a789ef4ff2a1625532584418eaada2",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Encora/Coforge",
+      "title": "Senior Full stack AI engineer",
+      "url": "https://job-boards.greenhouse.io/encora10/jobs/5244244007",
+      "skills": [
+        "Python",
+        "React",
+        "FastAPI",
+        "SQL",
+        "Docker",
+        "Kubernetes",
+        "AWS",
+        "Azure",
+        "RAG",
+        "LangChain",
+        "LangGraph",
+        "CrewAI",
+        "AutoGen"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/encora10/jobs?content=true",
+      "description_sha256": "32fd06da4ae46602b79fefa4a339283dc5fbe2003736f888bdb263b2c2b5567c",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Encora/Coforge",
+      "title": "Senior Full Stack C# & Javacript AI Developer",
+      "url": "https://job-boards.greenhouse.io/encora10/jobs/5247804007",
+      "skills": [
+        "Python",
+        "TypeScript",
+        "JavaScript",
+        "React",
+        "SQL"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/encora10/jobs?content=true",
+      "description_sha256": "fd8294cd38862308ece795e36c160ac493f25117ff8f38facdc3a27e553f8300",
+      "selection": "AI/ML/agent title subset"
+    },
+    {
+      "employer": "Encora/Coforge",
+      "title": "Senior Software Architect (.NET, Angular & AI-First Engineering)",
+      "url": "https://job-boards.greenhouse.io/encora10/jobs/5190913007",
+      "skills": [
+        "SQL",
+        "PostgreSQL",
+        "Kubernetes",
+        "AWS",
+        "Azure",
+        "RAG",
+        "MCP"
+      ],
+      "source_api": "https://boards-api.greenhouse.io/v1/boards/encora10/jobs?content=true",
+      "description_sha256": "d6ae8e7443a0edcc7c166b8a38077c724d6de2c608adc015736a68d3a8ff96eb",
+      "selection": "AI/ML/agent title subset"
+    }
+  ],
+  "manual_page_observations": [
+    {
+      "employer": "Accenture",
+      "title": "AI Infrastructure Architect",
+      "url": "https://www.accenture.com/us-en/careers/jobdetails?id=ATCI-5636879-S2034608_en",
+      "location": "Hyderabad, India",
+      "observation": "Description asks for LangChain/LangGraph, mandatory Python and REST/FastAPI preferred. Page accessible during review; not an ATS-feed row."
+    },
+    {
+      "employer": "Wipro",
+      "title": "GCP Gen AI Architect",
+      "url": "https://careers.wipro.com/job/GCP-Gen-AI-Architect/203038-en_US/",
+      "location": "Irving/Jacksonville, US",
+      "observation": "Description names Python, SQL, RAG and framework alternatives including LangChain, LangGraph and LlamaIndex. Page accessible during review; not India evidence."
+    }
+  ],
+  "excluded_evidence": [
+    {
+      "employer": "Owner",
+      "reason": "Cached Full-Stack Agents listing absent from live feed."
+    },
+    {
+      "employer": "August Health",
+      "reason": "Cached AI-engineering listing absent from live feed."
+    },
+    {
+      "employer": "IconicShift",
+      "reason": "Live feed returned zero jobs."
+    },
+    {
+      "employer": "Downtown Music",
+      "url": "https://job-boards.greenhouse.io/downtownmusic/jobs/8634235002",
+      "reason": "Readable earlier in review; final page retrieval returned 404 and feed retrieval failed. Excluded from live corroboration."
+    },
+    {
+      "employer": "Wipro",
+      "reason": "Earlier Bengaluru role closed; excluded from live India evidence."
+    },
+    {
+      "employer": "Cognizant",
+      "reason": "Earlier Bengaluru role unavailable; excluded from live India evidence."
+    },
+    {
+      "source": "Buildagentic framework tracker",
+      "reason": "Counting denominators and seeded/synced provenance insufficiently clear for quantitative comparison."
+    }
+  ]
+}

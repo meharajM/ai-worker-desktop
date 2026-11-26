@@ -66,6 +66,12 @@ export function MemoryPreferencesPanel() {
                 </div>
             </div>
 
+            {!stats && (
+                <p className="text-sm text-[var(--color-text-muted)]">
+                    Connect local memory in Connections to view and use your saved memories.
+                </p>
+            )}
+
             {/* Backend Selection */}
             <div className="bg-[var(--color-card-elevated)] border border-[var(--color-border)] rounded-xl p-4">
                 <label className="block text-sm font-medium mb-4 text-[var(--color-text-primary)]">Storage Backend</label>
@@ -230,7 +236,13 @@ export function MemoryPreferencesPanel() {
                                 observations: ['This is a safe test description.']
                             });
                             console.log('Memory write result:', result);
-                            alert(result.success ? 'Write Success!' : 'Write Failed: ' + result.error);
+                            if (result.error) {
+                                alert(`Write Failed: ${result.error}`);
+                            } else if (result.result == null) {
+                                alert('Write Failed: Local memory returned no result.');
+                            } else {
+                                alert('Write Success!');
+                            }
                             loadStats(); // Refresh stats
                         } catch (e: any) {
                             console.error('Memory write exception:', e);

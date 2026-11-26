@@ -78,6 +78,14 @@ export class ModelManager {
             const file = fs.createWriteStream(zipPath)
 
             https.get(url, (response) => {
+                if (response.statusCode !== 200) {
+                    response.resume()
+                    file.close(() => {
+                        fs.rmSync(zipPath, { force: true })
+                        resolve({ success: false, error: `Model download rejected HTTP ${response.statusCode}; redirects are not allowed` })
+                    })
+                    return
+                }
                 const totalSize = parseInt(response.headers['content-length'] || '0', 10)
                 let downloadedSize = 0
 

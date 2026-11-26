@@ -77,8 +77,12 @@ export function OpenAISettings({
                 <>
                     <a
                         href={apiKeyUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        onClick={(event) => {
+                            if (window.electron?.shell?.openExternal) {
+                                event.preventDefault()
+                                void window.electron.shell.openExternal(apiKeyUrl)
+                            }
+                        }}
                         className="px-2 py-0.5 text-[10px] bg-[var(--color-brand-teal)]/10 text-[var(--color-brand-teal)] rounded border border-[var(--color-brand-teal)]/20 hover:bg-[var(--color-brand-teal)]/20 transition-colors"
                     >
                         Get API Key

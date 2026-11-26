@@ -2,7 +2,6 @@ import { promises as fs } from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
 import { randomUUID } from 'crypto'
-import { Store } from '../lib/store-wrapper'
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -43,14 +42,6 @@ interface ToolCallResponse {
     meta?: Record<string, unknown>
 }
 
-/**
- * Safe Mode Settings
- */
-interface SafeModeSettings {
-    safeMode?: boolean
-    autoApprove?: boolean
-}
-
 // ============================================================================
 // TOOL DEFINITIONS (MCP Schema)
 // ============================================================================
@@ -61,7 +52,7 @@ interface SafeModeSettings {
 const FILESYSTEM_TOOLS: ToolSchema[] = [
     {
         name: 'fs_write_file',
-        description: 'Write content to a file. In Safe Mode, changes are staged for user approval before being applied.',
+        description: 'Write content to a file. Changes are staged for explicit user approval before being applied.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -114,14 +105,13 @@ const FILESYSTEM_TOOLS: ToolSchema[] = [
 /**
  * FileSystemService - Safe Filesystem with Shadow Writes
  * 
- * Provides filesystem access for AI agents with an optional "Safe Mode" that
+ * Provides filesystem access for AI agents that always
  * requires user approval before file modifications are committed.
  * 
  * Architecture:
  * - Singleton pattern for global access
  * - Shadow directory for staging writes (userData/fs-staging/)
  * - Session-based change tracking
- * - Safe Mode toggle via electron-store
  * 
  * Safe Mode Flow:
  *   1. AI calls fs_write_file
@@ -207,31 +197,6 @@ export class FileSystemService {
             if (change && change.originalPath === filePath) return change
         }
         return undefined
-    }
-
-    /**
-     * Check if Safe Mode is enabled
-     * @private
-     */
-    private async getSafeModeSettings(): Promise<{ safeMode: boolean; autoApprove: boolean }> {
-        try {
-            // Must use the same store namespace as ipc/store.ts and settingsStore.
-            const store = new Store<Record<string, any>>({
-                name: 'ai-worker-store',
-                defaults: {},
-            })
-            const settings = ((store as any).get('mcpFileSystem', {}) as any) as SafeModeSettings
-            return {
-                safeMode: settings.safeMode !== false, // Default to true
-                autoApprove: settings.autoApprove === true, // Default to false
-            }
-        } catch (error) {
-            console.warn('[FileSystemService] Failed to check safe mode, defaulting to enabled:', error)
-            return {
-                safeMode: true, // Fail-safe to protect user files
-                autoApprove: false,
-            }
-        }
     }
 
     private normalizePathForCompare(value: string): string {
@@ -432,27 +397,20 @@ export class FileSystemService {
 
     /**
      * Execute a tool call from AI agent
-     * Respects Safe Mode setting for write operations
+     * Stages user file writes until explicit approval.
      */
     async callTool(name: string, args: any): Promise<ToolCallResponse> {
         try {
             switch (name) {
                 case 'fs_write_file': {
-                    const { safeMode: isSafeMode, autoApprove } = await this.getSafeModeSettings()
                     const resolvedPath = this.resolveWorkspaceScopedTargetPath(args?.path, args?.workspacePath, name)
                     const isInternalTrackingWrite = this.isInternalTrackingFile(resolvedPath)
                     const sessionId =
                         typeof args?._sessionId === 'string' && args._sessionId.trim() !== ''
                             ? args._sessionId.trim()
                             : 'default'
-                    const hasSessionAutoApproveOverride = typeof args?._sessionAutoApprove === 'boolean'
-                    const sessionAutoApprove = args?._sessionAutoApprove === true
-                    const effectiveAutoApprove = hasSessionAutoApproveOverride
-                        ? sessionAutoApprove
-                        : autoApprove
-
-                    if (isSafeMode && !effectiveAutoApprove && !isInternalTrackingWrite) {
-                        // Safe Mode: Stage for user review
+                    if (!isInternalTrackingWrite) {
+                        // Legacy global/session auto-approval flags cannot bypass review.
                         const change = await this.stageWrite(resolvedPath, args.content, sessionId)
                         return {
                             result: {
@@ -462,30 +420,13 @@ export class FileSystemService {
                             }
                         }
                     } else {
-                        // Direct write:
-                        // - Safe Mode disabled OR
-                        // - Auto-approve enabled OR
-                        // - Internal tracking file
                         await fs.mkdir(path.dirname(resolvedPath), { recursive: true })
                         await fs.writeFile(resolvedPath, args.content, 'utf8')
-                        const status = isInternalTrackingWrite
-                            ? 'written_internal'
-                            : sessionAutoApprove
-                                ? 'written_session_auto_approved'
-                                : autoApprove
-                                ? 'written_auto_approved'
-                                : 'written'
                         return {
                             result: {
-                                status,
+                                status: 'written_internal',
                                 path: resolvedPath,
-                                message: isInternalTrackingWrite
-                                    ? `Internal tracking file updated: ${resolvedPath}`
-                                    : sessionAutoApprove
-                                        ? `File written with session auto-approval: ${resolvedPath}`
-                                    : autoApprove
-                                        ? `File written with auto-approval: ${resolvedPath}`
-                                    : `File written to ${resolvedPath}`
+                                message: `Internal tracking file updated: ${resolvedPath}`
                             }
                         }
                     }

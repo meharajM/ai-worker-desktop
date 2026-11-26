@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain } from './trustedIpc'
 
 export function registerLlmHandlers(): void {
     // LLM operations (placeholder - renderer handles this via fetch for now)

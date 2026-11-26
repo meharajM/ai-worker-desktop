@@ -1,4 +1,5 @@
-import { ipcMain, app, shell } from 'electron'
+import { app, shell } from 'electron'
+import { ipcMain } from './trustedIpc'
 import { join } from 'path'
 import * as fs from 'fs/promises'
 import { existsSync } from 'fs'

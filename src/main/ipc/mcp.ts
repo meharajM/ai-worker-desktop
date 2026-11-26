@@ -1,4 +1,6 @@
-import { ipcMain } from 'electron'
+import { ipcMain } from './trustedIpc'
+import { getStoredPrivacyMode } from './store'
+import { MemoryServiceFactory } from '../services/memory/MemoryServiceFactory'
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
@@ -7,11 +9,22 @@ import { MemoryService } from '../services/MemoryService'
 import { FileSystemService } from '../services/FileSystemService'
 import { McpProcessManager } from '../services/McpProcessManager'
 
+import { externalServiceChoices, rememberExternalTools } from '../services/ExternalServiceTools'
+
 // --- State ---
 const activeConnections = new Map<string, Client>()
 const inProcessPlaywrightConnections = new Set<string>()
 const inProcessMemoryConnections = new Set<string>()
 const inProcessFilesystemConnections = new Set<string>()
+
+export function getExternalServiceChoices() {
+    return getStoredPrivacyMode() === 'connected' ? externalServiceChoices(activeConnections) : []
+}
+
+export function isMemoryConnected(): boolean {
+    return inProcessMemoryConnections.size > 0 &&
+        (getStoredPrivacyMode() === 'connected' || MemoryServiceFactory.getCurrentBackend() === 'server-memory')
+}
 
 // --- Helpers ---
 
@@ -20,6 +33,11 @@ function isPlaywrightServer(serverConfig: { id?: string; name?: string; command?
     const idOrName = (id || name || '').toLowerCase()
     const argsStr = (args || []).join(' ').toLowerCase()
     return idOrName.includes('playwright') || argsStr.includes('@playwright/mcp') || command === 'internal'
+}
+
+function requiresConnectedMode(serverId: string): boolean {
+    return activeConnections.has(serverId) || inProcessPlaywrightConnections.has(serverId) ||
+        (inProcessMemoryConnections.has(serverId) && MemoryServiceFactory.getCurrentBackend() !== 'server-memory')
 }
 
 function logMcpOperation(level: 'info' | 'warn' | 'error', message: string, context: any): void {
@@ -82,8 +100,29 @@ export function registerMcpHandlers(): void {
         })
 
         try {
+            const localFilesystem = type === 'stdio' && command === 'internal-filesystem' && !url
+            const localMemory = type === 'stdio' && command === 'internal-memory' && !url &&
+                MemoryServiceFactory.getCurrentBackend() === 'server-memory'
+            if (getStoredPrivacyMode() !== 'connected' && !(localFilesystem || localMemory)) {
+                throw new Error('Enable connected mode before connecting browser, custom, or remote MCP services.')
+            }
             if (activeConnections.has(id)) {
                 return { success: true, serverId: id }
+            }
+
+            // In-process Memory
+            if (command === 'internal-memory' || (args && args.includes('memory-service'))) {
+                await MemoryService.getInstance().initialize()
+                inProcessMemoryConnections.add(id)
+                logMcpOperation('info', 'In-process Memory connection established', { operation: 'connect', serverId: id, inProcess: true })
+                return { success: true, serverId: id, inProcess: true }
+            }
+
+            // In-process Filesystem
+            if (command === 'internal-filesystem' || (args && args.includes('filesystem-service'))) {
+                inProcessFilesystemConnections.add(id)
+                logMcpOperation('info', 'In-process Filesystem connection established', { operation: 'connect', serverId: id, inProcess: true })
+                return { success: true, serverId: id, inProcess: true }
             }
 
             // In-process Playwright
@@ -96,21 +135,6 @@ export function registerMcpHandlers(): void {
                 } catch (playwrightError: unknown) {
                     logMcpOperation('warn', 'In-process Playwright failed, falling back to external MCP', { operation: 'connect', serverId: id, error: String(playwrightError) })
                 }
-            }
-
-            // In-process Memory
-            if (command === 'internal-memory' || (args && args.includes('memory-service'))) {
-                MemoryService.getInstance().initialize()
-                inProcessMemoryConnections.add(id)
-                logMcpOperation('info', 'In-process Memory connection established', { operation: 'connect', serverId: id, inProcess: true })
-                return { success: true, serverId: id, inProcess: true }
-            }
-
-            // In-process Filesystem
-            if (command === 'internal-filesystem' || (args && args.includes('filesystem-service'))) {
-                inProcessFilesystemConnections.add(id)
-                logMcpOperation('info', 'In-process Filesystem connection established', { operation: 'connect', serverId: id, inProcess: true })
-                return { success: true, serverId: id, inProcess: true }
             }
 
             let transport: StdioClientTransport | SSEClientTransport
@@ -212,6 +236,9 @@ export function registerMcpHandlers(): void {
     })
 
     ipcMain.handle('mcp:list-tools', async (_event, id: string) => {
+        if (getStoredPrivacyMode() !== 'connected' && requiresConnectedMode(id)) {
+            return { tools: [], error: 'Enable connected mode before using this service.' }
+        }
         if (inProcessPlaywrightConnections.has(id)) return { tools: PlaywrightService.getInstance().listTools().tools }
         if (inProcessMemoryConnections.has(id)) return { tools: MemoryService.getInstance().listTools().tools }
         if (inProcessFilesystemConnections.has(id)) return { tools: FileSystemService.getInstance().listTools().tools }
@@ -221,6 +248,7 @@ export function registerMcpHandlers(): void {
 
         try {
             const res = await client.listTools()
+            rememberExternalTools(id, client, res.tools || [])
             logMcpOperation('info', 'MCP tools listed', { operation: 'list-tools', serverId: id, count: res.tools?.length })
             return { tools: res.tools || [] }
         } catch (err: any) {
@@ -230,6 +258,9 @@ export function registerMcpHandlers(): void {
     })
 
     ipcMain.handle('mcp:call-tool', async (_event, id, toolName, args) => {
+        if (getStoredPrivacyMode() !== 'connected' && requiresConnectedMode(id)) {
+            return { result: null, error: 'Enable connected mode before using this service.' }
+        }
         // In-process calls (Simplified content return as per original)
         if (inProcessPlaywrightConnections.has(id)) {
             const res = await PlaywrightService.getInstance().callTool(toolName, args)

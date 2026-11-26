@@ -10,9 +10,8 @@ import {
   Loader2,
   Terminal,
   MessageSquare,
-  Zap,
 } from "lucide-react";
-import { MCPServer } from "../../lib/mcp";
+import type { MCPServer } from "../../stores/mcpStore";
 import { Card, CardContent } from "../primitives/Card";
 import { StatusBadge } from "../primitives/StatusDot";
 import { Button } from "../primitives/Button";
@@ -22,6 +21,7 @@ interface McpServerCardProps {
   isExpanded: boolean;
   isEditing: boolean;
   isConnecting: boolean;
+  showManagementActions?: boolean;
   onToggleExpand: () => void;
   onEdit: () => void;
   onToggleConnection: () => void;
@@ -39,12 +39,12 @@ export function McpServerCard({
   isExpanded,
   isEditing,
   isConnecting,
+  showManagementActions = true,
   onToggleExpand,
   onEdit,
   onToggleConnection,
   onRemove,
   onTroubleshoot,
-  onToggleAutoConnect,
 }: McpServerCardProps) {
   return (
     <Card 
@@ -92,14 +92,14 @@ export function McpServerCard({
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
+          {showManagementActions && <Button
             variant={isEditing ? 'primary' : 'ghost'}
             size="sm"
             onClick={onEdit}
             title="Edit configuration"
           >
             <Edit2 size={18} />
-          </Button>
+          </Button>}
 
           <Button
             variant={server.connected ? 'ghost' : 'ghost'}
@@ -119,7 +119,7 @@ export function McpServerCard({
             )}
           </Button>
 
-          <Button
+          {showManagementActions && <Button
             variant="ghost"
             size="sm"
             onClick={onRemove}
@@ -127,7 +127,7 @@ export function McpServerCard({
             title="Remove server"
           >
             <Trash2 size={18} />
-          </Button>
+          </Button>}
         </div>
       </div>
 
@@ -158,7 +158,7 @@ export function McpServerCard({
                     )}
                   </div>
 
-                  <Button
+                  {showManagementActions && <Button
                     variant="ghost"
                     size="sm"
                     onClick={onTroubleshoot}
@@ -166,7 +166,7 @@ export function McpServerCard({
                   >
                     <MessageSquare size={14} />
                     Troubleshoot with AI
-                  </Button>
+                  </Button>}
                 </div>
               </div>
             </div>
@@ -174,32 +174,9 @@ export function McpServerCard({
 
           {isExpanded && (
             <div className="p-4 space-y-4">
-              {/* Auto-Connect Toggle */}
-              <div className="flex items-center justify-between p-3 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-                <div className="flex items-center gap-3">
-                  <Zap
-                    size={16}
-                    className={server.autoConnect ? "text-[var(--color-brand-teal)]" : "text-[var(--color-text-muted)]"}
-                  />
-                  <div>
-                    <p className="text-[var(--color-text-primary)] text-[var(--text-sm)] font-[var(--font-weight-medium)]">
-                      Auto-connect on startup
-                    </p>
-                    <p className="text-[var(--color-text-muted)] text-[var(--text-xs)]">
-                      {server.autoConnect
-                        ? "This server will automatically connect when the app starts"
-                        : "This server requires manual connection"}
-                    </p>
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  className="toggle"
-                  checked={server.autoConnect}
-                  onChange={() => onToggleAutoConnect(!server.autoConnect)}
-                  title="Toggle auto-connect"
-                />
-              </div>
+              <p className="text-[var(--color-text-muted)] text-[var(--text-xs)]">
+                Connect this service explicitly when needed. Connections are never restored on startup.
+              </p>
 
               {/* Tools List */}
               {server.connected && server.tools.length > 0 ? (

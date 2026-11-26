@@ -137,6 +137,35 @@ export const electron = {
         },
     },
 
+    // Readiness reporting and a narrowly scoped local inference bridge.
+    mcpBridge: {
+        publishModelStatus: async (available: boolean): Promise<boolean> => {
+            if (isElectron() && window.electron?.mcpBridge) {
+                return await window.electron.mcpBridge.publishModelStatus(available)
+            }
+            return false
+        },
+        onAskLocal: (callback: (request: { requestId: string; prompt: string }) => void): (() => void) => {
+            if (isElectron() && window.electron?.mcpBridge) {
+                return window.electron.mcpBridge.onAskLocal(callback)
+            }
+            return () => undefined
+        },
+        answerLocal: async (reply: {
+            requestId: string
+            success: boolean
+            content?: string
+            provider?: string
+            model?: string
+            error?: string
+        }): Promise<boolean> => {
+            if (isElectron() && window.electron?.mcpBridge) {
+                return await window.electron.mcpBridge.answerLocal(reply)
+            }
+            return false
+        },
+    },
+
     // Secure storage for sensitive data (encrypted with OS keychain)
     secure: {
         isAvailable: async (): Promise<boolean> => {

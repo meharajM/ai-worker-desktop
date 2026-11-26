@@ -13,22 +13,24 @@ import { useEffect, useCallback, useRef } from 'react'
 import { useWhatsAppStore, WhatsAppConnectionState } from '../stores/whatsappStore'
 import electron from '../lib/electron'
 
-export function useWhatsAppBridge(): void {
+export function useWhatsAppBridge(enabled = true): void {
     const setConnectionState = useWhatsAppStore((s) => s.setConnectionState)
     // Track recently processed message IDs to prevent duplicates
     const processedMessageIds = useRef<Set<string>>(new Set())
 
     // On mount: fetch initial state from main process
     useEffect(() => {
+        if (!enabled) return
         let cancelled = false
         electron.whatsapp.getState().then((state) => {
             if (!cancelled) setConnectionState(state as WhatsAppConnectionState)
         }).catch(console.error)
         return () => { cancelled = true }
-    }, [setConnectionState])
+    }, [enabled, setConnectionState])
 
     // Subscribe to connection state push events from main
     useEffect(() => {
+        if (!enabled) return
         const unsub = electron.whatsapp.onConnectionChange((state: WhatsAppConnectionState) => {
             setConnectionState(state)
 
@@ -38,7 +40,7 @@ export function useWhatsAppBridge(): void {
             }
         })
         return unsub
-    }, [setConnectionState])
+    }, [enabled, setConnectionState])
 
     // Subscribe to incoming WhatsApp messages — add them to active chat session
     const handleMessage = useCallback((message: {
@@ -80,8 +82,9 @@ export function useWhatsAppBridge(): void {
     }, [])
 
     useEffect(() => {
+        if (!enabled) return
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const unsub = electron.whatsapp.onMessage(handleMessage as any)
         return unsub
-    }, [handleMessage])
+    }, [enabled, handleMessage])
 }

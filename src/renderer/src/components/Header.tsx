@@ -6,6 +6,7 @@ import { FEATURE_FLAGS } from '../lib/constants'
 import { useWhatsAppStore } from '../stores/whatsappStore'
 import { Button } from './primitives/Button'
 import { StatusDot } from './primitives/StatusDot'
+import { useSettingsStore } from '../stores/settingsStore'
 
 interface HeaderProps {
     status: { provider: string | null; available: boolean }
@@ -15,13 +16,15 @@ export function Header({ status }: HeaderProps) {
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
     const { user, signOut } = useAuthStore()
     const { connectionState, whatsappEnabled, openDialog } = useWhatsAppStore()
+    const privacyMode = useSettingsStore((s) => s.privacyMode)
+    const connectedMode = privacyMode === 'connected'
     const isWhatsAppConnected = connectionState.status === 'connected'
 
     return (
         <header className="h-[var(--space-12)] flex items-center justify-between px-[var(--space-4)] border-b border-[var(--color-border)] flex-shrink-0">
             <div className="flex items-center gap-4">
                 {/* User Auth Section */}
-                {FEATURE_FLAGS.AUTH_ENABLED && (
+                {FEATURE_FLAGS.AUTH_ENABLED && connectedMode && (
                     <>
                         {user ? (
                             <div className="flex items-center gap-3">
@@ -58,11 +61,11 @@ export function Header({ status }: HeaderProps) {
             </div>
 
             <div className="text-[10px] uppercase tracking-widest text-[var(--color-text-dim)] flex items-center gap-2">
-                <StatusDot variant="success" size="sm" animated />
-                <span className="hidden sm:inline">local-session: active</span>
+                <StatusDot variant={status.available ? 'success' : 'warning'} size="sm" animated={status.available} />
+                <span className="hidden sm:inline">{connectedMode ? 'connected mode' : 'local-only'}</span>
 
                 {/* WhatsApp status indicator */}
-                {isWhatsAppConnected && (
+                {connectedMode && isWhatsAppConnected && (
                     <button
                         id="header-whatsapp-status"
                         onClick={openDialog}
@@ -83,7 +86,7 @@ export function Header({ status }: HeaderProps) {
                 }`}>
                 {status.available ? <Wifi size={12} /> : <WifiOff size={12} />}
                 <span className="uppercase tracking-wide">
-                    {status.provider || 'No LLM'}
+                    {status.available ? (status.provider || 'Ready') : (connectedMode ? 'No LLM' : 'Local model setup needed')}
                 </span>
             </div>
         </header>

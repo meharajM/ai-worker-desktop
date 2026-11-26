@@ -236,7 +236,7 @@ ${recentResults.length > 0
  * @param tabId - If set, inject as `args.tabId` for browser tools (tab isolation).
  * @param workspacePath - If set, inject as `args.workspacePath` for fs tools.
  * @param activeSessionId - If set, inject as internal `_sessionId` for fs tools.
- * @param fileWriteAutoApprove - Per-session override injected into `fs_write_file`.
+ * @param fileWriteAutoApprove - Legacy field retained for caller compatibility; never authorizes writes.
  * @param signal - AbortSignal to cancel execution.
  * @returns `{ result, error }` — never throws (errors are returned as strings).
  */
@@ -306,9 +306,6 @@ async function _executeWithRetry(
             const internalFsArgs: Record<string, unknown> = {};
             if (workspacePath) internalFsArgs.workspacePath = workspacePath;
             if (activeSessionId) internalFsArgs._sessionId = activeSessionId;
-            if (name === "fs_write_file" && typeof fileWriteAutoApprove === "boolean") {
-                internalFsArgs._sessionAutoApprove = fileWriteAutoApprove;
-            }
             args = { ...args, ...internalFsArgs };
         }
 

@@ -22,6 +22,8 @@ import {
     type WebLLMStatus,
 } from "../lib/llm";
 import { useSettingsStore } from "../stores/settingsStore";
+import { electron } from "../lib/electron";
+import type { LocalTaskModel } from "../../../shared/external-task";
 
 /** Shape of the LLM status returned by this hook. */
 export interface LLMStatus {
@@ -44,13 +46,16 @@ export interface LLMStatus {
  * const { llmStatus } = useLLMStatus(currentView);
  * // llmStatus = { provider: "On-Device (Llama-3)", available: true }
  */
-export function useLLMStatus(currentView: string): { llmStatus: LLMStatus } {
+export function useLLMStatus(currentView: string): { llmStatus: LLMStatus; localModelReady: boolean } {
     const settings = useSettingsStore();
 
     const [llmStatus, setLlmStatus] = useState<LLMStatus>({
         provider: null,
         available: false,
     });
+    const [statusCheckAt, setStatusCheckAt] = useState<number | null>(null);
+    const [localModelReady, setLocalModelReady] = useState(false);
+    const [localTaskModel, setLocalTaskModel] = useState<LocalTaskModel | null>(null);
 
     // Ref to prevent duplicate concurrent requests — if a check is already in
     // flight, new callers wait for it rather than firing another fetch.
@@ -77,6 +82,7 @@ export function useLLMStatus(currentView: string): { llmStatus: LLMStatus } {
                 // Build a plain settings object — we don't pass the full Zustand store
                 // to avoid coupling llm.ts to the store shape.
                 const settingsForLLM = {
+                    localOnly: settings.privacyMode === 'local-only',
                     preferredProvider: settings.preferredProvider,
                     ollamaModel: settings.ollamaModel,
                     ollamaBaseUrl: settings.ollamaBaseUrl,
@@ -91,6 +97,18 @@ export function useLLMStatus(currentView: string): { llmStatus: LLMStatus } {
                 };
 
                 const providers = await getAvailableProviders(settingsForLLM);
+                // The host bridge must report a genuinely local runtime even when
+                // normal chat is configured for a connected/cloud provider.
+                const localProviders = settingsForLLM.localOnly
+                    ? providers
+                    : await getAvailableProviders({ ...settingsForLLM, localOnly: true });
+                const taskModel: LocalTaskModel | null = localProviders.browser.available && localProviders.browser.isLoaded
+                    ? { provider: 'browser', model: localProviders.browser.model || settingsForLLM.browserModel }
+                    : localProviders.ollama.available
+                        ? { provider: 'ollama', model: settingsForLLM.ollamaModel }
+                        : null;
+                setLocalTaskModel(taskModel);
+                setLocalModelReady(taskModel !== null);
 
                 // ── Priority resolution ──────────────────────────────────────────────
                 // WebLLM (on-device) is checked first. If it's loading, we show a
@@ -128,6 +146,7 @@ export function useLLMStatus(currentView: string): { llmStatus: LLMStatus } {
             } finally {
                 // Always clear the in-flight ref so the next call can proceed.
                 checkLLMRef.current = null;
+                setStatusCheckAt(Date.now());
             }
         })();
 
@@ -137,6 +156,7 @@ export function useLLMStatus(currentView: string): { llmStatus: LLMStatus } {
         // Re-create checkLLM whenever any relevant setting changes so the
         // debounced effect below fires a fresh check.
         settings.preferredProvider,
+        settings.privacyMode,
         settings.ollamaModel,
         settings.ollamaBaseUrl,
         settings.openaiApiKey,
@@ -173,6 +193,8 @@ export function useLLMStatus(currentView: string): { llmStatus: LLMStatus } {
     useEffect(() => {
         const unsubscribe = subscribeToWebLLMStatus((status: WebLLMStatus) => {
             if (status.isLoaded && status.currentModel) {
+                setLocalModelReady(true);
+                setLocalTaskModel({ provider: 'browser', model: status.currentModel });
                 setLlmStatus({ provider: `On-Device (${status.currentModel})`, available: true });
             } else if (status.isLoading || status.backgroundDownload) {
                 setLlmStatus({
@@ -187,5 +209,14 @@ export function useLLMStatus(currentView: string): { llmStatus: LLMStatus } {
         return () => unsubscribe();
     }, [checkLLM]);
 
-    return { llmStatus };
+    // Publish only a ready on-device runtime, never generic cloud-provider readiness.
+    // Refresh the timestamp after every completed check so a steady `true` result
+    // does not become stale while the periodic availability poll is still running.
+    useEffect(() => {
+        void electron.mcpBridge.publishModelStatus({ model: localTaskModel }).catch((error) => {
+            console.warn('[useLLMStatus] Could not publish local bridge readiness:', error);
+        });
+    }, [localTaskModel, statusCheckAt]);
+
+    return { llmStatus, localModelReady };
 }

@@ -17,6 +17,8 @@ interface ImportMeta {
 
 // Electron API exposed via preload
 interface ElectronAPI {
+    externalTask: import('../../shared/external-task').ExternalTaskAPI
+    mcpBridge: import('./global').ElectronAPI['mcpBridge']
     platform: string
 
     mcp: {
@@ -183,10 +185,10 @@ declare global {
     }
 
     interface Window {
-        electron?: ElectronAPI
+        electron?: DesktopElectronAPI
         SpeechRecognition?: typeof SpeechRecognition
         webkitSpeechRecognition?: typeof SpeechRecognition
     }
 }
 
-export { }
+export type DesktopElectronAPI = ElectronAPI & import('./global').ElectronAPI

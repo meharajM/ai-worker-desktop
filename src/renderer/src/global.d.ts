@@ -2,7 +2,8 @@
 // This file ensures TypeScript recognizes window.electron
 
 // Electron API type (matches preload/index.ts)
-interface ElectronAPI {
+export interface ElectronAPI {
+    externalTask: import('../../shared/external-task').ExternalTaskAPI
     platform: string
 
     mcp: {
@@ -23,6 +24,19 @@ interface ElectronAPI {
         get: (key: string) => Promise<unknown>
         set: (key: string, value: unknown) => Promise<boolean>
         delete: (key: string) => Promise<boolean>
+    }
+
+    mcpBridge: {
+        publishModelStatus: (status: { model: import('../../shared/external-task').LocalTaskModel | null }) => Promise<boolean>
+        onAskLocal: (callback: (request: { requestId: string; prompt: string }) => void) => () => void
+        answerLocal: (reply: {
+            requestId: string
+            success: boolean
+            content?: string
+            provider?: string
+            model?: string
+            error?: string
+        }) => Promise<boolean>
     }
 
     shell: {
@@ -86,7 +100,8 @@ interface ElectronAPI {
 // Extend the Window interface globally
 declare global {
     interface Window {
-        electron?: ElectronAPI
+        electron?: import('./env').DesktopElectronAPI
+        externalTask?: import('../../shared/external-task').ExternalTaskApprovalAPI
         SpeechRecognition?: typeof SpeechRecognition
         webkitSpeechRecognition?: typeof SpeechRecognition
     }

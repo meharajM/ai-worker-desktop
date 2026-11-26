@@ -67,8 +67,12 @@ export function GeminiSettings({ available, models, checking, onRefresh }: Gemin
                 <>
                     <a
                         href="https://aistudio.google.com/app/apikey"
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        onClick={(event) => {
+                            if (window.electron?.shell?.openExternal) {
+                                event.preventDefault()
+                                void window.electron.shell.openExternal('https://aistudio.google.com/app/apikey')
+                            }
+                        }}
                         className="px-2 py-1 text-[10px] bg-[var(--color-surface)] text-[var(--color-text-secondary)] rounded border border-[var(--color-border)] hover:bg-[var(--color-border)] transition-colors"
                     >
                         Get API Key

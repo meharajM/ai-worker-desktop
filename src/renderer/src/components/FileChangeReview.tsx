@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { FileText, Check, X, AlertTriangle, RefreshCw, Clock3 } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
-import { useSettingsStore } from '../stores/settingsStore'
 
 interface FileChange {
     id: string
@@ -12,67 +11,41 @@ interface FileChange {
     timestamp: number
 }
 
-export const FileChangeReview: React.FC = () => {
+interface ExternalReview {
+    detail: string
+    onApprove: () => void
+    onReject: () => void
+}
+
+// Delegated proposals are immutable in main-process memory and expire with their task.
+// Their approval is bound to a single task and step, independent of the active chat.
+export const FileChangeReview = ({ external }: { external?: ExternalReview }) => {
+    if (!external) return <ChatFileChangeReview />
+    const proposal = JSON.parse(external.detail) as { file: string; previous: string | null; proposed: string }
+    return <section aria-label="Review pending external file write">
+        <h3 className="font-semibold break-all">{proposal.file}</h3>
+        {[['Current content', proposal.previous ?? '(new file)'], ['Proposed content', proposal.proposed]].map(([label, content]) =>
+            <div key={label} className="mt-3"><h4>{label}</h4>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border p-2">{content}</pre>
+            </div>)}
+        <div className="flex gap-3 mt-4">
+            <button className="rounded border px-3 py-2" onClick={external.onReject}>Reject file change</button>
+            <button className="rounded bg-emerald-700 text-white px-3 py-2" onClick={external.onApprove}>Approve file change</button>
+        </div>
+    </section>
+}
+
+const ChatFileChangeReview: React.FC = () => {
     const [changes, setChanges] = useState<FileChange[]>([])
-    const [autoApproveErrorIds, setAutoApproveErrorIds] = useState<Set<string>>(new Set())
     const [isLoading, setIsLoading] = useState(false)
-    const INTERNAL_TRACKING_FILE_PATTERN = /[\\/]\.ai-worker[\\/](tasks|execution-plan)\.json$/i
-    const { activeSessionId, sessions } = useChatStore()
-    const fileSystemAutoApprove = useSettingsStore((s) => s.fileSystemAutoApprove)
-    const activeSession = sessions.find((s) => s.id === activeSessionId)
-    const sessionAutoApprove = activeSession?.fileWriteAutoApprove ?? fileSystemAutoApprove
+    const { activeSessionId } = useChatStore()
 
     const fetchChanges = async () => {
         setIsLoading(true)
         try {
             const pending = await window?.electron?.fs.getPendingChanges(activeSessionId || 'default')
             if (pending) {
-                // Internal task tracking writes should not surface in the review panel.
-                const filtered = pending.filter(
-                    (change: FileChange) => !INTERNAL_TRACKING_FILE_PATTERN.test(change.originalPath)
-                )
-                const pendingIds = new Set(filtered.map((change: FileChange) => change.id))
-                setAutoApproveErrorIds((prev) => {
-                    const next = new Set(Array.from(prev).filter((id) => pendingIds.has(id)))
-                    if (next.size === prev.size && Array.from(next).every((id) => prev.has(id))) return prev
-                    return next
-                })
-
-                // If Auto-Approve is enabled, sweep backlog entries so this panel
-                // doesn't keep reappearing with stale pending writes.
-                if (sessionAutoApprove && filtered.length > 0) {
-                    // Do not repeatedly retry entries that already failed auto-approval.
-                    // Keep them visible for manual approval/rejection instead.
-                    const autoSweepCandidates = filtered.filter(
-                        (change: FileChange) => !autoApproveErrorIds.has(change.id)
-                    )
-                    if (autoSweepCandidates.length === 0) {
-                        setChanges(filtered)
-                        return
-                    }
-                    const settle = await Promise.all(
-                        autoSweepCandidates.map((change) =>
-                            window?.electron?.fs.approveChange(change.id)
-                                .then(() => ({ success: true }))
-                                .catch(() => ({ success: false }))
-                        )
-                    )
-                    const failedIds = autoSweepCandidates
-                        .filter((_change, idx) => !settle[idx]?.success)
-                        .map((change) => change.id)
-                    if (failedIds.length > 0) {
-                        setAutoApproveErrorIds((prev) => {
-                            const next = new Set(prev)
-                            for (const id of failedIds) next.add(id)
-                            if (next.size === prev.size && failedIds.every((id) => prev.has(id))) return prev
-                            return next
-                        })
-                    }
-                    setChanges(filtered)
-                    return
-                }
-
-                setChanges(filtered)
+                setChanges(pending)
             }
         } catch (error) {
             console.error('Failed to fetch changes:', error)
@@ -86,16 +59,12 @@ export const FileChangeReview: React.FC = () => {
         // Poll for changes every 2 seconds
         const interval = setInterval(fetchChanges, 2000)
         return () => clearInterval(interval)
-    }, [activeSessionId, sessionAutoApprove, autoApproveErrorIds])
+    }, [activeSessionId])
 
     const handleApprove = async (id: string) => {
         try {
-            await window?.electron?.fs.approveChange(id)
-            setAutoApproveErrorIds((prev) => {
-                const next = new Set(prev)
-                next.delete(id)
-                return next
-            })
+            const result = await window?.electron?.fs.approveChange(id)
+            if (!result?.success) throw new Error(result?.error || 'Failed to approve change')
             setChanges(prev => prev.filter(c => c.id !== id))
         } catch (error) {
             console.error('Failed to approve change:', error)
@@ -104,12 +73,8 @@ export const FileChangeReview: React.FC = () => {
 
     const handleReject = async (id: string) => {
         try {
-            await window?.electron?.fs.rejectChange(id)
-            setAutoApproveErrorIds((prev) => {
-                const next = new Set(prev)
-                next.delete(id)
-                return next
-            })
+            const result = await window?.electron?.fs.rejectChange(id)
+            if (!result?.success) throw new Error(result?.error || 'Failed to reject change')
             setChanges(prev => prev.filter(c => c.id !== id))
         } catch (error) {
             console.error('Failed to reject change:', error)

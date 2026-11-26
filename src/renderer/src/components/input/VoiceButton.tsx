@@ -8,6 +8,7 @@ interface VoiceButtonProps {
   isFirstSetup: boolean
   setupProgress?: number
   sttSupported: boolean
+  unavailableReason?: string | null
   disabled?: boolean
   onClick: () => void
 }
@@ -18,9 +19,23 @@ export function VoiceButton({
   isFirstSetup,
   setupProgress = 0,
   sttSupported,
+  unavailableReason,
   disabled = false,
   onClick,
 }: VoiceButtonProps) {
+  const unavailableId = React.useId()
+  if (!sttSupported) {
+    return (
+      <div className="flex items-center gap-2">
+        <Button variant="secondary" size="md" disabled aria-label="Voice input unavailable" aria-describedby={unavailableId} className="w-[44px] h-[44px] p-3 mb-[1px]">
+          <Mic size={20} />
+        </Button>
+        <span id={unavailableId} className="max-w-44 text-[10px] leading-tight text-[var(--color-text-muted)]">
+          {unavailableReason || 'Voice input unavailable.'}
+        </span>
+      </div>
+    )
+  }
   if (isFirstSetup) {
     return (
       <div

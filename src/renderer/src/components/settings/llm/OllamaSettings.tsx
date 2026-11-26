@@ -10,12 +10,13 @@ import { ProviderCard } from './ProviderCard'
 
 interface OllamaSettingsProps {
     available?: boolean
+    error?: string
     models?: string[]
     checking?: boolean
     onRefresh: () => Promise<void>
 }
 
-export function OllamaSettings({ available, models, checking, onRefresh }: OllamaSettingsProps) {
+export function OllamaSettings({ available, error, models, checking, onRefresh }: OllamaSettingsProps) {
     const settings = useSettingsStore()
     const [testing, setTesting] = useState(false)
     const [testResult, setTestResult] = useState<string | undefined>()
@@ -26,7 +27,8 @@ export function OllamaSettings({ available, models, checking, onRefresh }: Ollam
         try {
             const result = await testOllamaConnection(
                 settings.ollamaBaseUrl || 'http://localhost:11434',
-                settings.ollamaModel || 'qwen2.5:3b'
+                settings.ollamaModel || 'qwen2.5:3b',
+                settings.privacyMode === 'local-only'
             )
             if (result.success) {
                 setTestResult('Connection successful!')
@@ -44,14 +46,18 @@ export function OllamaSettings({ available, models, checking, onRefresh }: Ollam
     return (
         <ProviderCard
             title="Ollama"
-            status={available !== undefined ? { available } : undefined}
+            status={available !== undefined ? { available, error } : undefined}
             checking={checking}
             headerActions={
                 <>
                     <a
                         href="https://ollama.com/"
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        onClick={(event) => {
+                            if (window.electron?.shell?.openExternal) {
+                                event.preventDefault()
+                                void window.electron.shell.openExternal('https://ollama.com/')
+                            }
+                        }}
                         className="px-2 py-0.5 text-[10px] bg-[var(--color-brand-teal)]/10 text-[var(--color-brand-teal)] rounded border border-[var(--color-brand-teal)]/20 hover:bg-[var(--color-brand-teal)]/20 transition-colors"
                     >
                         Install Ollama
@@ -69,6 +75,7 @@ export function OllamaSettings({ available, models, checking, onRefresh }: Ollam
             onTest={handleTest}
             testResult={testResult}
         >
+            {error && <p role="status" className="text-xs text-[var(--color-error)]">{error}</p>}
             {/* Base URL */}
             <div>
                 <label className="block text-xs text-[var(--color-text-muted)] mb-1">Base URL</label>

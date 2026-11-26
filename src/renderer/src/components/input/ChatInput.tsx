@@ -17,8 +17,8 @@ import { useSpeechRecognition } from '../../hooks/useSpeechRecognition'
 import { useFileDragDrop } from '../../hooks/useFileDragDrop'
 import { useLogStore } from '../../stores/logStore'
 import { useChatStore } from '../../stores/chatStore'
-import { useSettingsStore } from '../../stores/settingsStore'
 import { useWhatsAppStore } from '../../stores/whatsappStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import electron from '../../lib/electron'
 
 import { VoiceButton } from './VoiceButton'
@@ -32,6 +32,10 @@ interface ChatInputProps {
   onSubmit: (message: string, attachments?: File[], isHeadless?: boolean) => void
   disabled?: boolean
   onAbort?: () => void
+  draft?: string
+  onDraftChange?: (draft: string) => void
+  localModelReady?: boolean
+  onOpenSettings?: () => void
 }
 
 function normalizePathForCompare(value: string): string {
@@ -44,28 +48,35 @@ function isPathInside(rootPath: string, targetPath: string): boolean {
   return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}/`)
 }
 
-export function ChatInput({ onSubmit, disabled = false, onAbort }: ChatInputProps) {
-  const [textInput, setTextInput] = useState('')
+export function ChatInput({ onSubmit, disabled = false, onAbort, draft, onDraftChange, localModelReady = false, onOpenSettings }: ChatInputProps) {
+  const [localTextInput, setLocalTextInput] = useState('')
+  const isDraftControlled = draft !== undefined && onDraftChange !== undefined
+  const textInput = isDraftControlled ? draft : localTextInput
+  const setTextInput = useCallback((value: string) => {
+    if (isDraftControlled) {
+      onDraftChange?.(value)
+    } else {
+      setLocalTextInput(value)
+    }
+  }, [isDraftControlled, onDraftChange])
   const [isHeadless, setIsHeadless] = useState(false)
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
-  const [sessionFileWriteAutoApprove, setSessionFileWriteAutoApproveState] = useState<boolean | undefined>(undefined)
   const [userHomePath, setUserHomePath] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<File[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileSystemAutoApprove = useSettingsStore((s) => s.fileSystemAutoApprove)
   const { addLog } = useLogStore()
-  const { activeSessionId, getActiveSession, setSessionFileWriteAutoApprove } = useChatStore()
+  const { activeSessionId, getActiveSession } = useChatStore()
   const { whatsappEnabled, connectionState } = useWhatsAppStore()
+  const connectedMode = useSettingsStore((state) => state.privacyMode === 'connected')
+  const localModelUnavailable = !connectedMode && !localModelReady
 
   // Load workspace from active session and reset per-session state
   useEffect(() => {
     const session = getActiveSession()
     setWorkspacePath(session?.workspacePath || null)
-    setSessionFileWriteAutoApproveState(session?.fileWriteAutoApprove)
     setIsHeadless(false)
   }, [activeSessionId, getActiveSession])
 
-  const effectiveFileWriteAutoApprove = sessionFileWriteAutoApprove ?? fileSystemAutoApprove
 
   useEffect(() => {
     let mounted = true
@@ -85,6 +96,7 @@ export function ChatInput({ onSubmit, disabled = false, onAbort }: ChatInputProp
     transcript,
     interimTranscript,
     isSupported: sttSupported,
+    unavailableReason: speechUnavailableReason,
     startListening,
     stopListening,
     resetTranscript,
@@ -246,9 +258,9 @@ export function ChatInput({ onSubmit, disabled = false, onAbort }: ChatInputProp
   const handleTextSubmit = useCallback(() => {
     const message = textInput.trim()
     const hasAttachments = attachments.length > 0
-    if ((message || hasAttachments) && !disabled) {
+    if ((message || hasAttachments) && !disabled && !localModelUnavailable) {
       // If WhatsApp mode is active and connected, also send via WhatsApp
-      if (whatsappEnabled && connectionState.status === 'connected' && message) {
+      if (connectedMode && whatsappEnabled && connectionState.status === 'connected' && message) {
         const targetNumber = useWhatsAppStore.getState().targetPhoneNumber
         if (targetNumber) {
           electron.whatsapp.sendMessage(targetNumber, message).catch(console.error)
@@ -259,7 +271,7 @@ export function ChatInput({ onSubmit, disabled = false, onAbort }: ChatInputProp
       setAttachments([])
       resetTranscript()
     }
-  }, [textInput, attachments, disabled, onSubmit, resetTranscript, isHeadless, whatsappEnabled, connectionState.status])
+  }, [textInput, attachments, disabled, localModelUnavailable, onSubmit, resetTranscript, isHeadless, connectedMode, whatsappEnabled, connectionState.status, setTextInput])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -298,7 +310,7 @@ export function ChatInput({ onSubmit, disabled = false, onAbort }: ChatInputProp
         'populate-chat-input',
         handlePopulate as EventListener
       )
-  }, [setText, disabled, isHeadless, onSubmit, resetTranscript])
+  }, [setText, setTextInput, disabled, isHeadless, onSubmit, resetTranscript])
 
   const hasContent = textInput.trim().length > 0 || attachments.length > 0
 
@@ -312,6 +324,14 @@ export function ChatInput({ onSubmit, disabled = false, onAbort }: ChatInputProp
       )}
 
       <div className="flex flex-col gap-2">
+        {localModelUnavailable && onOpenSettings && (
+          <div role="status" aria-live="polite" className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 px-3 py-2">
+            <p className="text-xs text-[var(--color-text-muted)]">Local-only is active, but no on-device model is ready. Your draft stays here until setup is complete.</p>
+            <button type="button" onClick={onOpenSettings} className="shrink-0 text-xs font-medium text-[var(--color-brand-teal)] hover:underline">
+              Set up model
+            </button>
+          </div>
+        )}
         {/* Attachment chips */}
         <AttachmentBar attachments={attachments} onRemove={removeAttachment} />
 
@@ -350,12 +370,13 @@ export function ChatInput({ onSubmit, disabled = false, onAbort }: ChatInputProp
               isFirstSetup={isFirstSetup}
               setupProgress={setupProgress}
               sttSupported={sttSupported}
+              unavailableReason={speechUnavailableReason}
               disabled={disabled}
               onClick={handleMicClick}
             />
 
             {/* WhatsApp toggle */}
-            <WhatsAppToggle disabled={disabled} />
+            {connectedMode && <WhatsAppToggle disabled={disabled} />}
           </div>
 
           <div className="flex items-center gap-2">
@@ -363,14 +384,7 @@ export function ChatInput({ onSubmit, disabled = false, onAbort }: ChatInputProp
             <InputToolbar
               workspacePath={workspacePath}
               isHeadless={isHeadless}
-              fileWriteAutoApprove={effectiveFileWriteAutoApprove}
               onToggleHeadless={() => setIsHeadless(!isHeadless)}
-              onToggleFileWriteAutoApprove={() => {
-                if (!activeSessionId) return
-                const nextValue = !effectiveFileWriteAutoApprove
-                setSessionFileWriteAutoApproveState(nextValue)
-                setSessionFileWriteAutoApprove(activeSessionId, nextValue)
-              }}
               onSelectFolder={handleSelectFolder}
               onSelectFiles={handleSelectFiles}
               hasAttachments={attachments.length > 0}
@@ -379,7 +393,7 @@ export function ChatInput({ onSubmit, disabled = false, onAbort }: ChatInputProp
 
             {/* Send / Stop button */}
             <SendButton
-              disabled={disabled}
+              disabled={disabled || localModelUnavailable}
               onAbort={onAbort}
               onSubmit={handleTextSubmit}
               hasContent={hasContent}

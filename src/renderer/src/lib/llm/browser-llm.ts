@@ -91,6 +91,9 @@ async function callBrowserLLM(
 
     // Check if model is loaded
     if (!status.isLoaded) {
+      if (settings?.localOnly) {
+        throw new Error('No On-Device model loaded. Open Settings > LLM Provider to download and load a model, then retry.');
+      }
       console.log('[WebLLM] Model not loaded, attempting to load...');
       await loadWebLLMModel();
     }
@@ -152,6 +155,10 @@ export async function downloadBrowserModel(
 
     try {
       await loadWebLLMModel(modelId);
+      const loaded = getWebLLMStatus();
+      if (!loaded.isLoaded || (modelId && loaded.currentModel !== modelId)) {
+        return { success: false, error: loaded.error || 'Model could not load. Retry or choose a smaller model.' };
+      }
       return { success: true };
     } finally {
       if (unsubscribe) unsubscribe();

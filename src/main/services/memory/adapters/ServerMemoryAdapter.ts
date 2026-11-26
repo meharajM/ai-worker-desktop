@@ -1,3 +1,5 @@
+import { createRequire } from 'module'
+import * as path from 'path'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type {
@@ -140,6 +142,8 @@ function previewText(value: string, limit = 160): string {
   return `${compact.slice(0, limit)}...`
 }
 
+const runtimeRequire = createRequire(import.meta.url)
+
 export class ServerMemoryAdapter implements UnifiedMemoryBackend {
   private client: Client | null = null
   private storagePath: string
@@ -155,19 +159,36 @@ export class ServerMemoryAdapter implements UnifiedMemoryBackend {
    */
   async initialize(): Promise<void> {
     try {
-      // Ensure storage directory exists before starting MCP server
       const fs = await import('fs')
-      if (!fs.existsSync(this.storagePath)) {
-        fs.mkdirSync(this.storagePath, { recursive: true })
+      let packageEntry: string
+      try {
+        packageEntry = runtimeRequire.resolve('@modelcontextprotocol/server-memory/dist/index.js')
+      } catch {
+        throw new Error('Local memory runtime is missing. Reinstall AI-Worker to restore the bundled memory service.')
+      }
+      const serverEntry = packageEntry.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2')
+      if (!fs.existsSync(serverEntry)) {
+        throw new Error('Local memory runtime is not unpacked. Reinstall AI-Worker with the bundled memory service.')
       }
 
-      // Create MCP client to communicate with server-memory
+      // Reuse existing files in place; never rename, copy, or migrate memory on connect.
+      const configuredPaths = fs.existsSync(this.storagePath) && fs.statSync(this.storagePath).isFile()
+        ? [this.storagePath]
+        : [path.join(this.storagePath, 'memory.jsonl'), path.join(this.storagePath, 'memory.json')]
+      const existingPaths = [
+        ...configuredPaths,
+        path.join(path.dirname(packageEntry), 'memory.jsonl'),
+        path.join(path.dirname(packageEntry), 'memory.json'),
+      ]
+      const memoryPath = existingPaths.find(candidate => fs.existsSync(candidate)) || configuredPaths[0]
+      fs.mkdirSync(path.dirname(memoryPath), { recursive: true })
+
       const transport = new StdioClientTransport({
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-memory'],
+        command: process.execPath,
+        args: [serverEntry],
         env: {
-          ...process.env,
-          MEMORY_DATA_PATH: this.storagePath
+          ELECTRON_RUN_AS_NODE: '1',
+          MEMORY_FILE_PATH: memoryPath,
         }
       })
 

@@ -72,12 +72,135 @@ function testOpenRouterBackoffIsolationAndAbortability() {
   assertIncludes(src, 'await sleepWithAbort(delayMs, abortSignal);', 'openai');
 }
 
-function testUserEnvironmentGeoBackoff() {
+function testUserEnvironmentStaysOnDevice() {
   const src = read('src/renderer/src/lib/user-environment.ts');
-  assertIncludes(src, 'const GEO_FETCH_TIMEOUT_MS = 2000;', 'user-environment');
-  assertIncludes(src, 'const GEO_FETCH_BACKOFF_MS = 10 * 60 * 1000;', 'user-environment');
-  assertIncludes(src, 'if (Date.now() < geoFetchBackoffUntil) return null;', 'user-environment');
-  assertIncludes(src, 'Failed to fetch geolocation (backing off)', 'user-environment');
+  assertNotIncludes(src, 'fetch(', 'user-environment');
+  assertNotIncludes(src, 'get.geojs.io', 'user-environment');
+  assertIncludes(src, 'resolvedOptions().timeZone', 'user-environment');
+  assertIncludes(src, 'resolvedOptions().locale', 'user-environment');
+}
+
+function testFirebaseNetworkIsModeGated() {
+  const firebaseSrc = read('src/renderer/src/lib/firebase/init.ts');
+  assertIncludes(firebaseSrc, 'export function setFirebaseEnabled(enabled: boolean): void {', 'firebase-init');
+  assertIncludes(firebaseSrc, 'firebaseModules.disableNetwork?.(firebaseFirestore)', 'firebase-init');
+  assertIncludes(firebaseSrc, 'firebaseModules.enableNetwork?.(firebaseFirestore)', 'firebase-init');
+  assertIncludes(firebaseSrc, 'if (!firebaseEnabled) return null', 'firebase-init');
+  assertNotIncludes(firebaseSrc, "import('firebase/analytics')", 'firebase-init');
+  assertNotIncludes(firebaseSrc, "import('firebase/app-check')", 'firebase-init');
+
+  const appSrc = read('src/renderer/src/App.tsx');
+  assertIncludes(appSrc, "setFirebaseEnabled(privacyMode === 'connected')", 'app');
+}
+
+function testLocalOnlyReadinessAndIntegrationGating() {
+  const emptyState = read('src/renderer/src/components/chat/EmptyState.tsx');
+  assertIncludes(emptyState, "label={llmReady ? 'Model ready' : 'Model setup needed'}", 'empty-state');
+  assertIncludes(emptyState, 'AI-Worker needs a model before it can answer.', 'empty-state');
+  assertIncludes(emptyState, 'Open model settings', 'empty-state');
+  assertIncludes(emptyState, 'connectedMode && <div className="mt-8 w-full max-w-sm">', 'empty-state');
+
+  const chatInput = read('src/renderer/src/components/input/ChatInput.tsx');
+  assertIncludes(chatInput, '{connectedMode && <WhatsAppToggle disabled={disabled} />}', 'chat-input');
+  assertIncludes(chatInput, 'if (connectedMode && whatsappEnabled', 'chat-input');
+  assertIncludes(chatInput, 'localModelUnavailable = !connectedMode && !localModelReady', 'chat-input');
+  assertIncludes(chatInput, '&& !localModelUnavailable', 'chat-input-local-readiness');
+  assertIncludes(chatInput, 'disabled={disabled || localModelUnavailable}', 'chat-input-local-readiness');
+  assertIncludes(chatInput, 'draft stays here until setup is complete', 'chat-input-local-readiness');
+
+  const appSrc = read('src/renderer/src/App.tsx');
+  assertIncludes(appSrc, 'const [chatDraft, setChatDraft] = useState', 'app-chat-draft');
+  assertIncludes(appSrc, 'draft={chatDraft}', 'app-chat-draft');
+  assertIncludes(appSrc, 'onDraftChange={setChatDraft}', 'app-chat-draft');
+  assertIncludes(appSrc, 'const chatReady = privacyMode === \'local-only\' ? localModelReady : llmStatus.available', 'app-chat-readiness');
+
+  const chatView = read('src/renderer/src/components/chat/ChatView.tsx');
+  assertIncludes(chatView, 'messages.length > 0 && localOnly && !localModelReady', 'chat-view-persistent-local-readiness');
+  assertIncludes(chatView, 'onClick={onOpenSettings}', 'chat-view-persistent-local-readiness');
+
+  const connections = read('src/renderer/src/components/ConnectionsPanel.tsx');
+  assertIncludes(connections, "server.command === 'internal-memory' || server.command === 'internal-filesystem'", 'connections');
+  assertIncludes(connections, "connectedMode ? servers.filter((s) => s.name !== 'playwright') : localServers", 'connections');
+  assertIncludes(connections, 'on-device memory and workspace file tools', 'connections');
+  assertIncludes(connections, 'showManagementActions={connectedMode}', 'connections');
+
+  const serverCard = read('src/renderer/src/components/mcp/McpServerCard.tsx');
+  assertIncludes(serverCard, 'showManagementActions && <Button', 'mcp-server-card');
+
+  const mcpStore = read('src/renderer/src/stores/mcpStore.ts');
+  assertIncludes(mcpStore, 'function hasDefaultServer(', 'mcp-store');
+  assertIncludes(mcpStore, "server.type === 'stdio' && !server.url", 'mcp-store');
+  assertIncludes(mcpStore, "server.command === defaultServer.command", 'mcp-store');
+
+  const memorySettings = read('src/renderer/src/components/settings/MemoryPreferencesPanel.tsx');
+  assertIncludes(memorySettings, 'if (result.error)', 'memory-test-write');
+  assertIncludes(memorySettings, "alert('Write Success!')", 'memory-test-write');
+  assertNotIncludes(memorySettings, 'result.success ?', 'memory-test-write');
+
+  const app = read('src/renderer/src/App.tsx');
+  assertIncludes(app, "setSettingsInitialSection('llm')", 'app-model-setup-navigation');
+  assertIncludes(app, 'initialSection={settingsInitialSection}', 'app-settings-navigation');
+  assertIncludes(app, "if (view === 'settings') setSettingsInitialSection('privacy')", 'app-settings-navigation');
+}
+
+function testOpenCodeReadOnlyMcpBridge() {
+  const config = JSON.parse(read('opencode.json'));
+  assert(config.mcp.ai_worker_readonly.type === 'local', 'AI-Worker MCP uses a local stdio transport');
+  assert(JSON.stringify(config.mcp.ai_worker_readonly.command) === JSON.stringify(['node', 'scripts/ai-worker-readonly-mcp.mjs']), 'OpenCode starts the local AI-Worker MCP bridge');
+  assert(config.agent.ai_worker_readonly.mode === 'subagent', 'OpenCode exposes a named read-only subagent');
+  const agentPermissions = config.agent.ai_worker_readonly.permission;
+  assert(Object.keys(agentPermissions)[0] === '*', 'subagent denies tools broadly before specific allow rules');
+  assert(agentPermissions['*'] === 'deny', 'subagent denies all tools by default');
+  assert(agentPermissions.ai_worker_readonly_get_runtime_status === 'allow', 'subagent allows only the AI-Worker status tool');
+  assert(agentPermissions.ai_worker_readonly_ask_local === 'allow', 'subagent allows the isolated local inference tool');
+  assert(!config.agent.ai_worker_readonly.tools, 'subagent uses enforced permissions instead of legacy tool visibility config');
+  assert(config.mcp.whatsapp.enabled === false, 'project config disables inherited WhatsApp MCP');
+  assert(config.mcp['mobile-mcp'].enabled === false, 'project config disables inherited mobile MCP');
+
+  const server = read('scripts/ai-worker-readonly-mcp.mjs');
+  assertIncludes(server, "server.registerTool('get_runtime_status'", 'ai-worker-mcp');
+  assertIncludes(server, "server.registerTool('ask_local'", 'ai-worker-mcp');
+  assertIncludes(server, 'readOnlyHint: true', 'ai-worker-mcp');
+  assertIncludes(server, 'heartbeatAgeMs >= 0 && heartbeatAgeMs < 45_000', 'ai-worker-mcp-heartbeat-freshness');
+  assertIncludes(server, 'modelStatusAgeMs >= 0 && modelStatusAgeMs < 90_000', 'ai-worker-mcp-model-freshness');
+  assertIncludes(server, 'checkedAt >= startedAt', 'ai-worker-mcp-restart-freshness');
+  assertIncludes(server, "modelReady: modelStatusFresh && typeof model?.available === 'boolean' ? model.available : null", 'ai-worker-mcp-stale-model');
+  assertIncludes(server, "version: isLive && typeof runtime.version === 'string' ? runtime.version : null", 'ai-worker-mcp-version');
+  assertIncludes(server, "dataExposed: ['app version', 'app running state', 'privacy mode', 'on-device model readiness']", 'ai-worker-mcp-disclosure');
+  assertIncludes(server, "'memory content'", 'ai-worker-mcp');
+  assertIncludes(server, "'workspace files'", 'ai-worker-mcp');
+  assertIncludes(server, "redirect: 'error'", 'ai-worker-mcp-no-redirects');
+  assertIncludes(server, 'http://127.0.0.1:${port}/ask-local', 'ai-worker-mcp-loopback-only');
+  assertIncludes(server, "inputSchema: { prompt: z.string().min(1).max(MAX_PROMPT_LENGTH) }", 'ai-worker-mcp-prompt-bounds');
+  assertIncludes(server, "readFileSync(snapshotPath, 'utf8')", 'ai-worker-mcp-metadata-only-read');
+  assertNotIncludes(server, 'ai-worker-store.json', 'ai-worker-mcp-no-store-read');
+  assertNotIncludes(server, 'memory_search', 'ai-worker-mcp');
+  assertNotIncludes(server, 'fs_write_file', 'ai-worker-mcp');
+
+  const llmStatus = read('src/renderer/src/hooks/useLLMStatus.ts');
+  assertIncludes(llmStatus, 'setStatusCheckAt(Date.now())', 'ai-worker-mcp-model-heartbeat');
+  assertIncludes(llmStatus, '[localTaskModel, statusCheckAt]', 'ai-worker-mcp-model-heartbeat');
+  assertIncludes(llmStatus, 'getAvailableProviders({ ...settingsForLLM, localOnly: true })', 'ai-worker-mcp-local-readiness');
+
+  const bridgeIpc = read('src/main/ipc/localMcpBridge.ts');
+  assertIncludes(bridgeIpc, "ipcMain.handle('mcp-bridge:publish-model-status'", 'ai-worker-mcp-model-status-channel');
+  assertIncludes(bridgeIpc, "ipcMain.handle('mcp-bridge:answer-local'", 'ai-worker-mcp-answer-channel');
+  const preload = read('src/preload/index.ts');
+  assertIncludes(preload, "ipcRenderer.invoke('mcp-bridge:publish-model-status', status)", 'ai-worker-mcp-preload');
+  assertIncludes(preload, "ipcRenderer.on('mcp-bridge:ask-local', listener)", 'ai-worker-mcp-ask-preload');
+}
+
+function testCopilotCliReadOnlyAgent() {
+  const agent = read('.github/agents/ai-worker-readiness.agent.md');
+  assertIncludes(agent, 'user-invocable: false', 'copilot-cli-agent');
+  assertIncludes(agent, 'strict-tools-list: true', 'copilot-cli-agent');
+  assertIncludes(agent, '- ai-worker-readiness-local/get_runtime_status', 'copilot-cli-agent-tool-allowlist');
+  assertIncludes(agent, '- ai-worker-readiness-local/ask_local', 'copilot-cli-agent-local-inference-allowlist');
+  assertIncludes(agent, 'ai-worker-readiness-local:', 'copilot-cli-agent-mcp');
+  assertIncludes(agent, 'tools:\n      - get_runtime_status', 'copilot-cli-agent-mcp-tool-filter');
+  assertIncludes(agent, 'scripts/ai-worker-readonly-mcp.mjs', 'copilot-cli-agent-mcp');
+  assertNotIncludes(agent, 'http://', 'copilot-cli-agent-no-network');
+  assertNotIncludes(agent, 'https://', 'copilot-cli-agent-no-network');
 }
 
 function testAgentStateServiceNoGlobalSuppressor() {
@@ -412,7 +535,8 @@ function testWorkspaceSelectionAndInternalTaskTracking() {
   const toolbarSrc = read('src/renderer/src/components/input/InputToolbar.tsx');
   assertIncludes(toolbarSrc, 'data-testid="workspace-select-button"', 'input-toolbar');
   assertIncludes(toolbarSrc, 'data-testid="attachment-select-button"', 'input-toolbar');
-  assertIncludes(toolbarSrc, 'data-testid="workspace-auto-file-write-approval-toggle"', 'input-toolbar');
+  assertIncludes(toolbarSrc, 'File review required', 'input-toolbar');
+  assertNotIncludes(toolbarSrc, 'workspace-auto-file-write-approval-toggle', 'input-toolbar');
   assertIncludes(toolbarSrc, 'onClick={onSelectFolder}', 'input-toolbar');
   assertIncludes(toolbarSrc, "onClick={() => fileInputRef.current?.click()}", 'input-toolbar');
 
@@ -436,21 +560,13 @@ function testWorkspaceSelectionAndInternalTaskTracking() {
 
   const fileSystemServiceSrc = read('src/main/services/FileSystemService.ts');
   assertIncludes(fileSystemServiceSrc, 'private isInternalTrackingFile(filePath: string): boolean {', 'filesystem-service');
-  assertIncludes(fileSystemServiceSrc, 'if (isSafeMode && !effectiveAutoApprove && !isInternalTrackingWrite)', 'filesystem-service');
+  assertIncludes(fileSystemServiceSrc, 'const change = await this.stageWrite(resolvedPath, args.content, sessionId)', 'filesystem-service');
+  assertIncludes(fileSystemServiceSrc, "status: 'staged'", 'filesystem-service');
 }
 
 function testFileWriteApprovalAndSandboxHardening() {
   const useAgentSrc = read('src/renderer/src/hooks/useAgent.ts');
-  assertIncludes(
-    useAgentSrc,
-    'fileWriteAutoApprove: activeSession?.fileWriteAutoApprove,',
-    'useAgent'
-  );
-  assertNotIncludes(
-    useAgentSrc,
-    'fileWriteAutoApprove: activeSession?.fileWriteAutoApprove === true,',
-    'useAgent'
-  );
+  assertNotIncludes(useAgentSrc, 'fileWriteAutoApprove:', 'useAgent');
 
   const chatStoreSrc = read('src/renderer/src/stores/chatStore.ts');
   assertNotIncludes(chatStoreSrc, 'fileWriteAutoApprove: false,', 'chat-store');
@@ -472,9 +588,10 @@ function testFileWriteApprovalAndSandboxHardening() {
   assertIncludes(mcpSrc, 'if (!resolvedTargetPath) {', 'mcp');
 
   const fileReviewSrc = read('src/renderer/src/components/FileChangeReview.tsx');
-  assertIncludes(fileReviewSrc, 'const [autoApproveErrorIds, setAutoApproveErrorIds] = useState<Set<string>>(new Set())', 'file-change-review');
-  assertIncludes(fileReviewSrc, 'const autoSweepCandidates = filtered.filter(', 'file-change-review');
-  assertIncludes(fileReviewSrc, 'if (autoSweepCandidates.length === 0) {', 'file-change-review');
+  assertIncludes(fileReviewSrc, 'const handleApprove = async (id: string) => {', 'file-change-review');
+  assertIncludes(fileReviewSrc, 'const handleReject = async (id: string) => {', 'file-change-review');
+  assertIncludes(fileReviewSrc, 'waiting for approval', 'file-change-review');
+  assertNotIncludes(fileReviewSrc, 'autoApprove', 'file-change-review');
 }
 
 function run() {
@@ -483,7 +600,11 @@ function run() {
   testTaskDecomposerConditionalHeuristic();
   testTaskDecomposerWebsiteAliasExtraction();
   testOpenRouterBackoffIsolationAndAbortability();
-  testUserEnvironmentGeoBackoff();
+  testUserEnvironmentStaysOnDevice();
+  testFirebaseNetworkIsModeGated();
+  testLocalOnlyReadinessAndIntegrationGating();
+  testOpenCodeReadOnlyMcpBridge();
+  testCopilotCliReadOnlyAgent();
   testAgentStateServiceNoGlobalSuppressor();
   testPhaseARuntimeWritePauseAndSessionIsolation();
   testPhaseAMemoryParsingFallbacks();

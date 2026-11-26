@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { ipcMain } from './trustedIpc'
 import type StoreType from "electron-store";
 import { Store } from "../lib/store-wrapper";
 
@@ -12,6 +12,10 @@ const store = new Store<Record<string, unknown>>({
   set: (key: string, value: unknown) => void;
   delete: (key: string) => void;
 };
+
+export function getStoredPrivacyMode(): 'local-only' | 'connected' {
+  return store.get('privacyMode') === 'connected' ? 'connected' : 'local-only';
+}
 
 // Keys that MUST go through secure storage (blocked from general store)
 const BLOCKED_KEYS = [
@@ -33,30 +37,34 @@ function isSensitiveKey(key: string): boolean {
   );
 }
 
-export function registerStoreHandlers(): void {
+export function registerStoreHandlers(onModeChange?: () => void): void {
   ipcMain.handle("store:get", (_event, key: string) => {
-    if (isSensitiveKey(key)) {
-      console.warn(`[Store] Blocked access to sensitive key: ${key}. Use secure:get instead.`);
+    if (isSensitiveKey(key) || key === 'mcpBridgeRuntimeStatus' || key === 'mcpBridgeModelStatus') {
+      console.warn(`[Store] Blocked access to protected key: ${key}.`);
       return undefined;
     }
     return store.get(key);
   });
 
   ipcMain.handle("store:set", (_event, key: string, value: unknown) => {
-    if (isSensitiveKey(key)) {
-      console.warn(`[Store] Blocked write to sensitive key: ${key}. Use secure:set instead.`);
+    if (isSensitiveKey(key) || key === 'mcpBridgeRuntimeStatus' || key === 'mcpBridgeModelStatus') {
+      console.warn(`[Store] Blocked write to protected key: ${key}.`);
       return false;
     }
+    const previousMode = key === 'privacyMode' ? getStoredPrivacyMode() : null;
     store.set(key, value);
+    if (previousMode && previousMode !== getStoredPrivacyMode()) onModeChange?.();
     return true;
   });
 
   ipcMain.handle("store:delete", (_event, key: string) => {
-    if (isSensitiveKey(key)) {
-      console.warn(`[Store] Blocked delete of sensitive key: ${key}. Use secure:delete instead.`);
+    if (isSensitiveKey(key) || key === 'mcpBridgeRuntimeStatus' || key === 'mcpBridgeModelStatus') {
+      console.warn(`[Store] Blocked delete of protected key: ${key}.`);
       return false;
     }
+    const previousMode = key === 'privacyMode' ? getStoredPrivacyMode() : null;
     store.delete(key);
+    if (previousMode && previousMode !== getStoredPrivacyMode()) onModeChange?.();
     return true;
   });
 

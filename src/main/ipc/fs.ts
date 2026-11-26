@@ -1,4 +1,5 @@
-import { ipcMain, app } from 'electron'
+import { app } from 'electron'
+import { ipcMain } from './trustedIpc'
 import { FileSystemService } from '../services/FileSystemService'
 import * as path from 'path'
 import * as fs from 'fs/promises'

@@ -1,5 +1,6 @@
-import { ipcMain } from 'electron'
+import { ipcMain } from './trustedIpc'
 import { MemoryService } from '../services/MemoryService'
+import { isMemoryConnected } from './mcp'
 
 /**
  * Memory IPC Handlers
@@ -11,6 +12,7 @@ export function registerMemoryHandlers(): void {
   // Get memory statistics
   ipcMain.handle('memory:get-stats', async () => {
     try {
+      if (!isMemoryConnected()) throw new Error('Connect local memory in Connections before using memory features.')
       const memoryService = MemoryService.getInstance()
       const stats = await memoryService.getStats()
       return { success: true, stats }
@@ -25,6 +27,7 @@ export function registerMemoryHandlers(): void {
   // Export all memory data
   ipcMain.handle('memory:export-all', async () => {
     try {
+      if (!isMemoryConnected()) throw new Error('Connect local memory in Connections before using memory features.')
       const memoryService = MemoryService.getInstance()
       const data = await memoryService.exportAll()
       return { success: true, data }
@@ -39,6 +42,7 @@ export function registerMemoryHandlers(): void {
   // Execute memory tool call
   ipcMain.handle('memory:call-tool', async (_event, { name, args }) => {
     try {
+      if (!isMemoryConnected()) throw new Error('Connect local memory in Connections before using memory features.')
       const memoryService = MemoryService.getInstance()
       return await memoryService.callTool(name, args)
     } catch (error) {
@@ -52,6 +56,7 @@ export function registerMemoryHandlers(): void {
   // Trigger migration
   ipcMain.handle('memory:migrate', async () => {
     try {
+      if (!isMemoryConnected()) throw new Error('Connect local memory in Connections before using memory features.')
         const memoryService = MemoryService.getInstance()
         const result = await memoryService.migrateToMemento()
         return { success: true, result }
@@ -66,6 +71,7 @@ export function registerMemoryHandlers(): void {
   // Check migration status
   ipcMain.handle('memory:check-migration', async () => {
     try {
+      if (!isMemoryConnected()) throw new Error('Connect local memory in Connections before using memory features.')
         const memoryService = MemoryService.getInstance()
         const shouldMigrate = await memoryService.shouldSuggestMigration()
         return { success: true, shouldMigrate }
@@ -111,6 +117,7 @@ export function registerMemoryHandlers(): void {
   // TEMP: Run verification tests
   ipcMain.handle('memory:run-tests', async () => {
     try {
+      if (!isMemoryConnected()) throw new Error('Connect local memory in Connections before using memory features.')
       const { MemoryTestRunner } = await import('../tests/MemoryTestRunner')
       const runner = new MemoryTestRunner()
       const result = await runner.runTests()

@@ -5,11 +5,15 @@ import electron from '../lib/electron'
 import { getUserProfile } from '../lib/firebase'
 
 export type Theme = 'dark' | 'light' | 'system'
+export type PrivacyMode = 'local-only' | 'connected'
 export type LLMProviderType = 'auto' | 'ollama' | 'openai' | 'gemini' | 'openrouter' | 'browser' | 'anthropic' | 'groq'
 export type PlaywrightBrowserType = 'auto' | 'chrome' | 'msedge' | 'firefox' | 'webkit' | 'chromium'
 export type DisplayMode = 'dev' | 'prod'
 
 interface SettingsState {
+    // Network policy for inference and optional connected services.
+    privacyMode: PrivacyMode
+
     // Voice settings
     ttsEnabled: boolean
     ttsRate: number
@@ -55,6 +59,7 @@ interface SettingsState {
 
     // Actions
     setTtsEnabled: (enabled: boolean) => void
+    setPrivacyMode: (mode: PrivacyMode) => Promise<void>
     setTtsRate: (rate: number) => void
     setTtsPitch: (pitch: number) => void
     setTtsVoice: (voice: string | null) => void
@@ -97,6 +102,7 @@ interface SettingsState {
 }
 
 const defaultSettings = {
+    privacyMode: 'local-only' as PrivacyMode,
     ttsEnabled: true,
     ttsRate: 1,
     ttsPitch: 1,
@@ -108,12 +114,12 @@ const defaultSettings = {
     preferredProvider: (import.meta.env.VITE_LLM_PROVIDER as LLMProviderType) || 'auto',
     ollamaModel: import.meta.env.VITE_OLLAMA_MODEL || import.meta.env.VITE_LLM_MODEL || LLM_CONFIG.OLLAMA.DEFAULT_MODEL,
     ollamaBaseUrl: LLM_CONFIG.OLLAMA.BASE_URL,
-    openaiApiKey: import.meta.env.VITE_OPENAI_API_KEY || import.meta.env.VITE_LLM_API_KEY || '',
+    openaiApiKey: '',
     openaiBaseUrl: 'https://api.openai.com/v1',
     openaiModel: import.meta.env.VITE_OPENAI_MODEL || import.meta.env.VITE_LLM_MODEL || LLM_CONFIG.OPENAI_COMPATIBLE.DEFAULT_MODEL,
-    geminiApiKey: import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_LLM_API_KEY || '',
+    geminiApiKey: '',
     geminiModel: import.meta.env.VITE_GEMINI_MODEL || import.meta.env.VITE_LLM_MODEL || LLM_CONFIG.GEMINI.DEFAULT_MODEL,
-    openrouterApiKey: import.meta.env.VITE_OPENROUTER_API_KEY || import.meta.env.VITE_LLM_API_KEY || '',
+    openrouterApiKey: '',
     openrouterModel: import.meta.env.VITE_OPENROUTER_MODEL || import.meta.env.VITE_LLM_MODEL || LLM_CONFIG.OPENROUTER.DEFAULT_MODEL,
     browserModel: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', // Default small model
     theme: 'dark' as Theme,
@@ -138,6 +144,10 @@ export const useSettingsStore = create<SettingsState>()(
 
 
             setTtsEnabled: (enabled) => set({ ttsEnabled: enabled }),
+            setPrivacyMode: async (mode) => {
+                set({ privacyMode: mode })
+                await electron.store.set('privacyMode', mode)
+            },
             setTtsRate: (rate) => set({ ttsRate: rate }),
             setTtsPitch: (pitch) => set({ ttsPitch: pitch }),
             setTtsVoice: (voice) => set({ ttsVoice: voice }),
@@ -217,6 +227,7 @@ export const useSettingsStore = create<SettingsState>()(
                 set((state) => ({
                     ...state,
                     ...remoteSettings,
+                    privacyMode: state.privacyMode,
                     isSyncing: false,
                     lastSyncTime: Date.now()
                 }))
@@ -332,6 +343,19 @@ export const useSettingsStore = create<SettingsState>()(
                     await electron.store.delete(name)
                 },
             })),
+            version: 1,
+            migrate: (persistedState) => ({
+                ...(persistedState as Partial<SettingsState>),
+                openaiApiKey: '',
+                geminiApiKey: '',
+                openrouterApiKey: '',
+            }),
+            partialize: (state) => ({
+                ...state,
+                openaiApiKey: '',
+                geminiApiKey: '',
+                openrouterApiKey: '',
+            }),
             // Force offlineSpeech to true in Electron after rehydration
             onRehydrateStorage: () => (state) => {
                 if (state && window.electron) {

@@ -74,13 +74,14 @@ export async function getAvailableProviders(
   const [webLLM, ollama, openai, gemini, openrouter] = await Promise.all([
     getWebLLMStatus(),
     checkOllama(settings),
-    checkOpenAI(settings, "openai"),
-    checkGemini(settings),
-    checkOpenRouter(settings),
+    settings?.localOnly ? { available: false, error: "Disabled in local-only mode" } : checkOpenAI(settings, "openai"),
+    settings?.localOnly ? { available: false, error: "Disabled in local-only mode" } : checkGemini(settings),
+    settings?.localOnly ? { available: false, error: "Disabled in local-only mode" } : checkOpenRouter(settings),
   ]);
 
   const browser: ProviderStatus = {
     ...webLLM,
+    model: webLLM.currentModel || undefined,
     error: webLLM.error || undefined,
     available: webLLM.isSupported,
   };
@@ -122,7 +123,20 @@ export async function chat(
     preferredProvider = envProvider as any;
   }
 
-  if (preferredProvider === "auto" || !preferredProvider) {
+  if (settings?.localOnly) {
+    if (preferredProvider === "ollama" && providers.ollama.available) {
+      provider = "ollama";
+    } else if (providers.browser.available && providers.browser.isLoaded) {
+      provider = "browser";
+    } else if (providers.ollama.available) {
+      provider = "ollama";
+    }
+    if (!provider) {
+      throw new Error(
+        `No local model ready. Open Settings > LLM Provider to download and load an On-Device model, or start Ollama on localhost and install the configured model.${providers.ollama.error ? ` Ollama: ${providers.ollama.error}` : ""} Cloud providers are disabled in local-only mode.`
+      );
+    }
+  } else if (preferredProvider === "auto" || !preferredProvider) {
     // Auto-select: browser ONLY IF already loaded, then ollama, then openai, then gemini, then openrouter
     // We don't auto-select browser if it's just 'available' (supported) to avoid
     // triggering large downloads automatically.

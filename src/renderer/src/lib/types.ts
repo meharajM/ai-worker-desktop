@@ -58,6 +58,7 @@ export interface LLMResponse {
 export type LLMProvider = "browser" | "ollama" | "openai" | "gemini" | "openrouter" | "anthropic" | "groq";
 
 export interface LLMSettings {
+  localOnly?: boolean;
   preferredProvider?: "auto" | "ollama" | "openai" | "browser" | "gemini" | "openrouter" | "anthropic" | "groq";
   ollamaModel?: string;
   ollamaBaseUrl?: string;

@@ -1,4 +1,5 @@
-import { app, shell, ipcMain, dialog } from 'electron'
+import { app, shell, dialog } from 'electron'
+import { ipcMain, safeExternalUrl } from './trustedIpc'
 import * as path from 'path'
 
 function normalizePathForCompare(value: string): string {
@@ -14,7 +15,7 @@ function isPathWithin(rootPath: string, targetPath: string): boolean {
 export function registerAppHandlers(): void {
     // Shell operations
     ipcMain.handle('shell:open-external', async (_event, url: string) => {
-        await shell.openExternal(url)
+        await shell.openExternal(safeExternalUrl(url))
     })
 
     // App info

@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { LogOut, LogIn, Loader2, Mail } from 'lucide-react'
+import { LogOut, Mail } from 'lucide-react'
 import { useAuthStore } from '../../stores/authStore'
 import { AuthModal } from '../AuthModal'
 
@@ -54,19 +54,9 @@ export function AccountSettings() {
                             Sign in with Email
                         </button>
 
-                        <button
-                            onClick={() => auth.signInWithGoogle()}
-                            disabled={auth.loading}
-                            className="flex items-center justify-center gap-2 px-6 py-3 bg-[var(--color-surface)] text-[var(--color-text-primary)] 
-                                         rounded-xl hover:bg-[var(--color-border)] transition-colors border border-[var(--color-border)] shadow-sm"
-                        >
-                            {auth.loading ? (
-                                <Loader2 size={18} className="animate-spin" />
-                            ) : (
-                                <LogIn size={18} />
-                            )}
-                            Sign in with Google
-                        </button>
+                        <p className="text-xs text-[var(--color-text-muted)]">
+                            Google sign-in is unavailable in this secure desktop build. Use email sign-in instead.
+                        </p>
                     </div>
 
                     <AuthModal

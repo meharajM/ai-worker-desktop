@@ -13,6 +13,7 @@ interface UseSpeechRecognitionReturn {
     error: string | null
     isSupported: boolean
     isNativeSupported: boolean
+    unavailableReason: string | null
     isInitializing: boolean
     startListening: () => void
     stopListening: () => void
@@ -97,8 +98,8 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                 console.warn('[Speech] Web Speech API not supported in this browser')
             }
         } else {
-            // Native speech is always "supported" (we download model if needed)
-            setIsSupported(true)
+            // Vosk 0.0.8 requires dynamic code blocked by the secure renderer CSP.
+            setIsSupported(false)
         }
     }, [useNativeSpeech])
 
@@ -339,6 +340,10 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     }
 
     const startListening = useCallback(async () => {
+        if (useNativeSpeech) {
+            setError('Local Vosk voice input is unavailable under the secure runtime.')
+            return
+        }
         if (isListening || isInitializing) return
 
         shouldListenRef.current = true
@@ -501,7 +506,10 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         error,
         notification,
         isSupported,
-        isNativeSupported: useNativeSpeech,
+        isNativeSupported: false,
+        unavailableReason: useNativeSpeech
+            ? 'Local Vosk voice input is unavailable under the secure runtime.'
+            : !isSupported ? 'Voice input is unavailable in this browser.' : null,
         isInitializing,
         startListening,
         stopListening,

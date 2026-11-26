@@ -28,9 +28,12 @@ import { ProgressBanner } from './ProgressBanner'
 
 interface ChatViewProps {
   onClearChat?: () => void
+  llmReady?: boolean
+  localModelReady?: boolean
+  onOpenSettings?: () => void
 }
 
-export function ChatView({ onClearChat }: ChatViewProps) {
+export function ChatView({ onClearChat, llmReady = false, localModelReady = false, onOpenSettings }: ChatViewProps) {
   const {
     sessions,
     activeSessionId,
@@ -49,6 +52,7 @@ export function ChatView({ onClearChat }: ChatViewProps) {
   )
 
   const { isDevMode, isPreviewingProd } = useDisplayMode()
+  const localOnly = useSettingsStore((state) => state.privacyMode === 'local-only')
   const setDevPreviewProd = useSettingsStore(s => s.setDevPreviewProd)
 
   const {
@@ -112,6 +116,17 @@ export function ChatView({ onClearChat }: ChatViewProps) {
         </div>
       )}
 
+      {messages.length > 0 && localOnly && !localModelReady && (
+        <div role="status" aria-live="polite" className="flex items-center justify-between gap-3 border-b border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 px-4 py-3">
+          <p className="text-xs text-[var(--color-text-muted)]">Local-only is active, but no on-device model is ready. Sending is paused; set up a local model to continue.</p>
+          {onOpenSettings && (
+            <button type="button" onClick={onOpenSettings} className="shrink-0 text-xs font-medium text-[var(--color-brand-teal)] hover:underline">
+              Set up model
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Messages area */}
       <div
         ref={scrollContainerRef}
@@ -119,7 +134,7 @@ export function ChatView({ onClearChat }: ChatViewProps) {
         className="flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-4 min-w-0"
       >
         {messages.length === 0 ? (
-          <EmptyState />
+          <EmptyState llmReady={llmReady} onOpenSettings={onOpenSettings} />
         ) : (
           messages.map((message, index) => (
             <MessageBubble

@@ -1,7 +1,33 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 // IPC channels for main process communication
+import type { ExternalTaskAPI, ExternalTaskApprovalAPI, TaskView } from '../shared/external-task'
+
+const externalTaskApproval: ExternalTaskApprovalAPI = {
+    chooseWorkspace: (id, step) => ipcRenderer.invoke('external-task:choose-workspace', id, step),
+    current: () => ipcRenderer.invoke('external-task:current'),
+    modelStatus: () => ipcRenderer.invoke('external-task:model-status'),
+    onChange: callback => {
+        const listener = (_event: Electron.IpcRendererEvent, view: TaskView | null) => callback(view)
+        ipcRenderer.on('external-task:changed', listener)
+        return () => ipcRenderer.removeListener('external-task:changed', listener)
+    },
+    decide: (id, step, value) => ipcRenderer.invoke('external-task:decide', id, step, value),
+    cancel: id => ipcRenderer.invoke('external-task:cancel', id),
+}
+
+const externalTask: ExternalTaskAPI = {
+    ...externalTaskApproval,
+    onPlannerChange: callback => {
+        const listener = (_event: Electron.IpcRendererEvent, view: TaskView | null) => callback(view)
+        ipcRenderer.on('external-task:planner-changed', listener)
+        return () => ipcRenderer.removeListener('external-task:planner-changed', listener)
+    },
+    modelReply: (id, step, result) => ipcRenderer.invoke('external-task:model-reply', id, step, result),
+}
+
 const electronAPI = {
+    externalTask,
     // Platform info
     platform: process.platform,
 
@@ -35,6 +61,30 @@ const electronAPI = {
         get: (key: string) => ipcRenderer.invoke('store:get', key),
         set: (key: string, value: unknown) => ipcRenderer.invoke('store:set', key, value),
         delete: (key: string) => ipcRenderer.invoke('store:delete', key),
+    },
+
+    // Narrow status publication and inference request path for local-only MCP use.
+    mcpBridge: {
+        publishModelStatus: (status: { model: import('../shared/external-task').LocalTaskModel | null }) =>
+            ipcRenderer.invoke('mcp-bridge:publish-model-status', status),
+        onAskLocal: (callback: (request: { requestId: string; prompt: string }) => void) => {
+            const listener = (_event: any, request: unknown) => {
+                if (!request || typeof request !== 'object') return
+                const value = request as Record<string, unknown>
+                if (typeof value.requestId !== 'string' || typeof value.prompt !== 'string') return
+                callback({ requestId: value.requestId, prompt: value.prompt })
+            }
+            ipcRenderer.on('mcp-bridge:ask-local', listener)
+            return () => ipcRenderer.removeListener('mcp-bridge:ask-local', listener)
+        },
+        answerLocal: (reply: {
+            requestId: string
+            success: boolean
+            content?: string
+            provider?: string
+            model?: string
+            error?: string
+        }) => ipcRenderer.invoke('mcp-bridge:answer-local', reply),
     },
 
     // Shell operations
@@ -200,7 +250,11 @@ const electronAPI = {
 // Expose APIs to renderer
 if (process.contextIsolated) {
     try {
-        contextBridge.exposeInMainWorld('electron', electronAPI)
+        if (process.argv.includes('--ai-worker-task-window')) {
+            contextBridge.exposeInMainWorld('externalTask', externalTaskApproval)
+        } else {
+            contextBridge.exposeInMainWorld('electron', electronAPI)
+        }
     } catch (error) {
         console.error('Failed to expose electron API:', error)
     }

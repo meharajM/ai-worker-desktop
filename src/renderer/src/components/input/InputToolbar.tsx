@@ -1,12 +1,10 @@
 import React, { useRef } from 'react'
-import { Eye, EyeOff, Paperclip, FolderOpen, ShieldCheck, ShieldAlert } from 'lucide-react'
+import { Eye, EyeOff, Paperclip, FolderOpen, ShieldCheck } from 'lucide-react'
 
 interface InputToolbarProps {
   workspacePath: string | null
   isHeadless: boolean
-  fileWriteAutoApprove: boolean
   onToggleHeadless: () => void
-  onToggleFileWriteAutoApprove: () => void
   onSelectFolder: () => void
   onSelectFiles: (files: File[]) => void
   hasAttachments: boolean
@@ -16,9 +14,7 @@ interface InputToolbarProps {
 export function InputToolbar({
   workspacePath,
   isHeadless,
-  fileWriteAutoApprove,
   onToggleHeadless,
-  onToggleFileWriteAutoApprove,
   onSelectFolder,
   onSelectFiles,
   hasAttachments,
@@ -76,22 +72,10 @@ export function InputToolbar({
         <Paperclip size={18} />
       </button>
 
-      <button
-        id="workspace-auto-file-write-approval-toggle"
-        data-testid="workspace-auto-file-write-approval-toggle"
-        type="button"
-        aria-pressed={fileWriteAutoApprove}
-        onClick={onToggleFileWriteAutoApprove}
-        disabled={disabled}
-        className={`inline-flex h-[36px] items-center gap-1.5 rounded-[var(--radius-lg)] border px-2 text-[10px] font-semibold tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${fileWriteAutoApprove
-            ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
-            : 'border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
-          } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-        title={fileWriteAutoApprove ? 'Auto File Write Approval: ON' : 'Auto File Write Approval: OFF'}
-      >
-        {fileWriteAutoApprove ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
-        <span>Auto File Write Approval: {fileWriteAutoApprove ? 'ON' : 'OFF'}</span>
-      </button>
+      <span className="inline-flex h-[36px] items-center gap-1.5 px-2 text-[10px] text-[var(--color-text-muted)]" title="Each file write waits for your approval">
+        <ShieldCheck size={12} />
+        File review required
+      </span>
 
       {/* Headless Toggle */}
       <button

@@ -190,7 +190,7 @@ function isPathWithin(rootPath: string, targetPath: string): boolean {
   );
 }
 
-// Execute a tool call with retry logic for connection errors
+// Execute tools only on explicitly connected servers.
 
 // ── MCP Idle Disconnect Timers ──────────────────────────────────────────────────
 // Automatically disconnect backend processes (Node/Python) after 10m of inactivity
@@ -221,7 +221,6 @@ export async function executeToolCall(
   const startTime = Date.now();
   const safeArgs = ensureRecord(args);
   const sanitizedArgs = sanitizeArgsForLogging(safeArgs);
-  const MAX_RETRIES = 1;
 
   logMcpRenderer("info", `Tool call initiated: ${toolName}`, {
     operation: "executeToolCall",
@@ -327,17 +326,6 @@ export async function executeToolCall(
 
   const server = findServerForTool(toolName);
   if (!server) {
-    // FALLBACK: Check if it's an internal memory tool
-    if (toolName.startsWith('memory_')) {
-      logMcpRenderer("info", "Executing memory tool via direct IPC fallback", { tool: toolName });
-      try {
-        const result = await electron.memory.callTool(toolName, safeArgs) as { result: unknown; error?: string };
-        return result;
-      } catch (err) {
-        return { result: null, error: `Direct memory tool call failed: ${err instanceof Error ? err.message : String(err)}` };
-      }
-    }
-
     // FALLBACK: Check if it's an internal WhatsApp tool
     if (toolName.startsWith('whatsapp_')) {
       logMcpRenderer("info", "Executing whatsapp tool via direct IPC fallback", { tool: toolName });
@@ -389,111 +377,30 @@ export async function executeToolCall(
     };
   }
 
-  // LAZY CONNECT: If the server has the tool cached but is currently disconnected,
-  // spin it up just-in-time before executing the tool.
   if (!server.connected) {
-    logMcpRenderer("info", `Lazy connecting to server ${server.name} for tool ${toolName}...`, {
-      operation: "lazyConnect",
-      serverId: server.id,
-      toolName
-    });
-    try {
-      await connectServer(server.id);
-      // Let the connection settle briefly just in case the server needs a moment to be ready
-      await new Promise(resolve => setTimeout(resolve, 500));
-    } catch (err) {
-      return {
-        result: null,
-        error: `Failed to lazy-connect to server ${server.name}: ${err instanceof Error ? err.message : String(err)}`
-      };
-    }
+    return { result: null, error: `Connect ${server.name} in Connections before using its tools.` };
   }
 
-  // Reset idle timer for this server since it's actively being used
   resetMcpIdleTimer(server.id, server.name);
 
-  let lastError: string | undefined;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const result = (await electron.mcp.callTool(server.id, toolName, safeArgs)) as {
-        result: unknown;
-        error?: string;
-      };
-
-      if (result.error) {
-        const isConnectionClosed =
-          result.error.includes("-32000") ||
-          result.error.includes("Connection closed") ||
-          result.error.includes("connection closed") ||
-          result.error.includes("ECONNRESET") ||
-          result.error.includes("EPIPE");
-
-        if (isConnectionClosed) {
-          lastError = result.error;
-          useMcpStore.getState().updateServerState(server.id, {
-            connected: false,
-            tools: [],
-            error: "Connection closed unexpectedly"
-          });
-
-          if (attempt < MAX_RETRIES) {
-            try {
-              await connectServer(server.id);
-            } catch {
-              // Ignore reconnection errors, we'll return the last error
-            }
-            continue; // Retry
-          }
-        }
-
-        const duration = Date.now() - startTime;
-        logMcpRenderer("error", "Tool call failed", {
-          operation: "executeToolCall",
-          toolName,
-          serverId: server.id,
-          error: result.error,
-          duration,
-        });
-        return result;
-      }
-
-      // Success!
-      const duration = Date.now() - startTime;
-      // Avoid JSON.stringify just for logging — use cheap length estimate
-      const resultSize = typeof result.result === 'string'
-        ? result.result.length
-        : (result.result ? '~object' : 0);
-
-      logMcpRenderer("info", "Tool call completed successfully", {
-        operation: "executeToolCall",
-        toolName,
-        serverId: server.id,
-        duration,
-        attempts: attempt + 1,
-        resultSize,
+  try {
+    const result = (await electron.mcp.callTool(server.id, toolName, safeArgs)) as {
+      result: unknown;
+      error?: string;
+    };
+    if (result.error && /-32000|connection closed|ECONNRESET|EPIPE/i.test(result.error)) {
+      useMcpStore.getState().updateServerState(server.id, {
+        connected: false,
+        error: "Connection closed unexpectedly. Reconnect in Connections."
       });
-      return result;
-
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Tool execution failed";
-      lastError = errorMessage;
-
-      if (attempt < MAX_RETRIES) {
-        try {
-          await connectServer(server.id);
-        } catch {
-          // Ignore reconnection errors
-        }
-        continue;
-      }
     }
+    return result;
+  } catch (error) {
+    return {
+      result: null,
+      error: error instanceof Error ? error.message : "Tool execution failed",
+    };
   }
-
-  return {
-    result: null,
-    error: lastError || "Tool execution failed after retries",
-  };
 }
 
 /**
@@ -544,7 +451,7 @@ export function parseTabsFromResult(toolResult: { result: unknown }): ParsedTab[
     const tabs = (value as { tabs?: unknown[] }).tabs;
     if (!Array.isArray(tabs)) return [];
     return tabs
-      .map((tab) => {
+      .map((tab): ParsedTab | null => {
         if (!tab || typeof tab !== "object") return null;
         const t = tab as Record<string, unknown>;
         const index = typeof t.index === "number" ? t.index : undefined;

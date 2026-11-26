@@ -8,6 +8,8 @@ import { registerSecureHandlers } from './secure'
 import { registerFsHandlers } from './fs'
 import { registerMemoryHandlers } from './memory'
 import { registerWhatsAppHandlers } from './whatsapp'
+import { revokeExternalTask } from '../services/LocalMcpBridge'
+import { registerLocalMcpBridgeHandlers } from './localMcpBridge'
 // import { registerAntigravityHandlers } from './antigravity'
 
 export function setupIpcHandlers(): void {
@@ -15,7 +17,7 @@ export function setupIpcHandlers(): void {
     registerMcpHandlers()
     registerMemoryHandlers()
     registerLlmHandlers()
-    registerStoreHandlers()
+    registerStoreHandlers(revokeExternalTask)
     registerLogsHandlers()
     registerSpeechHandlers()
     registerSecureHandlers()
@@ -23,4 +25,5 @@ export function setupIpcHandlers(): void {
     // Antigravity login integration temporarily disabled.
     // registerAntigravityHandlers()
     registerWhatsAppHandlers()
+    registerLocalMcpBridgeHandlers()
 }

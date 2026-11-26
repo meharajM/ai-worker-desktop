@@ -181,6 +181,15 @@
             "!out/**/*.map"
         ],
         "asarUnpack": [
+            "node_modules/@modelcontextprotocol/server-memory/**/*",
+            "node_modules/@modelcontextprotocol/sdk/**/*",
+            "node_modules/zod/**/*",
+            "node_modules/zod-to-json-schema/**/*",
+            "node_modules/ajv/**/*",
+            "node_modules/ajv-formats/**/*",
+            "node_modules/fast-uri/**/*",
+            "node_modules/fast-deep-equal/**/*",
+            "node_modules/json-schema-traverse/**/*",
             "node_modules/@whiskeysockets/baileys/**/*",
             "node_modules/@whiskeysockets/libsignal-node/**/*",
             "node_modules/libsignal/**/*"
@@ -196,12 +205,57 @@
         },
         "extraResources": [
           {
+            "from": "build/icon.png",
+            "to": "tray-icon.png"
+          },
+          {
             "from": "scripts",
             "to": "scripts",
             "filter": [
               "setup-dependencies.sh",
-              "setup-dependencies.ps1"
+              "setup-dependencies.ps1",
+              "ai-worker-readonly-mcp.mjs"
             ]
+          },
+          {
+            "from": "node_modules/@modelcontextprotocol/sdk",
+            "to": "node_modules/@modelcontextprotocol/sdk"
+          },
+          {
+            "from": "node_modules/zod",
+            "to": "node_modules/zod"
+          },
+          {
+            "from": "node_modules/zod-to-json-schema",
+            "to": "node_modules/zod-to-json-schema"
+          },
+          {
+            "from": "node_modules/ajv",
+            "to": "node_modules/ajv"
+          },
+          {
+            "from": "node_modules/ajv-formats",
+            "to": "node_modules/ajv-formats"
+          },
+          {
+            "from": "node_modules/fast-deep-equal",
+            "to": "node_modules/fast-deep-equal"
+          },
+          {
+            "from": "node_modules/fast-uri",
+            "to": "node_modules/fast-uri"
+          },
+          {
+            "from": "node_modules/json-schema-traverse",
+            "to": "node_modules/json-schema-traverse"
+          },
+          {
+            "from": "node_modules/json-schema-typed",
+            "to": "node_modules/json-schema-typed"
+          },
+          {
+            "from": "node_modules/require-from-string",
+            "to": "node_modules/require-from-string"
           }
         ],
         "win": {

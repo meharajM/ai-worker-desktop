@@ -195,6 +195,7 @@ export function useAgent(): UseAgentReturn {
             // WHY not pass the full Zustand store: AgentRuntime lives in lib/ and
             // should not depend on the store shape.
             const settingsForLLM = {
+                localOnly: settings.privacyMode === 'local-only',
                 preferredProvider: settings.preferredProvider,
                 ollamaModel: settings.ollamaModel,
                 ollamaBaseUrl: settings.ollamaBaseUrl,
@@ -284,9 +285,6 @@ export function useAgent(): UseAgentReturn {
                     {
                         activeSessionId: originSessionId,
                         workspacePath: activeSession?.workspacePath,
-                        // Preserve undefined so FileSystemService can fall back to
-                        // global mcpFileSystem.autoApprove when no session override exists.
-                        fileWriteAutoApprove: activeSession?.fileWriteAutoApprove,
                         settings: settingsForLLM,
                         isHeadless,
                         // The abort signal is scoped to THIS session only.

@@ -7,11 +7,7 @@ export const McpPreferencesPanel: React.FC = () => {
         playwrightBrowser, 
         setPlaywrightBrowser, 
         playwrightHeadless, 
-        setPlaywrightHeadless,
-        fileSystemSafeMode,
-        setFileSystemSafeMode,
-        fileSystemAutoApprove,
-        setFileSystemAutoApprove
+        setPlaywrightHeadless
     } = useSettingsStore()
 
     const browsers: { value: PlaywrightBrowserType; label: string }[] = [
@@ -85,38 +81,10 @@ export const McpPreferencesPanel: React.FC = () => {
                     <h3 className="font-medium text-foreground">Filesystem & Safety</h3>
                 </div>
 
-                <div className="flex items-center justify-between space-x-2 border rounded-md p-3 bg-green-500/5 border-green-500/20">
-                    <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-foreground flex items-center gap-2">
-                            <Shield className="w-3 h-3 text-green-500" />
-                            Safe Mode (Shadow Writes)
-                        </label>
-                        <p className="text-xs text-muted-foreground">
-                            When enabled, user-facing file edits are staged in a temporary area and require your approval. Internal AI-Worker tracking files (under <code>~/.ai-worker/system-workspace</code>) are written automatically.
-                        </p>
-                    </div>
-                    <input
-                        type="checkbox"
-                        className="toggle toggle-success"
-                        checked={fileSystemSafeMode}
-                        onChange={(e) => setFileSystemSafeMode(e.target.checked)}
-                    />
-                </div>
-
-                <div className="flex items-center justify-between space-x-2 border rounded-md p-3">
-                    <div className="space-y-0.5">
-                        <label className="text-sm font-medium text-foreground">Auto-Approve Writes</label>
-                        <p className="text-xs text-muted-foreground">
-                            Automatically commit staged writes without showing the approval queue.
-                        </p>
-                    </div>
-                    <input
-                        type="checkbox"
-                        className="toggle toggle-success"
-                        checked={fileSystemAutoApprove}
-                        onChange={(e) => setFileSystemAutoApprove(e.target.checked)}
-                    />
-                </div>
+                <p className="text-sm text-muted-foreground flex items-start gap-2">
+                    <Shield className="w-4 h-4 shrink-0 text-green-500" />
+                    File edits always wait for your approval. Internal task records are saved automatically.
+                </p>
             </div>
 
             {/* Memory Section (Placeholder for Phase 4 completion) */}

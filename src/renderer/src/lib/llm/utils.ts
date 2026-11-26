@@ -16,12 +16,7 @@ export function getEnvFallback(provider: 'openai' | 'gemini' | 'openrouter' | 'o
   }
   
   if (keyType === 'api_key') {
-    switch (provider) {
-      case 'openai': return import.meta.env.VITE_OPENAI_API_KEY || import.meta.env.VITE_LLM_API_KEY;
-      case 'gemini': return import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_LLM_API_KEY;
-      case 'openrouter': return import.meta.env.VITE_OPENROUTER_API_KEY || import.meta.env.VITE_LLM_API_KEY;
-      default: return import.meta.env.VITE_LLM_API_KEY;
-    }
+    return undefined;
   } else if (keyType === 'model') {
     switch (provider) {
       case 'openai': return import.meta.env.VITE_OPENAI_MODEL || import.meta.env.VITE_LLM_MODEL;

@@ -16,6 +16,7 @@ import { createRequire } from 'module'
 import { app, powerSaveBlocker } from 'electron'
 import type { WASocket } from '@whiskeysockets/baileys'
 import { formatWhatsAppJid } from '../utils/whatsapp'
+import { getStoredPrivacyMode } from '../ipc/store'
 
 
 
@@ -101,48 +102,12 @@ export class WhatsAppService extends EventEmitter {
 
     // ── Public API ──────────────────────────────────────────────────────────
 
-    async init(): Promise<void> {
-        try {
-            const credsFile = path.join(this.authDir, 'creds.json')
-            const phoneFile = path.join(this.authDir, 'phone.txt')
-            
-            // Just log that we found credentials - don't auto-connect
-            // Let user explicitly connect to handle any credential issues
-            if (fs.existsSync(credsFile)) {
-                let savedPhone = ''
-                if (fs.existsSync(phoneFile)) {
-                    savedPhone = fs.readFileSync(phoneFile, 'utf8').trim()
-                }
-                console.log('[WhatsAppService] Found existing auth credentials. Auto-connecting in background.')
-                
-                // Set the saved phone number in state but don't connect
-                if (savedPhone) {
-                    this._setState({
-                        status: 'disconnected',
-                        qrCode: null,
-                        error: null,
-                        phoneNumber: savedPhone,
-                        workerNumber: null,
-                        handshakeStatus: 'idle'
-                    })
-                    
-                    console.log('[WhatsAppService] Found existing auth credentials. Auto-reconnecting...')
-                    console.log(`[WhatsAppService] Restored target JID filter: ${formatWhatsAppJid(savedPhone)}`)
-                    
-                    // Auto-connect on launch ONLY IF we have a saved phone (indicates successful previous verification)
-                    this.connect(savedPhone).catch(e => console.error('[WhatsAppService] Auto-connect error:', e))
-                }
-            }
-        } catch (error) {
-            console.error('[WhatsAppService] Init error:', error)
-        }
-    }
-
     getConnectionState(): WhatsAppConnectionState {
         return { ...this.connectionState }
     }
 
     async connect(targetPhoneNumber?: string): Promise<void> {
+        if (getStoredPrivacyMode() !== 'connected') throw new Error('Enable connected mode before connecting WhatsApp.')
         this.explicitDisconnect = false
         if (this.connectionState.status === 'connected') return
         if (this.connectionState.status === 'connecting') return
@@ -310,35 +275,15 @@ export class WhatsAppService extends EventEmitter {
                         return // Don't clear auth
                     }
                     
-                    const isNetworkError = statusCode === undefined || 
-                        statusCode === 428 || // Server unreachable
-                        statusCode === 503 || // Service unavailable  
-                        statusCode === 504  // Gateway timeout
-
-                    if (isNetworkError && effectivePhone) {
-                        console.log('[WhatsAppService] Network disconnected, attempting auto-reconnect in 5s...')
+                    const isNetworkError = statusCode === undefined || [428, 503, 504].includes(statusCode)
+                    if (isNetworkError) {
                         this._setState({
                             ...this.connectionState,
-                            status: 'connecting',
+                            status: 'disconnected',
                             qrCode: null,
-                            error: null,
-                            phoneNumber: effectivePhone ?? null,
-                            workerNumber: this.connectionState.workerNumber
+                            error: 'Connection lost. Reconnect WhatsApp when ready.',
                         })
-                        
-                        setTimeout(() => {
-                            if (this.connectionState.status === 'connecting') {
-                                this.connect(effectivePhone).catch(e => {
-                                    console.error('[WhatsAppService] Auto-reconnect failed:', e)
-                                    this._setState({
-                                        ...this.connectionState,
-                                        status: 'error',
-                                        error: 'Failed to reconnect. Please try again.',
-                                    })
-                                })
-                            }
-                        }, 5000)
-                        return // Don't clear auth
+                        return // Keep saved credentials for the next explicit connection.
                     }
 
                     // Fallback to absolute generic crash
@@ -580,6 +525,9 @@ export class WhatsAppService extends EventEmitter {
     }
 
     async sendMessage(to: string, content: string): Promise<{ success: boolean; error?: string }> {
+        if (getStoredPrivacyMode() !== 'connected') {
+            return { success: false, error: 'Enable connected mode before using WhatsApp.' }
+        }
         if (!this.socket || this.connectionState.status !== 'connected') {
             return { success: false, error: 'WhatsApp not connected' }
         }
@@ -610,6 +558,9 @@ export class WhatsAppService extends EventEmitter {
     }
 
     async sendPresence(to: string, state: 'unavailable' | 'available' | 'composing' | 'recording' | 'paused'): Promise<{ success: boolean; error?: string }> {
+        if (getStoredPrivacyMode() !== 'connected') {
+            return { success: false, error: 'Enable connected mode before using WhatsApp.' }
+        }
         if (!this.socket || this.connectionState.status !== 'connected') {
              return { success: false, error: 'WhatsApp not connected' }
         }
@@ -631,6 +582,9 @@ export class WhatsAppService extends EventEmitter {
         caption?: string,
         type: 'image' | 'video' | 'audio' | 'document' | 'spreadsheet' = 'image'
     ): Promise<{ success: boolean; error?: string }> {
+        if (getStoredPrivacyMode() !== 'connected') {
+            return { success: false, error: 'Enable connected mode before using WhatsApp.' }
+        }
         if (!this.socket || this.connectionState.status !== 'connected') {
             return { success: false, error: 'WhatsApp not connected' }
         }

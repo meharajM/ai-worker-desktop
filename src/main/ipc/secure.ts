@@ -1,4 +1,5 @@
-import { ipcMain, safeStorage } from 'electron'
+import { safeStorage } from 'electron'
+import { ipcMain } from './trustedIpc'
 import { Store } from '../lib/store-wrapper'
 
 // Dedicated store for encrypted secrets
@@ -44,11 +45,7 @@ export function registerSecureHandlers(): void {
         }
 
         if (!safeStorage.isEncryptionAvailable()) {
-            console.warn('[Secure] Encryption not available, falling back to plain storage')
-            // Fallback: store without encryption (better than nothing)
-            const storeKey = getUserSecretKey(key, userId)
-            secretStore.set(storeKey, value)
-            return { success: true, encrypted: false }
+            return { success: false, error: 'OS secure storage is unavailable. Secret was not saved.' }
         }
 
         try {
@@ -78,8 +75,7 @@ export function registerSecureHandlers(): void {
         }
 
         if (!safeStorage.isEncryptionAvailable()) {
-            // Fallback: stored without encryption
-            return { success: true, value: stored, encrypted: false }
+            return { success: false, value: null, error: 'OS secure storage is unavailable. Existing secret was preserved but cannot be read safely.' }
         }
 
         try {
@@ -88,8 +84,7 @@ export function registerSecureHandlers(): void {
             return { success: true, value: decrypted, encrypted: true }
         } catch (error) {
             console.error('[Secure] Decryption failed:', error)
-            // Might be plaintext from before encryption was available
-            return { success: true, value: stored, encrypted: false }
+            return { success: false, value: null, error: 'Stored secret could not be decrypted. Existing value was preserved.' }
         }
     })
 

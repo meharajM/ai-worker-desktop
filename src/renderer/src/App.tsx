@@ -15,7 +15,7 @@
  *   (local → remote) happens entirely inside useAgent.ts.
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { VoiceInput } from "./components/VoiceInput";
 import { ChatView } from "./components/ChatView";
 import { ConnectionsPanel } from "./components/ConnectionsPanel";
@@ -28,17 +28,57 @@ import { WhatsAppConnectionDialog } from "./components/WhatsAppConnectionDialog"
 
 import { useChatStore } from "./stores/chatStore";
 import { useMcpStore } from "./stores/mcpStore";
+import { useWhatsAppStore } from "./stores/whatsappStore";
+import { useSettingsStore } from "./stores/settingsStore";
+import { useAuthStore } from "./stores/authStore";
+import electron from "./lib/electron";
 import { useAuthPersistence } from "./hooks/useAuthPersistence";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useAgent } from "./hooks/useAgent";
 import { useLLMStatus } from "./hooks/useLLMStatus";
+import { ExternalTaskPlanner } from "./components/ExternalTaskPlanner";
+import { useLocalMcpBridge } from "./hooks/useLocalMcpBridge";
 import { useWhatsAppBridge } from "./hooks/useWhatsAppBridge";
 import { MissingDependenciesScreen } from "./components/MissingDependenciesScreen";
 import { ExperimentProvider } from "./lib/experiments/experimentProvider";
 import { useThemeSync } from "./hooks/useThemeSync";
+import { setFirebaseEnabled } from "./lib/firebase/init";
 
 function App() {
   const [currentView, setCurrentView] = useState<View>("chat");
+  const [settingsInitialSection, setSettingsInitialSection] = useState<'privacy' | 'llm'>('privacy');
+  const [chatDraft, setChatDraft] = useState('');
+  const handleViewChange = (view: View) => {
+    if (view === 'settings') setSettingsInitialSection('privacy');
+    setCurrentView(view);
+  };
+  const openModelSettings = () => {
+    setSettingsInitialSection('llm');
+    setCurrentView('settings');
+  };
+  const privacyMode = useSettingsStore((s) => s.privacyMode);
+  const previousPrivacyMode = useRef(privacyMode);
+
+  useEffect(() => {
+    setFirebaseEnabled(privacyMode === 'connected');
+    void electron.store.set('privacyMode', privacyMode).catch((error) => {
+      console.error('[Privacy] Failed to update main-process mode:', error);
+    });
+
+    if (previousPrivacyMode.current === 'connected' && privacyMode === 'local-only') {
+      const mcp = useMcpStore.getState();
+      const whatsapp = useWhatsAppStore.getState();
+      whatsapp.setWhatsAppEnabled(false);
+      whatsapp.closeDialog();
+      void Promise.allSettled([
+        ...mcp.servers.filter((server) => server.connected).map((server) => mcp.disconnect(server.id)),
+        electron.whatsapp.disconnect(false),
+        useAuthStore.getState().signOut(),
+      ]);
+    }
+
+    previousPrivacyMode.current = privacyMode;
+  }, [privacyMode]);
   
   // Expose store for E2E tests
   if (import.meta.env.MODE === 'test') {
@@ -74,7 +114,7 @@ function App() {
   useAuthPersistence();
   useSettingsSync();
   useThemeSync();
-  useWhatsAppBridge(); // Sync WhatsApp IPC events → whatsappStore
+  useWhatsAppBridge(privacyMode === 'connected'); // Connected mode only; never restore or process integrations locally.
 
   // Ensure MCP is initialized for the chat view. ConnectionsPanel also calls
   // initialize(), but we need it ready before the user opens that panel.
@@ -90,33 +130,42 @@ function App() {
   // in useLLMStatus. App.tsx just wires their outputs to the UI.
 
   const { handleSubmit } = useAgent();
-  const { llmStatus } = useLLMStatus(currentView);
+  const { llmStatus, localModelReady } = useLLMStatus(currentView);
+  useLocalMcpBridge();
+  const chatReady = privacyMode === 'local-only' ? localModelReady : llmStatus.available;
+  const headerStatus = privacyMode === 'local-only' && !localModelReady
+    ? { provider: null, available: false }
+    : llmStatus;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <ExperimentProvider>
     <div className="flex h-screen bg-[var(--color-bg-dark)] text-[var(--color-text-primary)] font-sans overflow-hidden">
-      <CommandPalette onViewChange={setCurrentView} />
+      <CommandPalette onViewChange={handleViewChange} />
       {!dependenciesResolved && <MissingDependenciesScreen onResolved={() => setDependenciesResolved(true)} />}
       
       {currentView !== "settings" && (
-        <Sidebar currentView={currentView} onViewChange={setCurrentView} />
+        <Sidebar currentView={currentView} onViewChange={handleViewChange} />
       )}
 
       <div className="flex-1 flex flex-col relative min-w-0">
-        <Header status={llmStatus} />
+        <Header status={headerStatus} />
 
         <main className="flex-1 flex flex-col overflow-hidden min-w-0">
           {currentView === "chat" && (
             <div className="flex-1 flex flex-col overflow-hidden min-w-0 relative">
               <div className="flex-1 overflow-hidden flex flex-col relative w-full h-full pb-0 bg-[var(--color-bg-dark)] z-0">
-                <ChatView />
+                <ChatView llmReady={chatReady} localModelReady={localModelReady} onOpenSettings={openModelSettings} />
               </div>
 
               <div className="pt-2 pb-6 px-6 flex justify-center w-full z-10 bg-[var(--color-bg-dark)] shrink-0 shadow-[var(--shadow-top)]">
                 <div className="w-full max-w-2xl">
                   <VoiceInput
                     onSubmit={handleSubmit}
+                    draft={chatDraft}
+                    onDraftChange={setChatDraft}
+                    localModelReady={localModelReady}
+                    onOpenSettings={openModelSettings}
                     // Only disable input while THIS session is the one processing
                     disabled={activeIsProcessing}
                     onAbort={activeSessionId ? () => abortSession(activeSessionId) : undefined}
@@ -127,12 +176,13 @@ function App() {
           )}
 
           {currentView === "connections" && <ConnectionsPanel />}
-          {currentView === "settings" && <SettingsPanel onClose={() => setCurrentView("chat")} />}
+          {currentView === "settings" && <SettingsPanel initialSection={settingsInitialSection} onClose={() => setCurrentView("chat")} />}
         </main>
       </div>
 
       <FileChangeReview />
-      <WhatsAppConnectionDialog />
+      <ExternalTaskPlanner />
+      {privacyMode === 'connected' && <WhatsAppConnectionDialog />}
     </div>
     </ExperimentProvider>
   );
