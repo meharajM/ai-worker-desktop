@@ -228,7 +228,6 @@ graph TB
 
     subgraph "Hooks"
          UseSpeech[useSpeechRecognition]
-         UseVisualizer[useAudioVisualizer]
          UseDragDrop[useFileDragDrop]
          UseWhatsAppBridge[useWhatsAppBridge]
     end
@@ -238,7 +237,6 @@ graph TB
     Components --> Lib
     Components --> Hooks
     Hooks --> VoskLib
-    Hooks --> UseVisualizer
     Hooks --> UseDragDrop
     Hooks --> UseWhatsAppBridge
     Stores --> Lib
@@ -276,7 +274,7 @@ graph TD
     Main --> ChatView[ChatView<br/>Chat Interface]
     Main --> ConnectionsPanel[ConnectionsPanel<br/>MCP Management]
     Main --> SettingsPanel[SettingsPanel<br/>Configuration]
-    Main --> FeatureFlagsPanel[FeatureFlagsPanel<br/>Dev Mode Flags]
+    SettingsPanel --> EnhancedFeatureFlagsPanel[EnhancedFeatureFlagsPanel<br/>Dev Mode Flags]
     
     ChatView --> MessageBubble[MessageBubble<br/>Message Display]
     ChatView --> VoiceInput[VoiceInput<br/>Input Component]
