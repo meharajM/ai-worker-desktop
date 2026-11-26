@@ -11,18 +11,19 @@ flowchart TD
     A["Codex, OpenCode, or similar host"] --> B["Tauri background service receives MCP task"]
     B --> C["Validate the requested scope and any workspace hint"]
     C --> D["Use on-device inference and bounded workspace reads"]
-    D --> E{"Action needs permission?"}
+    D --> E{"File write or other side effect?"}
     E -->|Yes| F["Review proposed action in compact window"]
     F -->|Approved| G["Revalidate and perform the scoped action"]
     F -->|Declined| H["Skip action"]
-    E -->|No| I["Review result and release to host"]
+    E -->|No| I["Automatically return bounded result on completion"]
     G --> I
     H --> I
 ```
 
 - Accept a bounded task summary, constraints, source agent, active or selected workspace root, working directory when known, and relevant relative file paths. Validate these as hints. Native policy controls OS access. When a task needs workspace access and the host root is missing or unreliable, ask the user to choose one.
-- Allow bounded reads and searches inside the validated workspace by default. Review exact file changes and other side effects before execution. Revalidate approval against the current task, scope, and proposal. Let the user review what returns to the external host and release it explicitly.
-- Use on-device inference for delegated work in Local-only and Connected modes. Local-only must never fall back to cloud. Reuse installed WebLLM or loopback Ollama where compatible. Keep public web research and connected services separately scoped and disclosed in Connected mode. Use only operations already supported by live connections.
+- Allow bounded reads and searches inside the validated workspace by default. Review exact file changes and other side effects before execution. Revalidate approval against the current task, scope, and proposal.
+- Return a bounded result automatically when the task completes. Disclose that the configured MCP host may be remote and can process or forward the returned data.
+- Use on-device inference for delegated work in Local-only and Connected modes. Local-only must never fall back to cloud. Reuse a loaded WebLLM model or an installed model in loopback Ollama where compatible. Keep public web research and connected services separately scoped and disclosed in Connected mode. Use only operations already supported by live connections.
 - Keep the operation journal standalone for future write recovery. Claim journal-backed recovery only after desktop host integration and crash tests pass. [Journal integration cards](./operation-journal-integration.md)
 
 ## Stages and acceptance gates
@@ -30,11 +31,11 @@ flowchart TD
 | Stage | Work and gate |
 | --- | --- |
 | 1. Tauri host, lifecycle, and discovery | Establish a discoverable local MCP service and carry it across normal window open and close. Verify duplicate launch, idle operation, restart, and explicit quit. Clean up owned processes and discovery state. |
-| 2. On-device status and inference | Expose truthful app and model readiness. Verify a real response, cancellation, and the next request with WebLLM or installed Ollama on the target platform. A missing model prompts setup and never triggers cloud fallback. Consider the unfinished `llama-server` candidate only after measured compatibility, cancellation, and resource checks. |
+| 2. On-device status and inference | Expose truthful app and model readiness. Verify a real response, cancellation, and the next request with a loaded WebLLM model or an installed model in loopback Ollama on the target platform. A missing model prompts setup and never triggers cloud fallback. Consider the unfinished `llama-server` candidate only after measured compatibility, cancellation, and resource checks. |
 | 3. Host handoff and workspace reads | Pass bounded context into native validation. Verify correct worktree and relative-file handling, user selection for an unreliable root, rejection of workspace escapes, and read and search limits. |
-| 4. Compact review, writes, and result release | Show request context, exact changes, and separately scoped web or service permissions. Verify rejection, cancellation, expired or stale approvals, and withheld results. Apply only the approved action and return the result only after release. Keep interrupted writes out of automatic replay. |
+| 4. Compact review, writes, and result return | Show request context, exact changes, and separately scoped web or service permissions. Verify rejection, cancellation, and expired or stale approvals. Apply only the approved action and verify automatic bounded result return on completion. Keep interrupted writes out of automatic replay. |
 | 5. Homepage parity and user data | Verify existing homepage workflows and integrations on Tauri. Validate import, restart, repeat import, interrupted import, and rollback using representative Electron profiles. Keep Electron and the original profiles usable throughout. |
-| 6. Installed hosts and packaging | Run installed Codex and OpenCode against packaged Tauri builds on each supported platform. Verify background discovery, local inference, bounded reads, write review, result release, update, and rollback. Record platform and WebView evidence. |
+| 6. Installed hosts and packaging | Run installed Codex and OpenCode against packaged Tauri builds on each supported platform. Verify background discovery, local inference, bounded reads and automatic result return, write review, update, and rollback. Record platform and WebView evidence. |
 | 7. Electron retirement | Remove Electron only after stages 1–6 pass, feature parity is demonstrated, and all required data can be safely imported and rolled back. Preserve user backups and the supported migration path. |
 
 ## User-data migration

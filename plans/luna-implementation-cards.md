@@ -438,7 +438,7 @@ Update README/metadata/issues/CI to ai-worker-desktop; document actual supported
 
 **Check:** synthetic supported documents, malformed/huge inputs, timeout/cancel, helper footprint and useful missing-capability states. Verify converter outputs/caches cannot escape or silently overwrite the selected workspace.
 
-## Ready sequence
+## Historical chat-first sequence
 
 M00–M03 stack proof → M04–M05 bridge → M06a/M06b chat foundation → M10/M11/M12 candidate setup → M13/M16a native chat policy → M14/M15 real chat → M16b 16 GiB certification → M07–M09 continuity/migration → M16c reviewable macOS chat beta → M17/M18 read-only grants and tools → M19a context budget → M19b graph routing → M20 grounded tasks → M21 starts with J01 then J02 before approved file changes through M24 → M25–M28 confirmed CLI → M29–M31 optional MCP → M32–M34 evidence → M35–M37 full macOS then Windows packages → M38–M41 prune/release. M11 requires actual M05c proof. Complete 8 GiB M16b certification on matching hardware before advertising that tier. Each Luna turn stays one bounded card/subcard.
 
