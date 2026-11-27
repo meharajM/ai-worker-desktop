@@ -32,6 +32,7 @@ const MAX_PARENT_ANSWER_CHARS: usize = 2_000;
 const MAX_PARENT_QUESTION_CHARS: usize = 1_000;
 const MAX_PROPOSED_WRITE_CHARS: usize = 16_000;
 const MAX_PLANNER_TURNS: usize = MAX_WORKSPACE_ACTIONS + MAX_PARENT_QUESTIONS + 1;
+const MISSING_WORKSPACE_PATH_ERROR: &str = "Workspace action requires a relative path.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -572,12 +573,17 @@ where
 {
     let output = infer(prompt)?;
     match parse_action(&output) {
-        Err(error) if error == invalid_action_error() => {
+        Err(error) if error == invalid_action_error() || error == MISSING_WORKSPACE_PATH_ERROR => {
             if cancelled() {
                 return Err("Task cancelled.".into());
             }
+            let reason = if error == MISSING_WORKSPACE_PATH_ERROR {
+                error.as_str()
+            } else {
+                "Your previous response did not match the required action format."
+            };
             let retry_prompt = format!(
-                "{prompt}\n\nYour previous response did not match the required action format. Re-read the task and observations, then return exactly one valid compact JSON action from the forms listed above. Do not include markdown, explanations, or extra fields. If you cannot determine the next action, return an ask_parent action."
+                "{prompt}\n\n{reason} Re-read the task and observations, then return exactly one valid compact JSON action from the forms listed above. Do not include markdown, explanations, or extra fields. If you cannot determine the next action, return an ask_parent action."
             );
             if retry_prompt.chars().count() > MAX_PLANNER_PROMPT_CHARS {
                 return Err(error);
@@ -696,7 +702,7 @@ fn invalid_action_error() -> String {
 fn required_path(path: Option<String>) -> Result<String, String> {
     let path = path
         .filter(|path| !path.is_empty())
-        .ok_or_else(|| "Workspace action requires a relative path.".to_owned())?;
+        .ok_or_else(|| MISSING_WORKSPACE_PATH_ERROR.to_owned())?;
     if !valid_relative_path(&path, 512) && path != "." {
         return Err("Workspace action path must be relative to the selected project.".into());
     }
@@ -959,6 +965,36 @@ mod tests {
         assert_eq!(prompts[0], "planner rules");
         assert!(prompts[1].contains("previous response did not match"));
         assert!(!prompts[1].contains("not JSON"));
+    }
+
+    #[test]
+    fn missing_workspace_path_retries_once_with_the_validation_reason() {
+        let not_cancelled = || false;
+        let missing_path = r#"{"tool":"read"}"#;
+        let mut responses = VecDeque::from([
+            missing_path.to_owned(),
+            r#"{"tool":"read","path":"package.json"}"#.to_owned(),
+        ]);
+        let mut prompts = Vec::new();
+        let mut infer = |prompt: &str| {
+            prompts.push(prompt.to_owned());
+            Ok(responses.pop_front().unwrap())
+        };
+
+        let action = infer_action_with_repair("planner rules", &mut infer, &not_cancelled).unwrap();
+        assert!(matches!(action, Action::Read(path) if path == "package.json"));
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts[1].contains(MISSING_WORKSPACE_PATH_ERROR));
+
+        let mut calls = 0;
+        let mut infer = |_: &str| {
+            calls += 1;
+            Ok(r#"{"tool":"read","path":""}"#.to_owned())
+        };
+        let error =
+            infer_action_with_repair("planner rules", &mut infer, &not_cancelled).unwrap_err();
+        assert_eq!(error, MISSING_WORKSPACE_PATH_ERROR);
+        assert_eq!(calls, 2);
     }
 
     #[test]

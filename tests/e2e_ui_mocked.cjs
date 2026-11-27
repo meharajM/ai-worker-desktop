@@ -2,28 +2,76 @@ const { _electron: electron } = require('playwright');
 delete process.env.ELECTRON_RUN_AS_NODE;
 const path = require('path');
 const fs = require('fs');
+const os = require('node:os');
+const http = require('node:http');
 
-const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
+const TEST_ROOT = fs.mkdtempSync(path.join(os.homedir(), 'ai-worker-mocked-e2e-'));
+const USER_DATA_DIR = path.join(TEST_ROOT, 'user-data');
+const SCREENSHOT_DIR = path.join(TEST_ROOT, 'screenshots');
+const TEST_WORKSPACE_DIR = path.join(TEST_ROOT, 'workspace');
+const TEST_OLLAMA_BASE_URL = 'http://127.0.0.1:0';
+const mockApiServer = http.createServer((request, response) => {
+    const requestPath = new URL(request.url || '/', 'http://127.0.0.1').pathname;
+    response.setHeader('Content-Type', 'application/json');
+    if (request.method === 'GET' && requestPath === '/v1/models') {
+        response.writeHead(200).end(JSON.stringify({
+            object: 'list',
+            data: [{ id: 'gpt-4o-mini', object: 'model', owned_by: 'mock' }],
+        }));
+        return;
+    }
+    response.writeHead(404).end(JSON.stringify({ error: { message: 'Unmocked E2E endpoint' } }));
+});
+
+async function cleanupTestEnvironment({ preserveArtifacts = false } = {}) {
+    if (mockApiServer.listening) {
+        await new Promise(resolve => mockApiServer.close(resolve));
+    }
+    if (!preserveArtifacts) fs.rmSync(TEST_ROOT, { recursive: true, force: true });
+}
 
 (async () => {
     console.log('🚀 Starting Comprehensive E2E UI Test (Mocked)...');
 
-    // Ensure screenshot directory exists and is empty
-    if (!fs.existsSync(SCREENSHOT_DIR)) {
-        fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
-    } else {
-        const files = fs.readdirSync(SCREENSHOT_DIR);
-        for (const file of files) {
-            if (file.endsWith('.png')) fs.unlinkSync(path.join(SCREENSHOT_DIR, file));
-        }
+    fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+    fs.mkdirSync(TEST_WORKSPACE_DIR, { recursive: true });
+    const settingsStorePath = path.join(USER_DATA_DIR, 'ai-worker-store.json');
+    fs.writeFileSync(settingsStorePath, JSON.stringify({
+        'ai-worker-settings': {
+            state: {
+                privacyMode: 'local-only',
+                preferredProvider: 'auto',
+                ollamaBaseUrl: TEST_OLLAMA_BASE_URL,
+            },
+            version: 1,
+        },
+    }), { flag: 'wx' });
+    const seededStore = JSON.parse(fs.readFileSync(settingsStorePath, 'utf8'));
+    if (seededStore['ai-worker-settings']?.state?.ollamaBaseUrl !== TEST_OLLAMA_BASE_URL) {
+        throw new Error('Test store did not contain the isolated loopback Ollama URL before launch.');
     }
+    await new Promise((resolve, reject) => {
+        mockApiServer.once('error', reject);
+        mockApiServer.listen(0, '127.0.0.1', resolve);
+    });
+    const mockApiAddress = mockApiServer.address();
+    if (!mockApiAddress || typeof mockApiAddress === 'string') {
+        await cleanupTestEnvironment();
+        throw new Error('Could not start loopback OpenAI mock server');
+    }
+    const mockOpenAiBaseUrl = `http://127.0.0.1:${mockApiAddress.port}/v1`;
 
     const macPath = path.join(__dirname, '../node_modules/electron/dist/Electron.app/Contents/MacOS/Electron');
     const linuxPath = path.join(__dirname, '../node_modules/electron/dist/electron');
     const electronExecutable = fs.existsSync(macPath) ? macPath : linuxPath;
     const execPath = fs.existsSync(electronExecutable) ? electronExecutable : 'electron';
     const appEntry = path.join(__dirname, '../out/main/index.js');
-    const launchArgs = [appEntry];
+    const launchArgs = [
+        appEntry,
+        `--user-data-dir=${USER_DATA_DIR}`,
+        '--host-resolver-rules=MAP localhost ~NOTFOUND',
+    ];
 
     if (process.platform === 'linux') {
         launchArgs.push(
@@ -48,22 +96,99 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
         console.log('✅ Electron launched');
     } catch (e) {
         console.error('❌ Launch failed:', e);
-        process.exit(1);
+        await cleanupTestEnvironment({ preserveArtifacts: true });
+        console.error(`[Mock E2E] Failure artifacts retained under ${TEST_ROOT}`);
+        process.exitCode = 1;
+        return;
     }
 
+    let testPassed = false;
+    let testWindow;
+    const rendererPageErrors = [];
     try {
-        const window = await electronApp.firstWindow();
-        await window.setViewportSize({ width: 1280, height: 900 });
+        const appPaths = await electronApp.evaluate(({ app }, testHome) => {
+            app.setPath('home', testHome);
+            return {
+                home: app.getPath('home'),
+                userData: app.getPath('userData'),
+            };
+        }, TEST_ROOT);
+        if (fs.realpathSync(appPaths.home) !== fs.realpathSync(TEST_ROOT)) {
+            throw new Error(`Expected isolated Electron home at ${TEST_ROOT}, got ${appPaths.home}`);
+        }
+        console.log('✅ Electron home is isolated under the temporary test profile');
+        const appUserData = appPaths.userData;
+        if (fs.realpathSync(appUserData) !== fs.realpathSync(USER_DATA_DIR)) {
+            throw new Error(`Expected isolated test profile at ${USER_DATA_DIR}, got ${appUserData}`);
+        }
+        console.log('✅ Electron user data is isolated under the temporary test profile');
+
+        await electronApp.context().route('**/*', async route => {
+            const requestUrl = new URL(route.request().url());
+            const isLoopback = ['127.0.0.1', 'localhost', '[::1]'].includes(requestUrl.hostname);
+            if (isLoopback && requestUrl.port === '11434') {
+                console.log('[Mock E2E] Blocking Ollama traffic to port 11434');
+                await route.abort('blockedbyclient');
+                return;
+            }
+            if (!['http:', 'https:'].includes(requestUrl.protocol) ||
+                isLoopback) {
+                await route.continue();
+                return;
+            }
+            console.log(`[Mock E2E] Blocking non-loopback request: ${requestUrl.origin}`);
+            await route.abort('internetdisconnected');
+        });
+
+        const isMainRendererUrl = url => {
+            try {
+                const parsedUrl = new URL(String(url));
+                return parsedUrl.protocol === 'file:' &&
+                    parsedUrl.pathname.endsWith('/renderer/index.html') &&
+                    parsedUrl.searchParams.get('window') !== 'task';
+            } catch {
+                return false;
+            }
+        };
+        const appWindows = electronApp.windows();
+        if (appWindows.length === 0) await electronApp.firstWindow({ timeout: 30000 });
+        const windowCandidates = electronApp.windows();
+        const mainWindowLoaded = windowCandidates.find(candidate => isMainRendererUrl(candidate.url()));
+        if (!mainWindowLoaded) {
+            await Promise.any(windowCandidates.map(candidate =>
+                candidate.waitForURL(isMainRendererUrl, { timeout: 30000 })
+            ));
+        }
+        testWindow = electronApp.windows().find(candidate => isMainRendererUrl(candidate.url()));
+        if (!testWindow) {
+            throw new Error(`Could not locate full app window; opened URLs: ${electronApp.windows().map(candidate => candidate.url()).join(', ')}`);
+        }
+        const window = testWindow;
         const rendererLogs = [];
+        window.on('pageerror', error => {
+            rendererPageErrors.push(error.message);
+            console.error(`[PageError]: ${error.message}`);
+        });
         window.on('console', msg => {
             const text = msg.text();
             rendererLogs.push(text);
             console.log(`[Renderer]: ${text}`);
         });
+        await window.waitForLoadState('domcontentloaded');
+        const storedOllamaBaseUrl = await window.evaluate(async () => {
+            const settings = await window.electron.store.get('ai-worker-settings');
+            return settings?.state?.ollamaBaseUrl;
+        });
+        if (storedOllamaBaseUrl !== TEST_OLLAMA_BASE_URL) {
+            throw new Error(`Expected isolated Ollama URL ${TEST_OLLAMA_BASE_URL}, got ${storedOllamaBaseUrl}`);
+        }
+        console.log('✅ Isolated Ollama URL is active in the app store');
+        await window.setViewportSize({ width: 1280, height: 900 });
 
         // Mocking at the window level is more reliable than network interception for localhost in Electron
-        await window.addInitScript(async () => {
+        await window.addInitScript(async (workspacePath) => {
             localStorage.setItem('skipDepsCheck', 'true');
+            const workspaceFile = (relativePath) => `${workspacePath.replace(/[\\/]+$/, '')}/${relativePath.replace(/^[\\/]+/, '')}`;
             console.log("🧹 Clearing IndexedDB to ensure clean state...");
             try {
                 const dbs = await window.indexedDB.databases();
@@ -135,8 +260,8 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
                                 role: "assistant",
                                 content: "<think>Running visual diagnostics...\n- Rendering Table\n- Check Code Block</think># Analysis Report\n\nHere is the data status:\n\n| ID | Type | Status |\n|:---|:-----|:-------|\n| 01 | File | ✅ OK  |\n| 02 | Net  | ❌ Err |\n\nChecking filesystem integrity:\n```typescript\nconst path = require('path');\nconsole.log(path.resolve('.'));\n```\n",
                                 tool_calls: [
-                                    { id: "call_ok", type: "function", function: { name: "fs_list_directory", arguments: JSON.stringify({ path: "." }) } },
-                                    { id: "call_err", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: "/nonexistent/ghost.txt" }) } },
+                                    { id: "call_ok", type: "function", function: { name: "fs_list_directory", arguments: JSON.stringify({ path: workspacePath }) } },
+                                    { id: "call_err", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: workspaceFile("missing/ghost.txt") }) } },
                                     { id: "call_missing", type: "function", function: { name: "unknown_tool_xyz", arguments: "{}" } }
                                 ]
                             }
@@ -149,7 +274,7 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
                         choices: [{
                             message: {
                                 role: "assistant",
-                                content: "I'll help you with that. I'm using an older model, so I'll output my actions in JSON format.\n\n```json\n{\n  \"tool\": \"fs_list_directory\",\n  \"params\": { \"path\": \"/Users/meharaj/Downloads\" }\n}\n```\n\nI'll wait for the list.",
+                                content: "I'll help you with that. I'm using an older model, so I'll output my actions in JSON format.\n\n```json\n{\n  \"tool\": \"fs_list_directory\",\n  \"params\": { \"path\": " + JSON.stringify(workspacePath) + " }\n}\n```\n\nI'll wait for the list.",
                                 tool_calls: [] // NO NATIVE TOOL CALLS
                             }
                         }]
@@ -241,10 +366,10 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
                                 role: "assistant",
                                 content: "Exploring files.",
                                 tool_calls: [
-                                    { id: "c1", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: "/fileA" }) } },
-                                    { id: "c2", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: "/fileB" }) } },
-                                    { id: "c3", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: "/fileC" }) } },
-                                    { id: "c4", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: "/fileD" }) } }
+                                    { id: "c1", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: workspaceFile("missing/fileA.txt") }) } },
+                                    { id: "c2", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: workspaceFile("missing/fileB.txt") }) } },
+                                    { id: "c3", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: workspaceFile("missing/fileC.txt") }) } },
+                                    { id: "c4", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: workspaceFile("missing/fileD.txt") }) } }
                                 ]
                             }
                         }]
@@ -258,9 +383,9 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
                                 role: "assistant",
                                 content: "Stuck reading the same file.",
                                 tool_calls: [
-                                    { id: "c1", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: "/stuck_file" }) } },
-                                    { id: "c2", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: "/stuck_file" }) } },
-                                    { id: "c3", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: "/stuck_file" }) } }
+                                    { id: "c1", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: workspaceFile("missing/stuck.txt") }) } },
+                                    { id: "c2", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: workspaceFile("missing/stuck.txt") }) } },
+                                    { id: "c3", type: "function", function: { name: "fs_read_file", arguments: JSON.stringify({ path: workspaceFile("missing/stuck.txt") }) } }
                                 ]
                             }
                         }]
@@ -336,6 +461,13 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
                     return new Response(JSON.stringify({ models: [{ name: "mock-model" }] }), { status: 200 });
                 }
 
+                if (urlStr.endsWith('/v1/models')) {
+                    return new Response(JSON.stringify({
+                        object: 'list',
+                        data: [{ id: 'gpt-4o-mini', object: 'model', owned_by: 'mock' }],
+                    }), { status: 200 });
+                }
+
                 if (urlStr.includes('/api/chat') || urlStr.includes('/chat/completions')) {
                     // console.log('[MockFetch] Intercepting CHAT');
                     let bodyStr = "";
@@ -379,7 +511,7 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
                         };
 
                         if (scenario) {
-                            console.log(`[MockFetch] Matched Scenario!`);
+                            console.log(`[MockFetch] Matched Scenario: ${scenario.triggers[0]}`);
                             responseData = { ...responseData, ...scenario.response };
                         }
 
@@ -392,7 +524,7 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
 
                 return originalFetch(input, init);
             };
-        });
+        }, TEST_WORKSPACE_DIR);
 
         await window.waitForLoadState('domcontentloaded');
 
@@ -418,12 +550,21 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
             console.log('ℹ️ No Missing Dependencies modal detected after 8s');
         }
 
-        // Switch to OpenAI (Mocked)
-        console.log('⚙️ Configuring OpenAI Provider...');
+        // OpenAI scenarios run only after explicit opt-in, with every provider call mocked on loopback.
+        console.log('⚙️ Opting into Connected services for mocked OpenAI scenarios...');
         await window.click('button[title="Settings"]');
-        await window.click('text=OpenAI');
+        await window.locator('nav button').filter({ hasText: 'Privacy & Mode' }).click();
+        const localOnlyOption = window.locator('[role="radiogroup"][aria-label="Privacy mode"] button').filter({ hasText: 'Local-only' });
+        if (await localOnlyOption.getAttribute('aria-checked') !== 'true') {
+            throw new Error('Expected Local-only to be the default privacy mode');
+        }
+        await window.locator('[role="radiogroup"][aria-label="Privacy mode"] button').filter({ hasText: 'Connected services' }).click();
+        await window.locator('nav button').filter({ hasText: 'LLM Provider' }).click();
+        await window.locator('button[aria-label="Select OpenAI / Compatible provider"]').click();
 
-        // Fill OpenAI API key (explicit selector avoids strict-mode collisions with other providers)
+        await window.locator('input[placeholder="https://api.openai.com/v1"]').fill(mockOpenAiBaseUrl);
+
+        // This fake key is sent only to the local mock API endpoint.
         const keyInput = window.locator('input[placeholder="sk-..."]').first();
         await keyInput.waitFor({ state: 'visible', timeout: 10000 });
         await keyInput.fill('sk-mock-key-12345');
@@ -442,6 +583,23 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
 
         const chatInput = window.locator('[data-testid="chat-textarea"]');
         await chatInput.waitFor({ state: 'attached' });
+
+        await electronApp.evaluate(({ dialog }, workspacePath) => {
+            dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [workspacePath] });
+        }, TEST_WORKSPACE_DIR);
+        const workspaceButton = window.locator('#workspace-select-button');
+        await workspaceButton.waitFor({ state: 'visible' });
+        await workspaceButton.click();
+        const expectedWorkspaceTitle = `Workspace: ${TEST_WORKSPACE_DIR}`;
+        await window.waitForFunction(
+            title => document.querySelector('#workspace-select-button')?.getAttribute('title') === title,
+            expectedWorkspaceTitle,
+            { timeout: 10000 },
+        );
+        if (await workspaceButton.getAttribute('title') !== expectedWorkspaceTitle) {
+            throw new Error('The temporary test workspace was not selected.');
+        }
+        console.log('✅ Temporary workspace selected');
 
         const waitForAnyText = async (patterns, timeout = 15000) => {
             const start = Date.now();
@@ -468,7 +626,10 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
                 }
                 await window.waitForTimeout(200);
             }
-            throw new Error(`None of the expected log patterns appeared: ${patterns.map(String).join(', ')}`);
+            const recentLogs = rendererLogs.slice(-30)
+                .map(line => line.replace(/sk-[A-Za-z0-9_-]+/g, '[redacted]'))
+                .join('\n');
+            throw new Error(`None of the expected log patterns appeared: ${patterns.map(String).join(', ')}\nRecent renderer logs:\n${recentLogs}`);
         };
 
         const logsContain = (pattern) => {
@@ -499,14 +660,14 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
 
         // --- TEST 1: PARALLEL AGENTS ---
         console.log('\n--- Test 1: Parallel Agents ---');
-        await sendMessage("Compare the price of a Sony WH-1000XM5 headphone on Amazon and BestBuy.");
-        // Verify response text instead of complex UI lanes (since tool execution might fail in mock)
-        try {
-            await window.locator('text=Starting parallel search').first().waitFor({ state: 'visible', timeout: 15000 });
-            console.log('✅ Parallel Response received');
-        } catch (e) {
-            console.error('❌ Parallel Response missing');
-        }
+        const parallelPrompt = "Compare the price of a Sony WH-1000XM5 headphone on Amazon and BestBuy.";
+        await sendMessage(parallelPrompt);
+        await window.locator('[data-testid="message-bubble"][data-role="user"]')
+            .filter({ hasText: parallelPrompt })
+            .waitFor({ state: 'visible', timeout: 5000 });
+        console.log('✅ Submitted prompt rendered in the chat transcript');
+        await waitForAnyLog(['[MockFetch] Matched Scenario: Compare the price'], 15000);
+        console.log('✅ Parallel scenario matched the mocked response');
 
         // --- TEST 6: JSON RECOVERY ---
         console.log('\n--- Test 6: JSON Recovery ---');
@@ -688,13 +849,19 @@ const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
         }
 
         console.log('\n🎉 ALL SCENARIOS PASSED');
+        testPassed = true;
 
     } catch (e) {
         console.error('❌ TEST FAILED:', e);
-        await electronApp.firstWindow().then(w => w.screenshot({ path: path.join(SCREENSHOT_DIR, 'mock-fail.png') })).catch(() => { });
-        process.exit(1);
+        if (rendererPageErrors.length) console.error('Renderer page errors:', rendererPageErrors);
+        await testWindow?.screenshot({ path: path.join(SCREENSHOT_DIR, 'mock-fail.png') }).catch(() => { });
+        process.exitCode = 1;
     } finally {
-        await electronApp.close();
+        await electronApp.close().catch(() => { });
+        await cleanupTestEnvironment({ preserveArtifacts: !testPassed });
+        if (!testPassed) {
+            console.error(`[Mock E2E] Failure artifacts retained under ${TEST_ROOT}`);
+        }
     }
 
 })();
