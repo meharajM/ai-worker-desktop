@@ -51,6 +51,7 @@ struct TaskManager {
 
 struct TaskRecord {
     id: String,
+    request: agent_task::TaskRequest,
     a2a_context_id: Option<String>,
     a2a_message_ids: Mutex<HashSet<String>>,
     cancelled: AtomicBool,
@@ -63,6 +64,7 @@ struct TaskRecord {
 #[derive(Default)]
 struct TaskProgress {
     state: TaskState,
+    model_turns: usize,
     pending_question: Option<ParentQuestion>,
     answer: Option<String>,
     pending_approval: Option<PendingWriteApproval>,
@@ -94,6 +96,18 @@ impl TaskState {
     fn is_active(self) -> bool {
         !self.is_terminal()
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivityTask {
+    id: String,
+    protocol: &'static str,
+    prompt: String,
+    handoff_context: Option<agent_task::HandoffContext>,
+    web_access: bool,
+    state: TaskState,
+    model_turns: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -271,6 +285,10 @@ impl ExternalMcp {
         Ok(())
     }
 
+    pub(crate) fn task_activity(&self) -> Vec<ActivityTask> {
+        self.tasks.activity()
+    }
+
     pub(crate) fn pending_write_approval(&self) -> Option<PendingWriteApproval> {
         self.tasks.pending_write_approval()
     }
@@ -291,6 +309,10 @@ impl ExternalMcp {
                 self.tasks
                     .resolve_write_approval(&approval.task_id, &approval.approval_id, false);
         }
+    }
+
+    pub(crate) fn disable_online_research(&self) {
+        self.tasks.cancel_online_tasks();
     }
 }
 
@@ -323,7 +345,22 @@ impl TaskManager {
         context_id: Option<String>,
         message_id: Option<String>,
     ) -> Result<TaskAck, (u16, String)> {
-        agent_task::validate_body(body).map_err(|message| (422, message))?;
+        let request =
+            agent_task::parse_validated_request(body).map_err(|message| (422, message))?;
+        let online_allowed = crate::preferences::get(&app)
+            .is_ok_and(|preferences| preferences.allow_online_research);
+        if request
+            .capabilities
+            .iter()
+            .any(|capability| capability == "web")
+            && !online_allowed
+        {
+            return Err((
+                403,
+                "Public web research is off. Enable it in AI-Worker Settings and retry the task."
+                    .into(),
+            ));
+        }
         if self.stopping.load(Ordering::Acquire) {
             return Err((503, "AI-Worker is shutting down.".into()));
         }
@@ -362,13 +399,12 @@ impl TaskManager {
             }
             let id =
                 random_hex().map_err(|_| (503, "Could not create a task identifier.".into()))?;
-            let record = Arc::new(TaskRecord::new(id.clone(), context_id, message_id));
+            let record = Arc::new(TaskRecord::new(id.clone(), context_id, message_id, request));
             records.insert(id.clone(), Arc::clone(&record));
 
             let manager = self.clone();
             let task = Arc::clone(&record);
             let task_id = id;
-            let task_body = body.to_vec();
             let worker = thread::spawn(move || {
                 let cancelled = || {
                     task.cancelled.load(Ordering::Acquire)
@@ -378,10 +414,11 @@ impl TaskManager {
                     task.finish(Err("Task cancelled.".into()));
                     return;
                 }
+                crate::task_activity::show(&app, false);
                 task.set_state(TaskState::Running);
-                let result = agent_task::run_controlled(
+                let result = agent_task::run_controlled_live(
                     &app,
-                    &task_body,
+                    &task.request,
                     |prompt| manager.infer(&app, &inference, &task, prompt, &cancelled),
                     |question| task.ask_parent(question),
                     |request, workspace_root, proposal| {
@@ -393,6 +430,10 @@ impl TaskManager {
                             proposal,
                             &cancelled,
                         )
+                    },
+                    || {
+                        crate::preferences::get(&app)
+                            .is_ok_and(|preferences| preferences.allow_online_research)
                     },
                     cancelled,
                 );
@@ -528,7 +569,7 @@ impl TaskManager {
                 .is_ok()
             {
                 let _guard = InferenceGuard(Arc::clone(admission));
-                task.set_state(TaskState::Running);
+                task.begin_inference();
                 let model = app.state::<ModelRuntime>();
                 let result = model
                     .infer_cancellable(app, prompt, Some(&task.cancelled))
@@ -552,6 +593,23 @@ impl TaskManager {
             .get(id)
             .ok_or_else(|| (404, "Task was not found or has expired.".into()))?;
         Ok(record.view())
+    }
+
+    fn activity(&self) -> Vec<ActivityTask> {
+        let mut records = self.records.lock().unwrap_or_else(|err| err.into_inner());
+        prune_records(&mut records);
+        let mut recent = records
+            .values()
+            .map(|record| (record.is_terminal(), record.created_at, record))
+            .collect::<Vec<_>>();
+        recent.sort_unstable_by_key(|(terminal, created_at, _)| {
+            (*terminal, std::cmp::Reverse(*created_at))
+        });
+        recent
+            .into_iter()
+            .take(MAX_ACTIVE_TASKS * 2)
+            .map(|(_, _, record)| record.activity())
+            .collect()
     }
 
     fn answer(&self, id: &str, body: &[u8]) -> Result<TaskAck, (u16, String)> {
@@ -679,6 +737,26 @@ impl TaskManager {
         }
     }
 
+    fn cancel_online_tasks(&self) {
+        let records = self
+            .records
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .values()
+            .filter(|record| {
+                record
+                    .request
+                    .capabilities
+                    .iter()
+                    .any(|capability| capability == "web")
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for record in records {
+            record.cancel();
+        }
+    }
+
     fn join_all(&self) {
         let records = self
             .records
@@ -701,10 +779,16 @@ impl TaskManager {
 }
 
 impl TaskRecord {
-    fn new(id: String, a2a_context_id: Option<String>, a2a_message_id: Option<String>) -> Self {
+    fn new(
+        id: String,
+        a2a_context_id: Option<String>,
+        a2a_message_id: Option<String>,
+        request: agent_task::TaskRequest,
+    ) -> Self {
         let a2a_message_ids = a2a_message_id.into_iter().collect();
         Self {
             id,
+            request,
             a2a_context_id,
             a2a_message_ids: Mutex::new(a2a_message_ids),
             cancelled: AtomicBool::new(false),
@@ -774,6 +858,14 @@ impl TaskRecord {
         let mut progress = self.progress.lock().unwrap_or_else(|err| err.into_inner());
         if !self.cancelled.load(Ordering::Acquire) && progress.state.is_active() {
             progress.state = state;
+        }
+    }
+
+    fn begin_inference(&self) {
+        let mut progress = self.progress.lock().unwrap_or_else(|err| err.into_inner());
+        if !self.cancelled.load(Ordering::Acquire) && progress.state.is_active() {
+            progress.state = TaskState::Running;
+            progress.model_turns += 1;
         }
     }
 
@@ -949,6 +1041,27 @@ impl TaskRecord {
         }
     }
 
+    fn activity(&self) -> ActivityTask {
+        let progress = self.progress.lock().unwrap_or_else(|err| err.into_inner());
+        ActivityTask {
+            id: self.id.clone(),
+            protocol: if self.a2a_context_id.is_some() {
+                "A2A"
+            } else {
+                "MCP"
+            },
+            prompt: self.request.prompt.clone(),
+            handoff_context: self.request.handoff_context.clone(),
+            web_access: self
+                .request
+                .capabilities
+                .iter()
+                .any(|capability| capability == "web"),
+            state: progress.state,
+            model_turns: progress.model_turns,
+        }
+    }
+
     fn a2a_value(&self) -> Option<Value> {
         let context_id = self.a2a_context_id.as_deref()?;
         let progress = self.progress.lock().unwrap_or_else(|err| err.into_inner());
@@ -1101,7 +1214,13 @@ fn run_service(
         running: true,
         started_at: now_ms(),
         heartbeat_at: 0,
-        privacy_mode: "local-only",
+        privacy_mode: if crate::preferences::get(app)
+            .is_ok_and(|preferences| preferences.allow_online_research)
+        {
+            "connected"
+        } else {
+            "local-only"
+        },
         model: ModelStatus {
             available: false,
             checked_at: 0,
@@ -1118,6 +1237,13 @@ fn run_service(
             break Ok(());
         }
         if heartbeat.elapsed() >= HEARTBEAT {
+            snapshot.privacy_mode = if crate::preferences::get(app)
+                .is_ok_and(|preferences| preferences.allow_online_research)
+            {
+                "connected"
+            } else {
+                "local-only"
+            };
             if let Err(error) = snapshot.write(dir, app.state::<ModelRuntime>().is_ready()) {
                 break Err(error);
             }
@@ -1954,6 +2080,14 @@ mod tests {
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+    fn test_task(id: String, context_id: Option<String>, message_id: Option<String>) -> TaskRecord {
+        let request = agent_task::parse_validated_request(
+            br#"{"prompt":"Review local changes.","handoffContext":{"sourceAgent":"Parent","summary":"Focus on tests."}}"#,
+        )
+        .unwrap();
+        TaskRecord::new(id, context_id, message_id, request)
+    }
+
     fn endpoint() -> Endpoint {
         Endpoint {
             host: "127.0.0.1:43123".into(),
@@ -2225,7 +2359,7 @@ mod tests {
     fn parent_question_waits_for_matching_answer_and_rejects_duplicate_answer() {
         let id = random_hex().unwrap();
         let manager = TaskManager::default();
-        let record = Arc::new(TaskRecord::new(id.clone(), None, None));
+        let record = Arc::new(test_task(id.clone(), None, None));
         manager
             .records
             .lock()
@@ -2284,11 +2418,86 @@ mod tests {
     }
 
     #[test]
+    fn activity_surfaces_progress_and_context_without_write_proposals_or_results() {
+        let manager = TaskManager::default();
+        let id = random_hex().unwrap();
+        let record = Arc::new(test_task(id.clone(), None, None));
+        let mut records = manager.records.lock().unwrap();
+        records.insert(id.clone(), Arc::clone(&record));
+        drop(records);
+
+        assert_eq!(manager.activity()[0].state, TaskState::Queued);
+        record.begin_inference();
+        assert_eq!(manager.activity()[0].state, TaskState::Running);
+
+        let approval_id = random_hex().unwrap();
+        record
+            .begin_write_approval(pending_write(&id, &approval_id))
+            .unwrap();
+        let snapshot = serde_json::to_value(manager.activity()).unwrap();
+        assert_eq!(
+            snapshot[0],
+            json!({
+                "id": id,
+                "protocol": "MCP",
+                "prompt": "Review local changes.",
+                "handoffContext": {
+                    "sourceAgent": "Parent",
+                    "summary": "Focus on tests.",
+                    "constraints": [],
+                    "relevantFiles": [],
+                    "workingDirectory": null
+                },
+                "state": "waiting_for_approval",
+                "modelTurns": 1,
+                "webAccess": false
+            })
+        );
+        assert!(manager.pending_write_approval().is_some());
+        manager
+            .resolve_write_approval(&id, &approval_id, true)
+            .unwrap();
+        record.begin_inference();
+        record.finish(Ok(agent_task::TaskResult {
+            content: "PRIVATE_TASK_RESULT".into(),
+            sources: vec![],
+        }));
+        let tasks = manager.activity();
+        assert_eq!(tasks[0].state, TaskState::Completed);
+        assert_eq!(tasks[0].model_turns, 2);
+        assert!(!serde_json::to_string(&tasks)
+            .unwrap()
+            .contains("PRIVATE_TASK_RESULT"));
+    }
+
+    #[test]
+    fn activity_keeps_active_a2a_tasks_ahead_of_recent_completed_tasks() {
+        let manager = TaskManager::default();
+        let active = Arc::new(test_task("active".into(), Some("context".into()), None));
+        let mut records = manager.records.lock().unwrap();
+        records.insert(active.id.clone(), Arc::clone(&active));
+        for index in 0..10 {
+            let record = Arc::new(test_task(format!("finished-{index}"), None, None));
+            record.finish(Err("Failure detail".into()));
+            records.insert(record.id.clone(), record);
+        }
+        drop(records);
+
+        let tasks = manager.activity();
+        assert_eq!(tasks.len(), MAX_ACTIVE_TASKS * 2);
+        assert_eq!(tasks[0].id, active.id);
+        assert_eq!(tasks[0].protocol, "A2A");
+        assert!(tasks[1..]
+            .iter()
+            .all(|task| task.state == TaskState::Failed));
+    }
+
+    #[test]
     fn approval_state_is_private_from_mcp_status_and_requires_exact_id() {
         let id = random_hex().unwrap();
         let approval_id = random_hex().unwrap();
         let manager = TaskManager::default();
-        let record = Arc::new(TaskRecord::new(id.clone(), None, None));
+        let record = Arc::new(test_task(id.clone(), None, None));
         record
             .begin_write_approval(pending_write(&id, &approval_id))
             .unwrap();
@@ -2323,7 +2532,7 @@ mod tests {
         for approved in [true, false] {
             let id = random_hex().unwrap();
             let approval_id = random_hex().unwrap();
-            let record = Arc::new(TaskRecord::new(id.clone(), None, None));
+            let record = Arc::new(test_task(id.clone(), None, None));
             let approval = pending_write(&id, &approval_id);
             record.begin_write_approval(approval.clone()).unwrap();
 
@@ -2349,7 +2558,7 @@ mod tests {
     fn cancellation_clears_pending_write_and_wakes_waiter_without_approval() {
         let id = random_hex().unwrap();
         let approval_id = random_hex().unwrap();
-        let record = Arc::new(TaskRecord::new(id.clone(), None, None));
+        let record = Arc::new(test_task(id.clone(), None, None));
         let approval = pending_write(&id, &approval_id);
         record.begin_write_approval(approval.clone()).unwrap();
 
@@ -2376,7 +2585,7 @@ mod tests {
     fn cancellation_is_not_reported_until_waiting_task_stops() {
         let id = random_hex().unwrap();
         let manager = TaskManager::default();
-        let record = Arc::new(TaskRecord::new(id.clone(), None, None));
+        let record = Arc::new(test_task(id.clone(), None, None));
         manager
             .records
             .lock()
@@ -2406,7 +2615,7 @@ mod tests {
     fn status_and_identifier_expiry_do_not_depend_on_inference_admission() {
         let id = random_hex().unwrap();
         let manager = TaskManager::default();
-        let record = Arc::new(TaskRecord::new(id.clone(), None, None));
+        let record = Arc::new(test_task(id.clone(), None, None));
         record.set_state(TaskState::Running);
         manager
             .records
@@ -2432,7 +2641,7 @@ mod tests {
     #[test]
     fn maps_a2a_task_states_and_results_without_leaking_internal_errors() {
         let id = random_hex().unwrap();
-        let record = TaskRecord::new(id.clone(), Some("ctx-1".into()), Some("msg-1".into()));
+        let record = test_task(id.clone(), Some("ctx-1".into()), Some("msg-1".into()));
         assert_eq!(
             record.a2a_value().unwrap()["status"]["state"],
             "TASK_STATE_SUBMITTED"
@@ -2498,13 +2707,13 @@ mod tests {
     fn a2a_task_lookup_excludes_mcp_only_records_and_deduplicates_message_ids() {
         let manager = TaskManager::default();
         let a2a_id = random_hex().unwrap();
-        let a2a_record = Arc::new(TaskRecord::new(
+        let a2a_record = Arc::new(test_task(
             a2a_id.clone(),
             Some("context-1".into()),
             Some("message-1".into()),
         ));
         let mcp_id = random_hex().unwrap();
-        let mcp_record = Arc::new(TaskRecord::new(mcp_id.clone(), None, None));
+        let mcp_record = Arc::new(test_task(mcp_id.clone(), None, None));
         {
             let mut records = manager.records.lock().unwrap();
             records.insert(a2a_id.clone(), Arc::clone(&a2a_record));

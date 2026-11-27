@@ -397,9 +397,14 @@ pub fn bridge_update_preferences(
     app: AppHandle,
     state: State<'_, BridgeState>,
     preferences_state: State<'_, PreferenceState>,
+    external_mcp: State<'_, crate::external_mcp::ExternalMcp>,
 ) -> Result<PreferencesReply, BridgeError> {
     let caller = Caller::from_window(&window)?;
-    state.update_preferences(&caller, request, &app, &preferences_state)
+    let reply = state.update_preferences(&caller, request, &app, &preferences_state)?;
+    if !reply.preferences.allow_online_research {
+        external_mcp.disable_online_research();
+    }
+    Ok(reply)
 }
 
 #[cfg(test)]

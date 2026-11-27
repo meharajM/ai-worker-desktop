@@ -2,9 +2,12 @@
 //!
 //! Keep transport/authentication in external_mcp; this module validates A2A
 //! messages and builds protocol-shaped JSON values. It deliberately supports
-//! text user messages and the workspace extension only.
+//! text user messages and the bounded workspace/task-scope extension only.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::PathBuf,
+};
 
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -216,7 +219,19 @@ pub(crate) fn parse_send_message(params: &Map<String, Value>) -> Result<SendMess
     let (capabilities, workspace_root, handoff_context) = if let Some(value) = workspace_value {
         let extension: RawWorkspaceExtension =
             serde_json::from_value(value).map_err(|_| invalid_params())?;
-        if extension.capabilities.len() != 1 || extension.capabilities[0] != "workspace" {
+        let unique = extension
+            .capabilities
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        if !unique.contains("workspace")
+            || unique.len() != extension.capabilities.len()
+            || extension.capabilities.len() > 2
+            || extension
+                .capabilities
+                .iter()
+                .any(|capability| !matches!(capability.as_str(), "workspace" | "web"))
+        {
             return Err(invalid_params());
         }
         (
@@ -264,7 +279,7 @@ pub(crate) fn agent_card(url: impl Into<String>, version: impl Into<String>) -> 
     let version = version.into();
     json!({
         "name": "AI-Worker",
-        "description": "Local-only sub-agent for bounded workspace reading and user-approved file writes.",
+        "description": "On-device sub-agent for bounded workspace reading and user-approved file writes; optional public web research is separately enabled in AI-Worker settings.",
         "supportedInterfaces": [{
             "url": url,
             "protocolBinding": "JSONRPC",
@@ -294,8 +309,8 @@ pub(crate) fn agent_card(url: impl Into<String>, version: impl Into<String>) -> 
         "skills": [{
             "id": "local-workspace",
             "name": "Local workspace task",
-            "description": "Read and search the host-selected workspace; propose writes for user approval.",
-            "tags": ["local", "workspace"]
+            "description": "Read and search the host-selected workspace; propose writes for user approval. Tasks may request public web research when enabled in AI-Worker settings.",
+            "tags": ["local", "workspace", "research"]
         }]
     })
 }
@@ -459,6 +474,11 @@ mod tests {
                 .as_deref(),
             Some("Codex")
         );
+
+        let mut message = workspace_message();
+        message["metadata"][WORKSPACE_EXTENSION]["capabilities"] = json!(["workspace", "web"]);
+        let parsed_online = parse_send_message(&params(message)).unwrap();
+        assert_eq!(parsed_online.task.capabilities, vec!["workspace", "web"]);
     }
 
     #[test]
@@ -492,7 +512,12 @@ mod tests {
         assert!(parse_send_message(&params(message)).is_err());
 
         let mut message = workspace_message();
-        message["metadata"][WORKSPACE_EXTENSION]["capabilities"] = json!(["workspace", "web"]);
+        message["metadata"][WORKSPACE_EXTENSION]["capabilities"] = json!(["workspace", "services"]);
+        assert!(parse_send_message(&params(message)).is_err());
+
+        let mut message = workspace_message();
+        message["metadata"][WORKSPACE_EXTENSION]["capabilities"] =
+            json!(["workspace", "workspace"]);
         assert!(parse_send_message(&params(message)).is_err());
     }
 

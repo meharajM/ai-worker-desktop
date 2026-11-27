@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "task-activity",
+  "description": "Read-only task activity in the local task activity window",
+  "windows": ["task-activity"],
+  "permissions": ["allow-get-task-activity"]
+}

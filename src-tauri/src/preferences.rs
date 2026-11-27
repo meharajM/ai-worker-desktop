@@ -34,6 +34,8 @@ pub struct Preferences {
     pub selected_profile_id: Option<String>,
     pub resource_preset: ResourcePreset,
     pub idle_policy: IdlePolicy,
+    #[serde(default)]
+    pub allow_online_research: bool,
 }
 
 impl Default for Preferences {
@@ -43,6 +45,7 @@ impl Default for Preferences {
             selected_profile_id: None,
             resource_preset: ResourcePreset::LowImpact,
             idle_policy: IdlePolicy::TaskEnd,
+            allow_online_research: false,
         }
     }
 }
@@ -215,6 +218,16 @@ mod tests {
             "a read must not create the preferences file"
         );
         assert!(app.handle().get_store(STORE_FILE).is_none());
+    }
+
+    #[test]
+    fn preferences_without_online_research_field_remain_local_only() {
+        let preferences: Preferences = serde_json::from_str(
+            r#"{"schemaVersion":1,"selectedProfileId":null,"resourcePreset":"lowImpact","idlePolicy":"taskEnd"}"#,
+        )
+        .unwrap();
+        assert!(!preferences.allow_online_research);
+        preferences.validate().unwrap();
     }
 
     #[test]

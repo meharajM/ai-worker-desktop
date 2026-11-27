@@ -9,6 +9,7 @@
     "allow-bridge-get-status",
     "allow-bridge-get-preferences",
     "allow-bridge-update-preferences",
+    "allow-chat-local",
     "allow-model-catalog",
     "allow-model-import",
     "allow-model-cancel-import"

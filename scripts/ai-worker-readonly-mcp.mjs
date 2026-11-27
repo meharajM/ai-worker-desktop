@@ -79,16 +79,22 @@ function getRuntimeStatus() {
   const checkedAt = Number(model?.checkedAt)
   const modelStatusAgeMs = Date.now() - checkedAt
   const modelStatusFresh = isLive && checkedAt >= startedAt && modelStatusAgeMs >= 0 && modelStatusAgeMs < 90_000
+  const privacyMode = isLive && ['connected', 'local-only'].includes(runtime.privacyMode) ? runtime.privacyMode : 'unknown'
+  const networkUse = privacyMode === 'local-only'
+    ? 'This running AI-Worker instance reports local-only mode. MCP ask_local and Tauri task inference stay on-device with no cloud fallback. In Tauri local-only mode, public research is disabled. Model setup downloads and the MCP host’s own network use are separate.'
+    : privacyMode === 'connected'
+      ? 'This running AI-Worker instance reports connected mode. Electron app chat may use its selected connected provider; MCP ask_local and Tauri task inference stay on-device with no cloud fallback. Tauri public research requires both the AI-Worker Settings opt-in and capabilities:["web"]. Search terms go to DuckDuckGo and requested public HTTPS URLs are fetched as supplied, including their paths and query strings. Outbound request planning uses the host task prompt and public web results, not workspace files or handoff notes. AI-Worker does not attach saved cookies or account credentials; result text and source URLs are returned to the MCP host, which may be remote. Model downloads and host networking are separate.'
+      : 'AI-Worker runtime status is missing, stale, or stopped, so current privacy and network settings are unknown. Do not infer that cloud or public web use is disabled from this status. MCP inference and task tools require a running app. Model setup downloads and the MCP host’s own network use may occur separately.'
 
   return {
     app: 'AI-Worker',
     version: isLive && typeof runtime.version === 'string' ? runtime.version : null,
     appRunning: isLive,
-    privacyMode: isLive && ['connected', 'local-only'].includes(runtime.privacyMode) ? runtime.privacyMode : 'unknown',
+    privacyMode,
     modelReady: modelStatusFresh && typeof model?.available === 'boolean' ? model.available : null,
     modelStatusFresh,
-    networkUse: 'Status reads local metadata. ask_local and Tauri task tools use on-device inference only and never fall back to cloud. Workspace tasks read only the active project path provided by the host. Tauri task mode does not browse the web or access connected services. Model imports or explicit model setup may use the network.',
-    scope: 'status, on-device text inference, bounded workspace list/read/search, and asynchronous staged file writes that require explicit desktop approval',
+    networkUse,
+    scope: 'status, on-device text inference, bounded workspace list/read/search, optional Tauri public web research when enabled in AI-Worker settings and explicitly requested by the task, and asynchronous staged file writes that require exact-content desktop approval',
     dataExposed: ['app version', 'app running state', 'privacy mode', 'on-device model readiness'],
     excluded: ['chat history', 'memory content', 'workspace files', 'browser automation', 'account tokens', 'connected services'],
   }
@@ -113,6 +119,10 @@ function getLocalEndpoint({ profile = 'all' } = {}) {
     throw new Error('AI-Worker local inference bridge is not ready. Restart the desktop app and retry.')
   }
   return { port: runtime.port, token: runtime.token }
+}
+
+function isAbsolutePath(value) {
+  return path.posix.isAbsolute(value) || path.win32.isAbsolute(value)
 }
 
 async function askLocal(prompt) {
@@ -151,14 +161,15 @@ async function askLocal(prompt) {
 }
 
 function agentTaskRequest({ capabilities = [], workspaceRoot, handoffContext, prompt }) {
-  // OpenCode launches local MCP servers from its active project directory by default.
-  const activeWorkspace = capabilities.includes('workspace') ? process.cwd() : undefined
-  return {
-    prompt,
-    capabilities,
-    workspaceRoot: workspaceRoot || activeWorkspace,
-    handoffContext: handoffContext || (activeWorkspace ? { workingDirectory: activeWorkspace } : undefined),
-  }
+  const hasWorkspace = capabilities.includes('workspace')
+  const activeWorkspace = hasWorkspace ? process.cwd() : undefined
+  const selectedWorkspace = workspaceRoot || activeWorkspace
+  const context = handoffContext ? { ...handoffContext } : {}
+  if (hasWorkspace && !context.workingDirectory) context.workingDirectory = selectedWorkspace
+  const request = { prompt, capabilities }
+  if (selectedWorkspace) request.workspaceRoot = selectedWorkspace
+  if (Object.keys(context).length > 0) request.handoffContext = context
+  return request
 }
 
 async function requestTauri(pathname, { method = 'GET', body, signal, timeout = TASK_REQUEST_TIMEOUT_MS } = {}) {
@@ -199,6 +210,30 @@ function validateTaskId(id, label = 'task ID') {
   return id
 }
 
+function invalidTaskSource(source) {
+  if (typeof source !== 'string' || source.length === 0 || source.length > 2048) return true
+  if (source.startsWith('https://')) {
+    try {
+      const url = new URL(source)
+      return url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.hash !== ''
+    } catch {
+      return true
+    }
+  }
+  return source.length > 256 || source.includes('\\') || source.includes(':') || source.startsWith('/') ||
+    source.split('/').some(part => part === '' || part === '.' || part === '..')
+}
+
+function normalizeTaskResult(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      typeof value.content !== 'string' || [...value.content].length > 4000 ||
+      !Array.isArray(value.sources) || value.sources.length > 16 ||
+      value.sources.some(invalidTaskSource)) {
+    throw new Error('AI-Worker returned an invalid task result.')
+  }
+  return { content: value.content, sources: value.sources }
+}
+
 function normalizeTaskStatus(value, expectedId) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       value.id !== expectedId || !TASK_STATES.has(value.state)) {
@@ -215,16 +250,10 @@ function normalizeTaskStatus(value, expectedId) {
     status.pendingQuestion = { id: question.id, text: question.text }
   }
   if (value.result !== undefined) {
-    const result = value.result
-    if (value.state !== 'completed' || !result || typeof result !== 'object' ||
-        typeof result.content !== 'string' || [...result.content].length > 4000 ||
-        !Array.isArray(result.sources) || result.sources.length > 16 ||
-        result.sources.some(source => typeof source !== 'string' || source.length === 0 || source.length > 256 ||
-          source.includes('\\') || source.includes(':') || source.startsWith('/') ||
-          source.split('/').some(part => part === '' || part === '.' || part === '..'))) {
+    if (value.state !== 'completed') {
       throw new Error('AI-Worker returned an invalid task result.')
     }
-    status.result = { content: result.content, sources: result.sources }
+    status.result = normalizeTaskResult(value.result)
   }
   if (value.state === 'waiting_for_parent' && status.pendingQuestion === undefined) {
     throw new Error('AI-Worker returned an invalid parent question.')
@@ -249,9 +278,9 @@ function normalizeTaskAck(value, expectedId, allowedStates) {
   return { id: expectedId, state: value.state }
 }
 
-async function startAgentTask(input, signal) {
+async function startAgentTask(input) {
   const request = agentTaskRequest(input)
-  const result = await requestTauri('/start-agent-task', { method: 'POST', body: request, signal })
+  const result = await requestTauri('/start-agent-task', { method: 'POST', body: request })
   if (typeof result.id !== 'string' || !TASK_ID_PATTERN.test(result.id) || result.state !== 'queued') {
     throw new Error('AI-Worker returned an invalid task ID.')
   }
@@ -314,22 +343,24 @@ const handoffLine = max => z.string().min(1).max(max).trim().min(1).regex(/^[^\x
 const handoffNote = max => z.string().min(1).max(max).trim().min(1).regex(/^[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+$/)
 const taskInputSchema = {
   prompt: z.string().trim().min(1).max(MAX_TASK_PROMPT_LENGTH),
-  capabilities: z.array(z.enum(['workspace', 'web', 'services'])).max(3).optional(),
-  workspaceRoot: handoffLine(1024).optional().describe('Absolute active project root supplied by the main agent.'),
+  capabilities: z.array(z.enum(['workspace', 'web'])).max(2).optional(),
+  workspaceRoot: handoffLine(1024).refine(isAbsolutePath, 'Workspace root must be an absolute path.').optional()
+    .describe('Absolute active project root supplied by the main agent.'),
   handoffContext: z.strictObject({
     summary: handoffNote(2000).optional(),
     constraints: z.array(handoffNote(256)).max(8).optional(),
     relevantFiles: z.array(handoffLine(256).refine(file => !file.includes(':') &&
       file.split(/[\\/]/).every(part => part !== '' && part !== '.' && part !== '..'))).max(12).optional(),
     sourceAgent: handoffLine(96).optional(),
-    workingDirectory: handoffLine(1024).refine(dir => path.posix.isAbsolute(dir) || path.win32.isAbsolute(dir)).optional(),
+    workingDirectory: handoffLine(1024).refine(isAbsolutePath).optional(),
   }).optional().describe('Explicit background for this task. Use relative file names and omit credentials and unrelated conversation.'),
 }
 const taskIdSchema = z.string().regex(TASK_ID_PATTERN, 'Task ID must be 64 lowercase hexadecimal characters.')
+const syncTaskInputSchema = { ...taskInputSchema, capabilities: z.array(z.literal('workspace')).max(1).optional() }
 server.registerTool('run_agent_task', {
   title: 'Delegate a task to AI-Worker',
   description: 'Run a bounded synchronous read-only task with AI-Worker’s Tauri on-device model. For workspace tasks, pass capabilities:["workspace"] and the active project workspaceRoot; workspace reads are limited to that project. This route never writes, browses the web, or accesses connected services. The result is returned to this host, whose model may be remote; use a local host model to keep workspace content on-device.',
-  inputSchema: taskInputSchema,
+  inputSchema: syncTaskInputSchema,
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 }, async ({ prompt, capabilities = [], workspaceRoot, handoffContext }, extra) => {
   try {
@@ -337,8 +368,8 @@ server.registerTool('run_agent_task', {
     const result = await requestTauri('/run-agent-task', {
       method: 'POST', body: request, signal: extra.signal, timeout: TASK_RUN_TIMEOUT_MS,
     })
-    if (typeof result.content !== 'string' || !Array.isArray(result.sources)) throw new Error('Invalid agent task result.')
-    return { content: [{ type: 'text', text: result.content }], structuredContent: { sources: result.sources } }
+    const taskResult = normalizeTaskResult(result)
+    return { content: [{ type: 'text', text: taskResult.content }], structuredContent: { sources: taskResult.sources } }
   } catch (error) {
     return { content: [{ type: 'text', text: error instanceof Error ? error.message : 'Task failed.' }], isError: true }
   }
@@ -346,12 +377,18 @@ server.registerTool('run_agent_task', {
 
 server.registerTool('start_agent_task', {
   title: 'Start a delegated AI-Worker task',
-  description: 'Start a process-local task using AI-Worker’s on-device model. Workspace scope is the active project path supplied by the host; bounded reads need no per-file prompts. If a file write is proposed, the task pauses while the user reviews the exact current and proposed content in AI-Worker’s compact approval window; no write occurs before approval. Dismissing or declining cancels that write. This local-only task cannot browse the web or use connected services. Starting returns an ID only; poll get_agent_task for a parent question, write-approval wait state, or completed result. A remote host can receive text it requests, so use a local host model to keep workspace data on-device.',
+  description: 'Start a process-local task using AI-Worker’s on-device model. Workspace scope is the active project path supplied by the host; bounded reads need no per-file prompts. For public research, both the AI-Worker Settings opt-in and capabilities:["web"] are required. Search terms and requested public HTTPS URLs leave this device; fetched result text and source URLs return to this MCP host, which may be remote. Keep private workspace content out of search terms and URLs. Connected services remain unavailable. If a file write is proposed, the task pauses while the user reviews the exact current and proposed content in AI-Worker’s compact approval window; no write occurs before approval. Dismissing or declining cancels that write. Starting returns an ID only; poll get_agent_task for a parent question, write-approval wait state, or completed result.',
   inputSchema: taskInputSchema,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 }, async ({ prompt, capabilities = [], workspaceRoot, handoffContext }, extra) => {
   try {
-    const task = await startAgentTask({ prompt, capabilities, workspaceRoot, handoffContext }, extra.signal)
+    if (extra.signal.aborted) throw new Error('The MCP caller cancelled this request.')
+    // Keep start uncancellable until its ID arrives, so a host cancellation can cancel the task it created.
+    const task = await startAgentTask({ prompt, capabilities, workspaceRoot, handoffContext })
+    if (extra.signal.aborted) {
+      await cancelAgentTask(task.id).catch(() => {})
+      throw new Error('The MCP caller cancelled this request.')
+    }
     return { content: [{ type: 'text', text: JSON.stringify(task) }], structuredContent: task }
   } catch (error) {
     return { content: [{ type: 'text', text: error instanceof Error ? error.message : 'Task could not be started.' }], isError: true }
@@ -360,7 +397,7 @@ server.registerTool('start_agent_task', {
 
 server.registerTool('get_agent_task', {
   title: 'Check AI-Worker task status',
-  description: 'Read status for one task. If waiting for the parent, returns its bounded question; if waiting for a workspace write approval, returns only that state and no file contents. If completed, returns the result and workspace-relative sources. This call releases returned text to this MCP host, which may be remote; use a local host model to keep workspace data on-device.',
+  description: 'Read status for one task. If waiting for the parent, returns its bounded question; if waiting for a workspace write approval, returns only that state and no file contents. If completed, returns the result and sources, which may be workspace-relative paths or public HTTPS URLs from requested research. This call releases returned text to this MCP host, which may be remote; use a local host model to keep workspace data on-device.',
   inputSchema: { taskId: taskIdSchema },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 }, async ({ taskId }, extra) => {

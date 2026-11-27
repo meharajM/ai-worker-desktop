@@ -8,8 +8,8 @@ const opened = (request) => ({
   sessionId: 's-1',
   requestId: request.requestId,
 })
-const lowImpact = { schemaVersion: 1, selectedProfileId: null, resourcePreset: 'lowImpact', idlePolicy: 'taskEnd' }
-const balanced = { schemaVersion: 1, selectedProfileId: null, resourcePreset: 'balanced', idlePolicy: 'shortIdle' }
+const lowImpact = { schemaVersion: 1, selectedProfileId: null, resourcePreset: 'lowImpact', idlePolicy: 'taskEnd', allowOnlineResearch: false }
+const balanced = { schemaVersion: 1, selectedProfileId: null, resourcePreset: 'balanced', idlePolicy: 'shortIdle', allowOnlineResearch: false }
 const preferenceReply = (request, preferences = lowImpact) => ({
   protocolVersion: 1, ownerId: 'main', sessionId: request.sessionId, requestId: request.requestId, preferences,
 })
@@ -21,6 +21,7 @@ test('browser preview reports unavailable without invoking native commands', asy
   await assert.rejects(client.getStatus(), { code: 'unavailable' })
   await assert.rejects(client.getPreferences(), { code: 'unavailable' })
   await assert.rejects(client.updatePreferences(balanced), { code: 'unavailable' })
+  await assert.rejects(client.sendLocalChat('hello'), { code: 'unavailable' })
   assert.equal(calls, 0)
 })
 
@@ -130,6 +131,43 @@ test('status and preferences share the cached session and validate correlated re
   assert.deepEqual(calls[3].request.preferences, lowImpact)
 })
 
+test('local chat sends only through the correlated Tauri session and validates its local-model reply', async () => {
+  const calls = []
+  const client = createDesktopBridgeClient({
+    isTauri: () => true,
+    invoke: async (command, args) => {
+      calls.push({ command, ...args })
+      if (command === 'bridge_open_session') return opened(args.request)
+      return { ...args.request, content: 'Hello from local inference.', provider: 'Ollama (local)', model: 'gemma3:4b' }
+    },
+  })
+  const reply = await client.sendLocalChat('Hello')
+  assert.equal(reply.content, 'Hello from local inference.')
+  assert.equal(reply.provider, 'Ollama (local)')
+  assert.equal(calls[1].command, 'chat_local')
+  assert.equal(calls[1].prompt, 'Hello')
+  assert.equal(calls[1].request.sessionId, 's-1')
+})
+
+test('local chat rejects oversized prompts and cloud-shaped or oversized replies', async (t) => {
+  let calls = 0
+  const client = createDesktopBridgeClient({
+    isTauri: () => true,
+    invoke: async (command, args) => {
+      calls++
+      if (command === 'bridge_open_session') return opened(args.request)
+      return { ...args.request, content: client.replyContent ?? 'answer', provider: client.replyProvider ?? 'Ollama (local)', model: 'gemma3:4b' }
+    },
+  })
+  await assert.rejects(client.sendLocalChat('x'.repeat(8_001)), { code: 'invalid_request' })
+  assert.equal(calls, 0)
+  client.replyProvider = 'OpenAI'
+  await assert.rejects(client.sendLocalChat('hello'), { code: 'protocol_error' })
+  client.replyProvider = 'Ollama (local)'
+  client.replyContent = 'x'.repeat(64 * 1024 + 1)
+  await assert.rejects(client.sendLocalChat('hello'), { code: 'protocol_error' })
+})
+
 test('preferences reject malformed input before invocation and malformed replies as protocol errors', async (t) => {
   let calls = 0
   const client = createDesktopBridgeClient({
@@ -148,6 +186,7 @@ test('preferences reject malformed input before invocation and malformed replies
     { ...lowImpact, schemaVersion: 2 },
     { ...lowImpact, path: '/tmp/private' },
     { ...lowImpact, idlePolicy: undefined },
+    { ...lowImpact, allowOnlineResearch: 'true' },
   ]) {
     await assert.rejects(client.updatePreferences(invalid), { code: 'invalid_request' })
   }
@@ -159,6 +198,7 @@ test('preferences reject malformed input before invocation and malformed replies
     { ...lowImpact, idlePolicy: 'shortIdle' },
     { ...lowImpact, schemaVersion: 2 },
     { ...lowImpact, extra: true },
+    { ...lowImpact, allowOnlineResearch: undefined },
     null,
   ]) {
     client.replyPreferences = invalid
@@ -174,6 +214,18 @@ test('preferences update rejects a valid but unrequested saved pair', async () =
       : preferenceReply(request, balanced),
   })
   await assert.rejects(client.updatePreferences(lowImpact), { code: 'protocol_error' })
+})
+
+test('preferences preserve explicit opt-in for delegated public web research', async () => {
+  const online = { ...lowImpact, allowOnlineResearch: true }
+  const client = createDesktopBridgeClient({
+    isTauri: () => true,
+    invoke: async (command, { request }) => command === 'bridge_open_session'
+      ? opened(request)
+      : preferenceReply(request, online),
+  })
+  const result = await client.updatePreferences(online)
+  assert.equal(result.preferences.allowOnlineResearch, true)
 })
 
 test('preference identity mismatch and native errors preserve protocol/static codes', async (t) => {

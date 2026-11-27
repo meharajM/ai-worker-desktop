@@ -44,7 +44,7 @@ test('OpenCode launches only the AI-Worker subagent and limits its MCP tools', (
     'cancel_agent_task',
   ]) assert.equal(openCodePermission[`ai_worker_readonly_${tool}`], 'allow')
   assert.deepEqual(openCode.mcp.ai_worker_readonly.command, ['node', 'scripts/ai-worker-readonly-mcp.mjs'])
-  assert.equal(openCode.provider.ollama.options.baseURL, 'http://localhost:11434/v1')
+  assert.equal(openCode.provider.ollama.options.baseURL, 'http://127.0.0.1:11434/v1')
   assert.ok(openCode.provider.ollama.models['qwen3-vl:4b'])
 
   const subagent = openCode.agent.ai_worker_readonly
@@ -94,7 +94,7 @@ test('ask_local is implemented and documented as local inference only', () => {
   assert.match(bridge, /http:\/\/127\.0\.0\.1:\$\{port\}\/ask-local/)
   assert.doesNotMatch(docs, /ask_local[^\n]*pending/i)
   assert.match(docs, /never falls back to a cloud provider/i)
-  assert.match(docs, /host's own model may be remote/i)
+  assert.match(docs, /host receives task results and may run a remote model/i)
   assert.match(docs, /waiting_for_parent/)
   assert.match(docs, /process memory/i)
   assert.match(docs, /cancelling/i)

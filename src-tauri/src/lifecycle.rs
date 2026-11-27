@@ -6,6 +6,7 @@ use tauri::{
 
 const MAIN_WINDOW: &str = "main";
 const SHOW: &str = "tray-show-main";
+const ACTIVITY: &str = "tray-task-activity";
 const QUIT: &str = "tray-quit";
 
 pub fn setup(app: &App) -> Result<(), Box<dyn std::error::Error>> {
@@ -14,7 +15,11 @@ pub fn setup(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| std::io::Error::other("AI-Worker requires a bundled tray icon"))?;
     let show = MenuItemBuilder::with_id(SHOW, "Show AI-Worker").build(app)?;
     let quit = MenuItemBuilder::with_id(QUIT, "Quit AI-Worker").build(app)?;
-    let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
+    let mut menu = MenuBuilder::new(app).item(&show);
+    if crate::task_activity::is_enabled(app.handle()) {
+        menu = menu.text(ACTIVITY, "Task activity");
+    }
+    let menu = menu.item(&quit).build()?;
 
     TrayIconBuilder::new()
         .icon(icon.clone())
@@ -23,6 +28,7 @@ pub fn setup(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             SHOW => show_main(app),
+            ACTIVITY => crate::task_activity::show(app, true),
             QUIT => app.exit(0),
             _ => {}
         })
@@ -46,7 +52,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     }
 }
 
-fn show_main(app: &AppHandle) {
+pub(crate) fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         let result = window
             .unminimize()
@@ -56,6 +62,10 @@ fn show_main(app: &AppHandle) {
             eprintln!("[Lifecycle] Failed to show AI-Worker: {error}");
         }
     }
+}
+
+pub(crate) fn should_show_main_on_reopen(has_visible_windows: bool) -> bool {
+    !has_visible_windows
 }
 
 fn is_show_click(event: &TrayIconEvent) -> bool {
@@ -99,5 +109,11 @@ mod tests {
             MouseButton::Middle,
             MouseButtonState::Up
         )));
+    }
+
+    #[test]
+    fn reopens_main_window_only_when_no_window_is_visible() {
+        assert!(should_show_main_on_reopen(false));
+        assert!(!should_show_main_on_reopen(true));
     }
 }

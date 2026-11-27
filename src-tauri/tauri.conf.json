@@ -30,7 +30,7 @@
     "withGlobalTauri": false,
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost",
-      "capabilities": ["main", "write-approval"]
+      "capabilities": ["main", "write-approval", "task-activity"]
     },
     "windows": [
       {

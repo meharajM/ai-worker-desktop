@@ -3,11 +3,14 @@ use tauri::{Manager, State, WebviewWindow};
 mod a2a;
 mod agent_task;
 mod bridge;
+mod chat;
 mod external_mcp;
 mod lifecycle;
 mod model_runtime;
 mod model_setup;
 mod preferences;
+mod research;
+mod task_activity;
 mod workspace;
 
 #[tauri::command]
@@ -122,6 +125,7 @@ fn main() {
             bridge::bridge_get_status,
             bridge::bridge_get_preferences,
             bridge::bridge_update_preferences,
+            chat::chat_local,
             model_setup::model_catalog,
             model_setup::model_import,
             model_setup::model_install,
@@ -129,6 +133,7 @@ fn main() {
             model_setup::model_cancel_install,
             get_pending_write_approval,
             resolve_write_approval,
+            task_activity::get_task_activity,
             #[cfg(feature = "proof")]
             native_proof::proof_stream,
             #[cfg(feature = "proof")]
@@ -143,6 +148,16 @@ fn main() {
         .build(context)
         .expect("failed to build Tauri application")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = &event
+            {
+                if lifecycle::should_show_main_on_reopen(*has_visible_windows) {
+                    lifecycle::show_main(app);
+                }
+            }
             if matches!(event, tauri::RunEvent::Exit) {
                 if let Err(error) = app
                     .state::<external_mcp::ExternalMcp>()

@@ -46,6 +46,7 @@ export type DesktopPreferences = {
   selectedProfileId: null
   resourcePreset: 'lowImpact' | 'balanced'
   idlePolicy: 'taskEnd' | 'shortIdle'
+  allowOnlineResearch: boolean
 }
 
 export type DesktopPreferencesReply = {
@@ -56,11 +57,17 @@ export type DesktopPreferencesReply = {
   preferences: DesktopPreferences
 }
 
+export type LocalChatReply = Identity & {
+  content: string
+  provider: 'Ollama (local)' | 'llama.cpp'
+  model: string
+}
+
 type Identity = { protocolVersion: number; ownerId: string; sessionId: string; requestId: string }
 type OpenRequest = Omit<Identity, 'sessionId'>
 type NativeRequest = OpenRequest | Identity | (Identity & { preferences: DesktopPreferences })
-type NativeCommand = 'bridge_open_session' | 'bridge_get_status' | 'bridge_get_preferences' | 'bridge_update_preferences' | 'model_catalog' | 'model_import' | 'model_install' | 'model_cancel_import' | 'model_cancel_install'
-type Invoke = <T>(command: NativeCommand, args: { request: NativeRequest; onProgress?: Channel<ModelImportProgress>; importRequestId?: string; installRequestId?: string; modelId?: string }) => Promise<T>
+type NativeCommand = 'bridge_open_session' | 'bridge_get_status' | 'bridge_get_preferences' | 'bridge_update_preferences' | 'chat_local' | 'model_catalog' | 'model_import' | 'model_install' | 'model_cancel_import' | 'model_cancel_install'
+type Invoke = <T>(command: NativeCommand, args: { request: NativeRequest; prompt?: string; onProgress?: Channel<ModelImportProgress>; importRequestId?: string; installRequestId?: string; modelId?: string }) => Promise<T>
 
 export type ModelCandidate = {
   id: string
@@ -244,8 +251,8 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
   const object = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value)
   const validPreferences = (value: unknown): value is DesktopPreferences => {
-    if (!object(value) || Object.keys(value).sort().join(',') !== 'idlePolicy,resourcePreset,schemaVersion,selectedProfileId') return false
-    if (value.schemaVersion !== 1 || value.selectedProfileId !== null) return false
+    if (!object(value) || Object.keys(value).sort().join(',') !== 'allowOnlineResearch,idlePolicy,resourcePreset,schemaVersion,selectedProfileId') return false
+    if (value.schemaVersion !== 1 || value.selectedProfileId !== null || typeof value.allowOnlineResearch !== 'boolean') return false
     return (value.resourcePreset === 'lowImpact' && value.idlePolicy === 'taskEnd') ||
       (value.resourcePreset === 'balanced' && value.idlePolicy === 'shortIdle')
   }
@@ -282,14 +289,15 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
 
   function samePreferences(left: DesktopPreferences, right: DesktopPreferences) {
     return left.schemaVersion === right.schemaVersion && left.selectedProfileId === right.selectedProfileId &&
-      left.resourcePreset === right.resourcePreset && left.idlePolicy === right.idlePolicy
+      left.resourcePreset === right.resourcePreset && left.idlePolicy === right.idlePolicy &&
+      left.allowOnlineResearch === right.allowOnlineResearch
   }
 
   async function correlatedRequest<T>(
     command: Exclude<NativeCommand, 'bridge_open_session'>,
     preferences: DesktopPreferences | undefined,
     validate: (reply: unknown, identity: Identity) => T,
-    extraArgs: { onProgress?: Channel<ModelImportProgress>; importRequestId?: string; installRequestId?: string; modelId?: string } = {},
+    extraArgs: { prompt?: string; onProgress?: Channel<ModelImportProgress>; importRequestId?: string; installRequestId?: string; modelId?: string } = {},
   ): Promise<T> {
     if (!platform.isTauri()) throw new DesktopBridgeError('unavailable')
     if (preferences !== undefined && !validPreferences(preferences)) throw new DesktopBridgeError('invalid_request')
@@ -344,6 +352,22 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
         if (!samePreferences(preferences, reply.preferences)) throw new DesktopBridgeError('protocol_error')
         return reply
       })
+    },
+    sendLocalChat(prompt: string): Promise<LocalChatReply> {
+      if (typeof prompt !== 'string' || prompt.trim().length === 0 || prompt.length > 8_000) {
+        return Promise.reject(new DesktopBridgeError('invalid_request'))
+      }
+      return correlatedRequest('chat_local', undefined, (value, identity) => {
+        const reply = validateIdentity(value, identity)
+        if (Object.keys(reply).sort().join(',') !== 'content,model,ownerId,protocolVersion,provider,requestId,sessionId' ||
+          typeof reply.content !== 'string' || new TextEncoder().encode(reply.content).byteLength > 64 * 1024 ||
+          !['Ollama (local)', 'llama.cpp'].includes(String(reply.provider)) ||
+          typeof reply.model !== 'string' || reply.model.length === 0 || reply.model.length > 128 ||
+          !/^[A-Za-z0-9._:/-]+$/.test(reply.model)) {
+          throw new DesktopBridgeError('protocol_error')
+        }
+        return reply as LocalChatReply
+      }, { prompt })
     },
     getModelCatalog(): Promise<ModelCatalog & Identity> {
       return correlatedRequest('model_catalog', undefined, (value, identity) => {

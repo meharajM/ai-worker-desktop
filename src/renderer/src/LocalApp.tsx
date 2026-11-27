@@ -2,17 +2,47 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './components/primitives/Button'
 import { TextArea } from './components/input/TextArea'
 import { DesktopBridgeError, desktopBridge, type DesktopPreferences, type ModelCatalog, type ModelImportProgress } from './desktop-bridge'
+import { buildLocalChatPrompt, MAX_LOCAL_CHAT_PROMPT_LENGTH } from './lib/local-chat-context'
 
 type View = 'chat' | 'settings'
 type PreferencePreset = DesktopPreferences['resourcePreset']
 type PreferenceLoadState = 'idle' | 'loading' | 'ready' | 'error' | 'unavailable'
+type LocalChatMessage = {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  provider?: 'Ollama (local)' | 'llama.cpp'
+  model?: string
+}
 
-function preferencesFor(resourcePreset: PreferencePreset): DesktopPreferences {
+const LOCAL_CHAT_STORAGE_KEY = 'ai-worker.local-chat.v1'
+const MAX_LOCAL_CHAT_MESSAGES = 100
+
+function readLocalChat(): LocalChatMessage[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(LOCAL_CHAT_STORAGE_KEY) ?? 'null')
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !('version' in value) || value.version !== 1 ||
+      !('messages' in value) || !Array.isArray(value.messages)) return []
+    return value.messages.slice(-MAX_LOCAL_CHAT_MESSAGES).filter((message): message is LocalChatMessage =>
+      message !== null && typeof message === 'object' && !Array.isArray(message) &&
+      typeof message.id === 'string' && message.id.length <= 96 &&
+      (message.role === 'user' || message.role === 'assistant') &&
+      typeof message.content === 'string' && message.content.length <= 64 * 1024 &&
+      (message.role === 'user' || message.provider === 'Ollama (local)' || message.provider === 'llama.cpp') &&
+      (message.role === 'user' || (typeof message.model === 'string' && message.model.length <= 128)),
+    )
+  } catch {
+    return []
+  }
+}
+
+function preferencesFor(resourcePreset: PreferencePreset, allowOnlineResearch: boolean): DesktopPreferences {
   return {
     schemaVersion: 1,
     selectedProfileId: null,
     resourcePreset,
     idlePolicy: resourcePreset === 'balanced' ? 'shortIdle' : 'taskEnd',
+    allowOnlineResearch,
   }
 }
 
@@ -29,10 +59,14 @@ export function LocalApp() {
   const [view, setView] = useState<View>('chat')
   const [status, setStatus] = useState('Checking native bridge…')
   const [text, setText] = useState('')
-  const [draft, setDraft] = useState('')
+  const [messages, setMessages] = useState<LocalChatMessage[]>(readLocalChat)
+  const [chatBusy, setChatBusy] = useState(false)
+  const [chatError, setChatError] = useState('')
+  const [chatStorageWarning, setChatStorageWarning] = useState('')
   const [preferenceLoadState, setPreferenceLoadState] = useState<PreferenceLoadState>('idle')
   const [preferences, setPreferences] = useState<DesktopPreferences>()
   const [selectedPreset, setSelectedPreset] = useState<PreferencePreset | ''>('')
+  const [selectedAllowOnlineResearch, setSelectedAllowOnlineResearch] = useState(false)
   const [preferenceError, setPreferenceError] = useState('')
   const [saveNotice, setSaveNotice] = useState('')
   const [saving, setSaving] = useState(false)
@@ -48,7 +82,6 @@ export function LocalApp() {
   const mounted = useRef(false)
   const modelRequestIdRef = useRef<string>()
   const modelOperationRef = useRef<'import' | 'install' | null>(null)
-  const automaticInstallAttempted = useRef(false)
 
   const checkStatus = useCallback(async () => {
     const generation = ++checkGeneration.current
@@ -75,6 +108,7 @@ export function LocalApp() {
     setSaveNotice('')
     setPreferences(undefined)
     setSelectedPreset('')
+    setSelectedAllowOnlineResearch(false)
     if (!desktopBridge.isAvailable()) {
       setPreferenceLoadState('unavailable')
       return
@@ -85,6 +119,7 @@ export function LocalApp() {
       if (!mounted.current || generation !== preferencesGeneration.current) return
       setPreferences(result.preferences)
       setSelectedPreset(result.preferences.resourcePreset)
+      setSelectedAllowOnlineResearch(result.preferences.allowOnlineResearch)
       setPreferenceLoadState('ready')
     } catch (error) {
       if (!mounted.current || generation !== preferencesGeneration.current) return
@@ -101,10 +136,11 @@ export function LocalApp() {
     setPreferenceError('')
     setSaveNotice('')
     try {
-      const result = await desktopBridge.updatePreferences(preferencesFor(selectedPreset))
+      const result = await desktopBridge.updatePreferences(preferencesFor(selectedPreset, selectedAllowOnlineResearch))
       if (!mounted.current || generation !== preferencesGeneration.current) return
       setPreferences(result.preferences)
       setSelectedPreset(result.preferences.resourcePreset)
+      setSelectedAllowOnlineResearch(result.preferences.allowOnlineResearch)
       setSaveNotice('Preferences saved.')
     } catch (error) {
       if (!mounted.current || generation !== preferencesGeneration.current) return
@@ -113,7 +149,7 @@ export function LocalApp() {
       saveBusy.current = false
       if (mounted.current) setSaving(false)
     }
-  }, [preferenceLoadState, selectedPreset])
+  }, [preferenceLoadState, selectedAllowOnlineResearch, selectedPreset])
 
   const loadModelCatalog = useCallback(async () => {
     if (!desktopBridge.isAvailable()) return
@@ -222,11 +258,39 @@ export function LocalApp() {
     }
   }, [modelRequestId])
 
-  function saveDraft() {
-    if (!text.trim()) return
-    setDraft(text)
+  const sendChat = useCallback(async () => {
+    const prompt = text.trim()
+    if (!prompt || chatBusy) return
+    if (prompt.length > MAX_LOCAL_CHAT_PROMPT_LENGTH) {
+      setChatError('Local prompts are limited to 8,000 characters. Shorten this message and retry.')
+      return
+    }
+    const userMessage: LocalChatMessage = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      role: 'user',
+      content: prompt,
+    }
+    setMessages((current) => [...current, userMessage].slice(-MAX_LOCAL_CHAT_MESSAGES))
     setText('')
-  }
+    setChatError('')
+    setChatBusy(true)
+    try {
+      const reply = await desktopBridge.sendLocalChat(buildLocalChatPrompt(messages, prompt))
+      setMessages((current) => [...current, {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        role: 'assistant' as const,
+        content: reply.content,
+        provider: reply.provider,
+        model: reply.model,
+      }].slice(-MAX_LOCAL_CHAT_MESSAGES))
+    } catch (error) {
+      setChatError(error instanceof DesktopBridgeError && error.code === 'transport_error'
+        ? 'The local model is unavailable or still loading. Check On-device model setup in Settings and retry.'
+        : safeError(error))
+    } finally {
+      setChatBusy(false)
+    }
+  }, [chatBusy, messages, text])
 
   useEffect(() => {
     mounted.current = true
@@ -239,12 +303,13 @@ export function LocalApp() {
   }, [checkStatus, loadModelCatalog])
 
   useEffect(() => {
-    const recommendation = modelCatalog?.recommendedModel
-    if (!mounted.current || automaticInstallAttempted.current || !modelCatalog?.ollamaAvailable ||
-      modelCatalog.selectedModel || !recommendation) return
-    automaticInstallAttempted.current = true
-    void startModelInstall(recommendation.id)
-  }, [modelCatalog, startModelInstall])
+    try {
+      localStorage.setItem(LOCAL_CHAT_STORAGE_KEY, JSON.stringify({ version: 1, messages }))
+      setChatStorageWarning('')
+    } catch {
+      setChatStorageWarning('This conversation is visible now but could not be saved in local app storage.')
+    }
+  }, [messages])
 
   useEffect(() => {
     if (view !== 'settings') {
@@ -290,15 +355,17 @@ export function LocalApp() {
           <>
             <header className="border-b border-[var(--color-border)] px-8 py-5">
               <h2 className="text-lg font-medium">Local chat</h2>
-              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Your workspace stays on this device.</p>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">This chat always uses on-device inference and local app storage. Recent turns are included as context for the local model. Delegated tasks stay local unless public web research is enabled in Settings and explicitly requested by the host.</p>
             </header>
-            <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-6 p-8">
-              <div>
-                <h3 className="text-xl font-semibold">Preparing this device for local AI</h3>
-                <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-                  AI-Worker checks your system and can download a suitable on-device model in the background. You can keep using this window while setup runs.
-                </p>
-              </div>
+            <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 overflow-y-auto p-8">
+              {!messages.length && (
+                <div className="my-auto">
+                  <h3 className="text-xl font-semibold">Chat with your on-device model</h3>
+                  <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+                    AI-Worker sends prompts to an installed local model only. It never switches to a cloud model when local inference is unavailable.
+                  </p>
+                </div>
+              )}
               {modelSetupState === 'installing' && (
                 <div role="status" aria-live="polite" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
                   <p className="text-sm">{modelProgress?.message ?? 'Preparing the recommended local model…'}</p>
@@ -309,29 +376,41 @@ export function LocalApp() {
                   )}
                 </div>
               )}
-              {draft && (
-                <p className="whitespace-pre-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm" aria-live="polite">
-                  <span className="mb-2 block text-xs text-[var(--color-text-secondary)]">Local draft · not sent</span>
-                  {draft}
-                </p>
+              {modelCatalog && !modelCatalog.selectedModel && modelSetupState !== 'installing' && (
+                <div role="status" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                  <p className="text-sm">No on-device model is ready yet. Open Settings to check compatibility and choose an install.</p>
+                  <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Model downloads use the internet only after you select Install. Prompts still use local inference and never fall back to cloud.</p>
+                  <Button type="button" variant="secondary" size="sm" className="mt-3" onClick={() => setView('settings')}>Set up local model</Button>
+                </div>
               )}
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-                <label htmlFor="local-draft" className="sr-only">Write a local draft</label>
+              {messages.map((message) => (
+                <article key={message.id} className={`rounded-xl border border-[var(--color-border)] p-4 text-sm ${message.role === 'user' ? 'ml-8 bg-[var(--color-surface)]' : 'mr-8'}`}>
+                  <p className="mb-2 text-xs text-[var(--color-text-secondary)]">{message.role === 'user' ? 'You' : `AI-Worker · ${message.provider ?? 'local'}`}</p>
+                  <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                  {message.role === 'assistant' && message.model && <p className="mt-3 text-xs text-[var(--color-text-secondary)]">On-device model: {message.model}</p>}
+                </article>
+              ))}
+              {chatBusy && <p role="status" aria-live="polite" className="text-sm text-[var(--color-text-secondary)]">Waiting for the local model… First response may take longer while the model loads.</p>}
+              {chatError && <p role="alert" className="rounded-lg border border-red-500/40 p-3 text-sm text-red-300">{chatError} No cloud fallback was used.</p>}
+              {chatStorageWarning && <p role="status" className="text-xs text-amber-200">{chatStorageWarning}</p>}
+              <div className="sticky bottom-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-dark)] p-3">
+                <label htmlFor="local-chat-input" className="sr-only">Message the local model</label>
                 <TextArea
-                  id="local-draft"
+                  id="local-chat-input"
                   value={text}
                   onChange={(event) => setText(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
+                    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                       event.preventDefault()
-                      saveDraft()
+                      void sendChat()
                     }
                   }}
-                  placeholder="Write a draft… (Enter saves, Shift+Enter adds a line)"
+                  placeholder="Message your local model… (Enter sends, Shift+Enter adds a line)"
+                  disabled={chatBusy}
                 />
                 <div className="flex justify-end pt-2">
-                  <Button type="button" size="sm" variant="secondary" onClick={saveDraft} disabled={!text.trim()}>
-                    Save draft
+                  <Button type="button" size="sm" variant="secondary" onClick={() => void sendChat()} disabled={!text.trim() || chatBusy || !desktopBridge.isAvailable() || !modelCatalog?.selectedModel}>
+                    {chatBusy ? 'Thinking…' : 'Send locally'}
                   </Button>
                 </div>
               </div>
@@ -347,7 +426,7 @@ export function LocalApp() {
               <section aria-labelledby="model-heading" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
                 <h3 id="model-heading" className="font-semibold">On-device model setup</h3>
                 <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-                  Hardware checks and model downloads run in the background. AI-Worker picks a model size from memory and available storage. Ollama downloads the model files; inference stays on this device.
+                  Hardware checks run locally. Ollama downloads model files only after you choose Install; inference stays on this device.
                 </p>
                 {modelCatalog && (
                   <>
@@ -443,9 +522,9 @@ export function LocalApp() {
                 )}
               </section>
               <section aria-labelledby="preferences-heading" aria-busy={preferenceLoadState === 'loading' || saving} className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-                <h3 id="preferences-heading" className="font-semibold">Chat preferences</h3>
+                <h3 id="preferences-heading" className="font-semibold">App and privacy preferences</h3>
                 <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-                  Choose a saved resource preference. Its paired idle policy is saved automatically; model scheduling does not use these preferences yet.
+                  Local-only is the default. On-device inference never falls back to a cloud model. Public web research is separate and remains off until enabled here; a host must also explicitly request web access for a task.
                 </p>
                 {preferenceLoadState === 'unavailable' && (
                   <p role="status" className="mt-4 text-sm text-[var(--color-text-secondary)]">Native preferences are available in the desktop app only.</p>
@@ -472,9 +551,23 @@ export function LocalApp() {
                       <option value="lowImpact">Low impact</option>
                       <option value="balanced">Balanced</option>
                     </select>
+                    <label className="mt-5 flex items-start gap-3 rounded-lg border border-[var(--color-border)] p-4">
+                      <input
+                        id="allow-online-research"
+                        type="checkbox"
+                        checked={selectedAllowOnlineResearch}
+                        disabled={saving}
+                        onChange={(event) => setSelectedAllowOnlineResearch(event.target.checked)}
+                        className="mt-1"
+                      />
+                      <span>
+                        <span className="block text-sm font-medium">Allow delegated public web research</span>
+                        <span className="mt-1 block text-xs text-[var(--color-text-secondary)]">When enabled and a host task requests web access, AI-Worker sends search terms to DuckDuckGo and fetches requested public HTTPS URLs. Search terms and URL paths and queries are sent as supplied. Outbound request planning excludes workspace files and handoff notes; AI-Worker does not attach saved cookies or account credentials. Do not put secrets in the task prompt or URLs. Model inference stays on this device.</span>
+                      </span>
+                    </label>
                     <div className="mt-4 flex items-center justify-between gap-4">
-                      <p className="text-sm text-[var(--color-text-secondary)]">Saved: {preferences.resourcePreset === 'balanced' ? 'Balanced' : 'Low impact'}</p>
-                      <Button type="button" variant="secondary" onClick={() => void savePreferences()} disabled={saving || selectedPreset === preferences.resourcePreset}>
+                      <p className="text-sm text-[var(--color-text-secondary)]">Saved: {preferences.resourcePreset === 'balanced' ? 'Balanced' : 'Low impact'} · web {preferences.allowOnlineResearch ? 'enabled' : 'off'}</p>
+                      <Button type="button" variant="secondary" onClick={() => void savePreferences()} disabled={saving || (selectedPreset === preferences.resourcePreset && selectedAllowOnlineResearch === preferences.allowOnlineResearch)}>
                         {saving ? 'Saving…' : 'Save preferences'}
                       </Button>
                     </div>

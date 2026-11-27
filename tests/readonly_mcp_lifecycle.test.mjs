@@ -15,7 +15,9 @@ const questionId = 'b'.repeat(64)
 const cancelTaskId = 'c'.repeat(64)
 const approvalTaskId = 'd'.repeat(64)
 const modelErrorTaskId = 'e'.repeat(64)
+const cancelDuringStartTaskId = '8'.repeat(64)
 const privateErrorTaskId = '9'.repeat(64)
+const webTaskId = '7'.repeat(64)
 const token = 'f'.repeat(64)
 const safeLocalModelError = 'The selected local model returned no answer text. Choose another installed local model and retry. No cloud fallback was used.'
 
@@ -25,6 +27,7 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
   let answered = false
   let cancelState = 'queued'
   let cancelStatusPolls = 0
+  let privacyMode = 'local-only'
   const httpServer = createServer(async (request, response) => {
     const chunks = []
     for await (const chunk of request) chunks.push(chunk)
@@ -41,12 +44,19 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
       return
     }
     if (request.url === '/start-agent-task') {
-      if (body.prompt === 'Malformed response') {
+      if (body.capabilities?.includes('web') && privacyMode !== 'connected') {
+        send(403, { error: 'Public web research is off in AI-Worker Settings.' })
+      } else if (body.prompt === 'Public research') {
+        send(202, { id: webTaskId, state: 'queued' })
+      } else if (body.prompt === 'Malformed response') {
         send(202, { id: 'not-an-id', state: 'queued' })
       } else if (body.prompt === 'Unauthorized response') {
         send(401, { error: 'Local bridge rejected this request.' })
       } else if (body.prompt === 'Cancel me') {
         send(202, { id: cancelTaskId, state: 'queued' })
+      } else if (body.prompt === 'Cancel during start') {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        send(202, { id: cancelDuringStartTaskId, state: 'queued' })
       } else if (body.prompt === 'Approval wait') {
         send(202, { id: approvalTaskId, state: 'queued' })
       } else if (body.prompt === 'Model did not answer') {
@@ -58,6 +68,12 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
       }
       return
     }
+    if (request.url === '/run-agent-task') {
+      send(200, body.prompt === 'Malformed sources'
+        ? { content: 'Bad result.', sources: ['../private.txt'] }
+        : { content: 'Read-only summary.', sources: ['README.md'] })
+      return
+    }
     if (request.url === `/agent-task/${taskId}/answer`) {
       assert.deepEqual(body, { questionId, answer: 'Use the project docs.' })
       answered = true
@@ -67,6 +83,10 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
     if (request.url === `/agent-task/${cancelTaskId}/cancel`) {
       cancelState = 'cancelling'
       send(202, { id: cancelTaskId, state: cancelState, internal: 'PRIVATE_HANDOFF_PROMPT' })
+      return
+    }
+    if (request.url === `/agent-task/${cancelDuringStartTaskId}/cancel`) {
+      send(200, { id: cancelDuringStartTaskId, state: 'cancelled' })
       return
     }
     if (request.url === `/agent-task/${cancelTaskId}`) {
@@ -116,6 +136,14 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
       }
       return
     }
+    if (request.url === `/agent-task/${webTaskId}`) {
+      send(200, {
+        id: webTaskId,
+        state: 'completed',
+        result: { content: 'Public research summary.', sources: ['https://example.com/research'] },
+      })
+      return
+    }
     send(404, { error: 'Unknown route.' })
   })
 
@@ -128,7 +156,7 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
     running: true,
     startedAt: now - 100,
     heartbeatAt: now,
-    privacyMode: 'local-only',
+    privacyMode,
     model: { available: true, checkedAt: now },
     port: httpServer.address().port,
     token,
@@ -164,6 +192,58 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
       handoffContext: { workingDirectory: root },
     })
     assert.equal(requests[0].authorization, `Bearer ${token}`)
+
+    const explicitWorkspace = path.join(userData, 'selected-project')
+    const delegatedRead = await client.callTool({
+      name: 'run_agent_task',
+      arguments: {
+        prompt: 'Read the selected project.',
+        capabilities: ['workspace'],
+        workspaceRoot: explicitWorkspace,
+        handoffContext: { summary: 'Use the selected project only.', relevantFiles: ['README.md'] },
+      },
+    })
+    assert.equal(delegatedRead.content[0].text, 'Read-only summary.')
+    assert.deepEqual(requests.at(-1).body, {
+      prompt: 'Read the selected project.',
+      capabilities: ['workspace'],
+      workspaceRoot: explicitWorkspace,
+      handoffContext: {
+        summary: 'Use the selected project only.',
+        relevantFiles: ['README.md'],
+        workingDirectory: explicitWorkspace,
+      },
+    })
+    const invalidSources = await client.callTool({
+      name: 'run_agent_task',
+      arguments: { prompt: 'Malformed sources' },
+    })
+    assert.equal(invalidSources.isError, true)
+    assert.match(invalidSources.content[0].text, /invalid task result/i)
+    const unsupportedCapability = await client.callTool({
+      name: 'start_agent_task',
+      arguments: { prompt: 'Use the internet.', capabilities: ['web'] },
+    })
+    assert.equal(unsupportedCapability.isError, true)
+    assert.match(unsupportedCapability.content[0].text, /web research is off/i)
+    assert.deepEqual(requests.at(-1).body.capabilities, ['web'])
+
+    privacyMode = 'connected'
+    await fs.writeFile(path.join(userData, 'ai-worker-mcp-status.json'), JSON.stringify({
+      schemaVersion: 1, app: 'AI-Worker', version: 'test-version', running: true,
+      startedAt: now - 100, heartbeatAt: Date.now(), privacyMode,
+      model: { available: true, checkedAt: Date.now() }, port: httpServer.address().port, token,
+    }))
+    const onlineStarted = await client.callTool({
+      name: 'start_agent_task',
+      arguments: { prompt: 'Public research', capabilities: ['web'] },
+    })
+    assert.deepEqual(onlineStarted.structuredContent, { id: webTaskId, state: 'queued' })
+    assert.deepEqual(requests.at(-1).body, { prompt: 'Public research', capabilities: ['web'] })
+    const onlineCompleted = await client.callTool({ name: 'get_agent_task', arguments: { taskId: webTaskId } })
+    assert.deepEqual(onlineCompleted.structuredContent.result, {
+      content: 'Public research summary.', sources: ['https://example.com/research'],
+    })
 
     const waiting = await client.callTool({ name: 'get_agent_task', arguments: { taskId } })
     assert.equal(waiting.structuredContent.state, 'waiting_for_parent')
@@ -203,6 +283,21 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
     assert.equal(cancelling.structuredContent.state, 'cancelling')
     const confirmedCancelled = await client.callTool({ name: 'get_agent_task', arguments: { taskId: cancelTaskId } })
     assert.equal(confirmedCancelled.structuredContent.state, 'cancelled')
+
+    const startAbort = new AbortController()
+    const cancelledDuringStart = client.callTool({
+      name: 'start_agent_task',
+      arguments: { prompt: 'Cancel during start' },
+    }, undefined, { signal: startAbort.signal })
+    while (!requests.some(({ url, body }) => url === '/start-agent-task' && body.prompt === 'Cancel during start')) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    startAbort.abort()
+    await assert.rejects(cancelledDuringStart)
+    for (let attempt = 0; attempt < 100 && !requests.some(({ url }) => url === `/agent-task/${cancelDuringStartTaskId}/cancel`); attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.ok(requests.some(({ url }) => url === `/agent-task/${cancelDuringStartTaskId}/cancel`))
 
     const approvalStarted = await client.callTool({
       name: 'start_agent_task',
