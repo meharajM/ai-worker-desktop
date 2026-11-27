@@ -142,6 +142,23 @@ function previewText(value: string, limit = 160): string {
   return `${compact.slice(0, limit)}...`
 }
 
+const MAX_EXPORT_ENTITIES = 10_000
+const MAX_EXPORT_RELATIONS = 100_000
+const MAX_EXPORT_OBSERVATIONS = 1_000_000
+const MAX_EXPORT_BYTES = 64 * 1024 * 1024
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  return Object.keys(value).every(key => keys.includes(key))
+}
+
+function serializedStringBytes(value: string): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8')
+}
+
 const runtimeRequire = createRequire(import.meta.url)
 
 export class ServerMemoryAdapter implements UnifiedMemoryBackend {
@@ -572,11 +589,145 @@ export class ServerMemoryAdapter implements UnifiedMemoryBackend {
    * Export all data
    */
   async exportAll(): Promise<ExportData> {
+    this.ensureInitialized()
+
+    const response: unknown = await this.client!.callTool({ name: 'read_graph', arguments: {} })
+    if (!isRecord(response)) {
+      throw new Error('Memory export failed: read_graph returned an invalid response.')
+    }
+    if (response.isError === true) {
+      throw new Error('Memory export failed: read_graph reported an error.')
+    }
+
+    const graph = response.structuredContent
+    if (!isRecord(graph) || !hasOnlyKeys(graph, ['entities', 'relations']) ||
+      !Array.isArray(graph.entities) || !Array.isArray(graph.relations)) {
+      throw new Error('Memory export failed: read_graph returned an unsupported graph.')
+    }
+    if (graph.entities.length > MAX_EXPORT_ENTITIES) {
+      throw new Error(`Memory export failed: graph exceeds the ${MAX_EXPORT_ENTITIES} entity limit.`)
+    }
+    if (graph.relations.length > MAX_EXPORT_RELATIONS) {
+      throw new Error(`Memory export failed: graph exceeds the ${MAX_EXPORT_RELATIONS} relation limit.`)
+    }
+
+    let inputBytes = 128
+    let outputBytes = 256
+    let observationCount = 0
+    const addInputString = (value: string) => {
+      inputBytes += Buffer.byteLength(value, 'utf8') + 1
+      if (inputBytes > MAX_EXPORT_BYTES) {
+        throw new Error(`Memory export failed: graph exceeds the ${MAX_EXPORT_BYTES}-byte limit.`)
+      }
+    }
+    const addOutputString = (value: string) => {
+      outputBytes += serializedStringBytes(value)
+      if (outputBytes > MAX_EXPORT_BYTES) {
+        throw new Error(`Memory export failed: normalized export exceeds the ${MAX_EXPORT_BYTES}-byte limit.`)
+      }
+    }
+
+    const entityNames = new Set<string>()
+    const entities: Entity[] = []
+    const exportedAt = new Date().toISOString()
+    for (const node of graph.entities) {
+      if (!isRecord(node) || !hasOnlyKeys(node, ['name', 'entityType', 'observations']) ||
+        typeof node.name !== 'string' || !node.name.trim() ||
+        typeof node.entityType !== 'string' || !node.entityType.trim() ||
+        !Array.isArray(node.observations)) {
+        throw new Error('Memory export failed: read_graph returned an invalid entity.')
+      }
+
+      if (entityNames.has(node.name)) {
+        throw new Error('Memory export failed: read_graph returned duplicate entity names.')
+      }
+      entityNames.add(node.name)
+      addInputString(node.name)
+      addInputString(node.entityType)
+
+      const observations: string[] = []
+      for (const observation of node.observations) {
+        if (typeof observation !== 'string') {
+          throw new Error('Memory export failed: read_graph returned an invalid observation.')
+        }
+        observationCount += 1
+        if (observationCount > MAX_EXPORT_OBSERVATIONS) {
+          throw new Error(`Memory export failed: graph exceeds the ${MAX_EXPORT_OBSERVATIONS} observation limit.`)
+        }
+        addInputString(observation)
+        observations.push(observation)
+      }
+
+      const description = observations.join('\n')
+      outputBytes += 256 + observations.length
+      addOutputString(node.name)
+      addOutputString(node.name)
+      addOutputString(node.entityType)
+      addOutputString(description)
+      addOutputString(exportedAt)
+      for (const observation of observations) addOutputString(observation)
+      if (outputBytes > MAX_EXPORT_BYTES) {
+        throw new Error(`Memory export failed: normalized export exceeds the ${MAX_EXPORT_BYTES}-byte limit.`)
+      }
+
+      entities.push({
+        id: node.name,
+        name: node.name,
+        type: node.entityType,
+        description,
+        observations,
+        metadata: {},
+        createdAt: exportedAt
+      })
+    }
+
+    const relations: Relation[] = []
+    const relationIds = new Set<string>()
+    for (const edge of graph.relations) {
+      if (!isRecord(edge) || !hasOnlyKeys(edge, ['from', 'to', 'relationType']) ||
+        typeof edge.from !== 'string' || !edge.from.trim() ||
+        typeof edge.to !== 'string' || !edge.to.trim() ||
+        typeof edge.relationType !== 'string' || !edge.relationType.trim()) {
+        throw new Error('Memory export failed: read_graph returned an invalid relation.')
+      }
+      if (!entityNames.has(edge.from) || !entityNames.has(edge.to)) {
+        throw new Error('Memory export failed: relation references a missing entity.')
+      }
+
+      addInputString(edge.from)
+      addInputString(edge.to)
+      addInputString(edge.relationType)
+      const id = `${edge.from}-${edge.relationType}-${edge.to}`
+      if (relationIds.has(id)) {
+        throw new Error('Memory export failed: read_graph returned duplicate relation IDs.')
+      }
+      relationIds.add(id)
+      outputBytes += 256
+      addOutputString(id)
+      addOutputString(edge.from)
+      addOutputString(edge.to)
+      addOutputString(edge.relationType)
+      if (outputBytes > MAX_EXPORT_BYTES) {
+        throw new Error(`Memory export failed: normalized export exceeds the ${MAX_EXPORT_BYTES}-byte limit.`)
+      }
+
+      relations.push({
+        id,
+        fromEntityId: edge.from,
+        toEntityId: edge.to,
+        relationType: edge.relationType,
+        metadata: {}
+      })
+    }
+
+    addOutputString(exportedAt)
+    addOutputString('1.0.0')
+    addOutputString('server-memory')
     return {
-      entities: Array.from(this.entityCache.values()),
-      relations: Array.from(this.relationCache.values()),
+      entities,
+      relations,
       metadata: {
-        exportedAt: new Date().toISOString(),
+        exportedAt,
         version: '1.0.0',
         backend: 'server-memory'
       }
