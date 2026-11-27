@@ -2,12 +2,13 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
+import { hasControlCharacters } from '../../shared/control-characters'
 
 const MAX_FILE_BYTES = 16_000
 const DENIED = /^(?:\.|node_modules$|credentials?(?:\.|$)|secrets?(?:\.|$)|id_(?:rsa|dsa|ecdsa|ed25519)|.*\.(?:pem|key|p12|pfx|kdbx)$)/i
 
 function safeName(name: string): boolean {
-  return !!name && !DENIED.test(name) && !/[\\/:\x00-\x1f]/.test(name) &&
+  return !!name && !DENIED.test(name) && !/[\\/:]/.test(name) && !hasControlCharacters(name, { rejectDelete: false }) &&
     !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) && !/[. ]$/.test(name)
 }
 

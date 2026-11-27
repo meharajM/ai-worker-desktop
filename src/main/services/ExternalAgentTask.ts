@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { posix, win32 } from 'node:path'
 import { z } from 'zod'
 import { capabilities, type LocalTaskModel, type TaskGrant, type TaskMode, type TaskView, type ServiceTool } from '../../shared/external-task'
+import { hasControlCharacters } from '../../shared/control-characters'
 import { ExternalWorkspace } from './ExternalWorkspace'
 import { researchUrl } from './ExternalResearch'
 
@@ -35,8 +36,9 @@ function selectedServiceRead(name: string, args: Record<string, unknown>): boole
     /^(?:get|read|list|lookup|find|search)_(?:(?:calendar|project|issue|document|spreadsheet|database|crm|pull|file)_)?[a-z]+$/.test(operation)
 }
 
-const line = (max: number) => z.string().min(1).max(max).trim().min(1).regex(/^[^\x00-\x1f\x7f]+$/)
-const note = (max: number) => z.string().min(1).max(max).trim().min(1).regex(/^[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+$/)
+const line = (max: number) => z.string().min(1).max(max).trim().min(1).refine(value => !hasControlCharacters(value))
+const note = (max: number) => z.string().min(1).max(max).trim().min(1)
+  .refine(value => !hasControlCharacters(value, { allowLineWhitespace: true }))
 const relativeFile = line(256).transform(file => file.replace(/\\/g, '/')).refine(file =>
   !file.includes(':') && file.split('/').every(part => part !== '' && part !== '.' && part !== '..'))
 

@@ -300,11 +300,7 @@ export async function openChatHistory(): Promise<{
         try { rows.push(turnDto(cursor.value)) } catch { abortReason = 'invalid_schema'; tx.abort(); return }
         cursor.continue()
       }
-      try {
-        await done
-      } catch (error) {
-        throw error
-      }
+      await done
       if (!sessionExists) fail('session_not_found')
       const hasMore = rows.length > limit
       if (hasMore) rows.pop()

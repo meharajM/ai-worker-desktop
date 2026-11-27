@@ -26,6 +26,14 @@ export class DesktopBridgeError extends Error {
   }
 }
 
+function hasProtocolControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0)
+    if (code !== undefined && (code < 0x20 || code === 0x7f)) return true
+  }
+  return false
+}
+
 type OpenReply = {
   protocolVersion: number
   ownerId: string
@@ -298,7 +306,7 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
     if (object(error) && typeof error.code === 'string' && Object.hasOwn(ERROR_MESSAGES, error.code) &&
         ['invalid_request', 'internal', 'unauthorized', 'stale_session'].includes(error.code) &&
         typeof error.message === 'string' && error.message.length > 0 && error.message.length <= 256 &&
-        !/[\u0000-\u001f\u007f]/.test(error.message)) {
+        !hasProtocolControlCharacters(error.message)) {
       return new DesktopBridgeError(error.code as DesktopBridgeErrorCode, error.message)
     }
     return nativeError(error)
