@@ -24,6 +24,7 @@ const states = {
 interface ActivityTask {
   id: string
   protocol: 'MCP' | 'A2A'
+  hostSessionId: string | null
   prompt: string
   handoffContext: {
     sourceAgent: string | null
@@ -35,6 +36,11 @@ interface ActivityTask {
   webAccess: boolean
   state: keyof typeof states
   modelTurns: number
+}
+
+interface ActivitySnapshot {
+  hostSessions: { id: string; connectedAtMs: number }[]
+  tasks: ActivityTask[]
 }
 
 function TaskRow({ task }: { task: ActivityTask }) {
@@ -61,7 +67,11 @@ function TaskRow({ task }: { task: ActivityTask }) {
         {task.prompt}
       </h2>
       <p className="mt-1 break-words text-xs text-[var(--color-text-secondary)]">
-        {context?.sourceAgent ? `${context.sourceAgent} · ${task.protocol}` : task.protocol}
+        {[
+          context?.sourceAgent,
+          task.protocol,
+          task.hostSessionId ? `Session ${task.hostSessionId.slice(0, 12)}` : null,
+        ].filter(Boolean).join(' · ')}
       </p>
       {task.webAccess && (
         <p className="mt-2 rounded-md border border-amber-500/40 p-2 text-xs leading-5 text-amber-100" role="status">
@@ -89,7 +99,7 @@ function TaskRow({ task }: { task: ActivityTask }) {
 
 export function TaskActivityWindow() {
   useTauriTheme()
-  const [tasks, setTasks] = useState<ActivityTask[] | null>(null)
+  const [snapshot, setSnapshot] = useState<ActivitySnapshot | null>(null)
   const [unavailable, setUnavailable] = useState(false)
 
   useEffect(() => {
@@ -98,9 +108,9 @@ export function TaskActivityWindow() {
 
     async function refresh() {
       try {
-        const snapshot = await invoke<ActivityTask[]>('get_task_activity')
+        const nextSnapshot = await invoke<ActivitySnapshot>('get_task_activity')
         if (!stopped) {
-          setTasks(snapshot)
+          setSnapshot(nextSnapshot)
           setUnavailable(false)
         }
       } catch {
@@ -124,14 +134,26 @@ export function TaskActivityWindow() {
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-5">
         {unavailable && <p className="py-4 text-sm" role="status">Activity unavailable. Retrying…</p>}
-        {!unavailable && tasks === null && <p className="py-4 text-sm" role="status">Loading tasks…</p>}
-        {!unavailable && tasks?.length === 0 && (
+        {!unavailable && snapshot === null && <p className="py-4 text-sm" role="status">Loading tasks…</p>}
+        {!unavailable && snapshot && snapshot.hostSessions.length > 0 && (
+          <section aria-label="Connected host sessions" className="border-b border-[var(--color-border)] py-3">
+            <h2 className="text-xs font-semibold">Connected host sessions ({snapshot.hostSessions.length})</h2>
+            <ul className="mt-2 flex flex-wrap gap-2">
+              {snapshot.hostSessions.map(session => (
+                <li key={session.id} className="rounded border border-[var(--color-border)] px-2 py-1 font-mono text-[11px]">
+                  {session.id.slice(0, 16)}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        {!unavailable && snapshot?.tasks.length === 0 && (
           <p className="py-4 text-sm text-[var(--color-text-secondary)]" role="status">
             No recent tasks. New background tasks appear here.
           </p>
         )}
         <ul className="divide-y divide-[var(--color-border)]">
-          {tasks?.map(task => <TaskRow key={task.id} task={task} />)}
+          {snapshot?.tasks.map(task => <TaskRow key={task.id} task={task} />)}
         </ul>
       </div>
       <footer className="shrink-0 border-t border-[var(--color-border)] px-5 py-3 text-xs text-[var(--color-text-secondary)]">

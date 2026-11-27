@@ -27,7 +27,9 @@ const MAX_PROMPT: usize = 8_000; // JS adapter counts UTF-16 code units.
 const MAX_CLIENTS: usize = 4;
 const MAX_ACTIVE_TASKS: usize = 4;
 const MAX_TASK_RECORDS: usize = 32;
+const MAX_HOST_SESSIONS: usize = 16;
 const TASK_RETENTION: Duration = Duration::from_secs(30 * 60);
+const HOST_SESSION_RETENTION: Duration = Duration::from_secs(45);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(10);
 const LOCK_RETRY: Duration = Duration::from_millis(250);
@@ -45,8 +47,14 @@ pub struct ExternalMcp {
 #[derive(Clone, Default)]
 struct TaskManager {
     records: Arc<Mutex<HashMap<String, Arc<TaskRecord>>>>,
+    host_sessions: Arc<Mutex<HashMap<String, HostSession>>>,
     stopping: Arc<AtomicBool>,
     write_approval_gate: Arc<Mutex<()>>,
+}
+
+struct HostSession {
+    connected_at_ms: u64,
+    last_seen: Instant,
 }
 
 struct TaskRecord {
@@ -103,11 +111,26 @@ impl TaskState {
 pub(crate) struct ActivityTask {
     id: String,
     protocol: &'static str,
+    host_session_id: Option<String>,
     prompt: String,
     handoff_context: Option<agent_task::HandoffContext>,
     web_access: bool,
     state: TaskState,
     model_turns: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivitySnapshot {
+    pub(crate) host_sessions: Vec<ActivityHostSession>,
+    pub(crate) tasks: Vec<ActivityTask>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivityHostSession {
+    pub(crate) id: String,
+    pub(crate) connected_at_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -149,6 +172,19 @@ struct TaskView {
 struct TaskAck {
     id: String,
     state: TaskState,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostSessionRequest {
+    session_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostSessionAck {
+    session_id: String,
+    connected_sessions: usize,
 }
 
 struct Service {
@@ -285,8 +321,8 @@ impl ExternalMcp {
         Ok(())
     }
 
-    pub(crate) fn task_activity(&self) -> Vec<ActivityTask> {
-        self.tasks.activity()
+    pub(crate) fn task_activity(&self) -> ActivitySnapshot {
+        self.tasks.activity_snapshot()
     }
 
     pub(crate) fn pending_write_approval(&self) -> Option<PendingWriteApproval> {
@@ -314,9 +350,122 @@ impl ExternalMcp {
     pub(crate) fn disable_online_research(&self) {
         self.tasks.cancel_online_tasks();
     }
+
+    pub(crate) fn has_active_work(&self) -> bool {
+        self.tasks.has_active_work()
+    }
 }
 
 impl TaskManager {
+    fn open_host_session(&self, body: &[u8]) -> Result<HostSessionAck, (u16, String)> {
+        let request = parse_host_session_request(body)?;
+        let now = Instant::now();
+        let mut sessions = self
+            .host_sessions
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        prune_host_sessions(&mut sessions, now);
+        if let Some(session) = sessions.get_mut(&request.session_id) {
+            session.last_seen = now;
+        } else {
+            if sessions.len() >= MAX_HOST_SESSIONS {
+                return Err((
+                    503,
+                    "AI-Worker has reached its active host session limit.".into(),
+                ));
+            }
+            sessions.insert(
+                request.session_id.clone(),
+                HostSession {
+                    connected_at_ms: now_ms(),
+                    last_seen: now,
+                },
+            );
+        }
+        Ok(HostSessionAck {
+            session_id: request.session_id,
+            connected_sessions: sessions.len(),
+        })
+    }
+
+    fn heartbeat_host_session(&self, body: &[u8]) -> Result<HostSessionAck, (u16, String)> {
+        let request = parse_host_session_request(body)?;
+        let now = Instant::now();
+        let mut sessions = self
+            .host_sessions
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        prune_host_sessions(&mut sessions, now);
+        let Some(session) = sessions.get_mut(&request.session_id) else {
+            return Err((404, "Host session was not found or has expired.".into()));
+        };
+        session.last_seen = now;
+        Ok(HostSessionAck {
+            session_id: request.session_id,
+            connected_sessions: sessions.len(),
+        })
+    }
+
+    fn close_host_session(&self, body: &[u8]) -> Result<HostSessionAck, (u16, String)> {
+        let request = parse_host_session_request(body)?;
+        let now = Instant::now();
+        let mut sessions = self
+            .host_sessions
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        prune_host_sessions(&mut sessions, now);
+        sessions.remove(&request.session_id);
+        Ok(HostSessionAck {
+            session_id: request.session_id,
+            connected_sessions: sessions.len(),
+        })
+    }
+
+    fn activity_snapshot(&self) -> ActivitySnapshot {
+        let now = Instant::now();
+        let mut sessions = self
+            .host_sessions
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        prune_host_sessions(&mut sessions, now);
+        let mut host_sessions = sessions
+            .iter()
+            .map(|(id, session)| ActivityHostSession {
+                id: id.clone(),
+                connected_at_ms: session.connected_at_ms,
+            })
+            .collect::<Vec<_>>();
+        host_sessions.sort_by(|left, right| {
+            left.connected_at_ms
+                .cmp(&right.connected_at_ms)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        drop(sessions);
+        ActivitySnapshot {
+            host_sessions,
+            tasks: self.activity(),
+        }
+    }
+
+    fn has_active_tasks(&self) -> bool {
+        let mut records = self.records.lock().unwrap_or_else(|err| err.into_inner());
+        prune_records(&mut records);
+        records.values().any(|record| record.is_active())
+    }
+
+    fn has_active_work(&self) -> bool {
+        self.has_active_tasks() || self.has_active_host_sessions()
+    }
+
+    fn has_active_host_sessions(&self) -> bool {
+        let mut sessions = self
+            .host_sessions
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        prune_host_sessions(&mut sessions, Instant::now());
+        !sessions.is_empty()
+    }
+
     fn start(
         &self,
         app: AppHandle,
@@ -370,10 +519,12 @@ impl TaskManager {
                 return Err((503, "AI-Worker is shutting down.".into()));
             }
             prune_records(&mut records);
-            if let Some(message_id) = message_id.as_deref() {
+            if let (Some(context_id), Some(message_id)) =
+                (context_id.as_deref(), message_id.as_deref())
+            {
                 if let Some(record) = records
                     .values()
-                    .find(|record| record.has_a2a_message_id(message_id))
+                    .find(|record| record.has_a2a_message_in_context(context_id, message_id))
                 {
                     let view = record.view();
                     return Ok(TaskAck {
@@ -438,6 +589,8 @@ impl TaskManager {
                     cancelled,
                 );
                 task.finish(result);
+                let tasks = manager.clone();
+                crate::task_activity::close_after_idle(&app, move || !tasks.has_active_tasks());
             });
             *record.worker.lock().unwrap_or_else(|err| err.into_inner()) = Some(worker);
             return Ok(TaskAck {
@@ -572,7 +725,7 @@ impl TaskManager {
                 task.begin_inference();
                 let model = app.state::<ModelRuntime>();
                 let result = model
-                    .infer_cancellable(app, prompt, Some(&task.cancelled))
+                    .infer_task_cancellable(app, prompt, Some(&task.cancelled))
                     .map(|result| result.content)
                     .map_err(str::to_owned);
                 if cancelled() {
@@ -804,6 +957,10 @@ impl TaskRecord {
             .lock()
             .unwrap_or_else(|err| err.into_inner())
             .contains(message_id)
+    }
+
+    fn has_a2a_message_in_context(&self, context_id: &str, message_id: &str) -> bool {
+        self.a2a_context_id.as_deref() == Some(context_id) && self.has_a2a_message_id(message_id)
     }
 
     fn remember_a2a_message_id(&self, message_id: &str) -> bool {
@@ -1050,6 +1207,7 @@ impl TaskRecord {
             } else {
                 "MCP"
             },
+            host_session_id: self.request.host_session_id.clone(),
             prompt: self.request.prompt.clone(),
             handoff_context: self.request.handoff_context.clone(),
             web_access: self
@@ -1170,6 +1328,30 @@ fn prune_records(records: &mut HashMap<String, Arc<TaskRecord>>) {
     });
 }
 
+fn prune_host_sessions(sessions: &mut HashMap<String, HostSession>, now: Instant) {
+    sessions.retain(|_, session| {
+        now.saturating_duration_since(session.last_seen) < HOST_SESSION_RETENTION
+    });
+}
+
+fn parse_host_session_request(body: &[u8]) -> Result<HostSessionRequest, (u16, String)> {
+    if body.first() != Some(&b'{') {
+        return Err((400, "Invalid host session request.".into()));
+    }
+    let request: HostSessionRequest =
+        serde_json::from_slice(body).map_err(|_| (400, "Invalid host session request.".into()))?;
+    let id = request.session_id.as_str();
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
+    {
+        return Err((400, "Host session ID is invalid.".into()));
+    }
+    Ok(request)
+}
+
 fn wait_for_service_lock(dir: &Path, stopping: &AtomicBool) -> io::Result<Option<std::fs::File>> {
     // A duplicate UI process waits here so it can become the bridge owner if the current owner exits.
     let lock = owner_only_file()
@@ -1231,6 +1413,7 @@ fn run_service(
     snapshot.write(dir, app.state::<ModelRuntime>().is_ready())?;
     let inference_in_flight = Arc::new(AtomicBool::new(false));
     let mut heartbeat = Instant::now();
+    let mut worker_idle_since = None;
     let mut clients: Vec<JoinHandle<()>> = Vec::new();
     let result = loop {
         if stopping.load(Ordering::Acquire) {
@@ -1246,6 +1429,23 @@ fn run_service(
             };
             if let Err(error) = snapshot.write(dir, app.state::<ModelRuntime>().is_ready()) {
                 break Err(error);
+            }
+            let worker_service_mode = crate::lifecycle::is_worker_service(app);
+            let main_window_exists = app.get_webview_window("main").is_some();
+            let has_active_work = tasks.has_active_work();
+            if worker_service_mode && !main_window_exists && !has_active_work {
+                let idle_since = worker_idle_since.get_or_insert_with(Instant::now);
+                if crate::lifecycle::should_exit_worker_service(
+                    worker_service_mode,
+                    main_window_exists,
+                    has_active_work,
+                    idle_since.elapsed(),
+                ) {
+                    app.exit(0);
+                    break Ok(());
+                }
+            } else {
+                worker_idle_since = None;
             }
             heartbeat = Instant::now();
         }
@@ -1345,6 +1545,22 @@ fn process_request(
         RequestRoute::StartAgentTask => tasks
             .start(app.clone(), inference, &request.body)
             .map(|ack| (202, json!(ack))),
+        RequestRoute::OpenHostSession => {
+            let ack = tasks.open_host_session(&request.body)?;
+            crate::task_activity::show(app, false);
+            let tasks = tasks.clone();
+            crate::task_activity::close_after_idle(app, move || !tasks.has_active_tasks());
+            Ok((200, json!(ack)))
+        }
+        RequestRoute::HeartbeatHostSession => tasks
+            .heartbeat_host_session(&request.body)
+            .map(|ack| (200, json!(ack))),
+        RequestRoute::CloseHostSession => {
+            let ack = tasks.close_host_session(&request.body)?;
+            let tasks = tasks.clone();
+            crate::task_activity::close_after_idle(app, move || !tasks.has_active_tasks());
+            Ok((200, json!(ack)))
+        }
         RequestRoute::GetAgentTask(id) => tasks.get(&id).map(|status| (200, json!(status))),
         RequestRoute::AnswerAgentQuestion(id) => tasks
             .answer(&id, &request.body)
@@ -1852,6 +2068,9 @@ enum RequestRoute {
     AskLocal,
     RunAgentTask,
     StartAgentTask,
+    OpenHostSession,
+    HeartbeatHostSession,
+    CloseHostSession,
     GetAgentTask(String),
     AnswerAgentQuestion(String),
     CancelAgentTask(String),
@@ -1888,6 +2107,9 @@ fn parse_headers(bytes: &[u8], auth: &Endpoint) -> Result<ParsedHeaders, Request
         ("POST", "/ask-local") => RequestRoute::AskLocal,
         ("POST", "/run-agent-task") => RequestRoute::RunAgentTask,
         ("POST", "/start-agent-task") => RequestRoute::StartAgentTask,
+        ("POST", "/host-session/open") => RequestRoute::OpenHostSession,
+        ("POST", "/host-session/heartbeat") => RequestRoute::HeartbeatHostSession,
+        ("POST", "/host-session/close") => RequestRoute::CloseHostSession,
         ("GET", path) if path.starts_with("/agent-task/") => {
             let id = &path["/agent-task/".len()..];
             if !valid_task_id_shape(id) {
@@ -2088,6 +2310,12 @@ mod tests {
         TaskRecord::new(id, context_id, message_id, request)
     }
 
+    fn test_host_task(id: String, session_id: &str) -> TaskRecord {
+        let body = json!({"prompt":"Review local changes.", "hostSessionId":session_id});
+        let request = agent_task::parse_validated_request(body.to_string().as_bytes()).unwrap();
+        TaskRecord::new(id, None, None, request)
+    }
+
     fn endpoint() -> Endpoint {
         Endpoint {
             host: "127.0.0.1:43123".into(),
@@ -2178,6 +2406,21 @@ mod tests {
             parse_headers(&start_route, &auth).unwrap().route,
             RequestRoute::StartAgentTask
         );
+        for (path, expected) in [
+            ("/host-session/open", RequestRoute::OpenHostSession),
+            (
+                "/host-session/heartbeat",
+                RequestRoute::HeartbeatHostSession,
+            ),
+            ("/host-session/close", RequestRoute::CloseHostSession),
+        ] {
+            assert_eq!(
+                parse_headers(&post_headers(path, "{}"), &auth)
+                    .unwrap()
+                    .route,
+                expected
+            );
+        }
         let id = "a".repeat(64);
         let status_route = get_headers(&format!("/agent-task/{id}"));
         assert_eq!(
@@ -2292,6 +2535,119 @@ mod tests {
         assert_eq!(
             parse_prompt(&oversized),
             Err((400, "Provide a non-empty prompt up to 8000 characters."))
+        );
+    }
+
+    #[test]
+    fn tracks_multiple_host_sessions_and_keeps_tasks_attached_to_their_session() {
+        let manager = TaskManager::default();
+        let first = json!({"sessionId":"codex-1"}).to_string();
+        let second = json!({"sessionId":"opencode:2"}).to_string();
+        assert_eq!(
+            manager
+                .open_host_session(first.as_bytes())
+                .unwrap()
+                .connected_sessions,
+            1
+        );
+        assert_eq!(
+            manager
+                .open_host_session(first.as_bytes())
+                .unwrap()
+                .connected_sessions,
+            1
+        );
+        assert_eq!(
+            manager
+                .open_host_session(second.as_bytes())
+                .unwrap()
+                .connected_sessions,
+            2
+        );
+
+        let first_task_id = "a".repeat(64);
+        let second_task_id = "b".repeat(64);
+        {
+            let mut records = manager.records.lock().unwrap();
+            records.insert(
+                first_task_id.clone(),
+                Arc::new(test_host_task(first_task_id.clone(), "codex-1")),
+            );
+            records.insert(
+                second_task_id.clone(),
+                Arc::new(test_host_task(second_task_id.clone(), "opencode:2")),
+            );
+        }
+
+        let snapshot = manager.activity_snapshot();
+        assert_eq!(snapshot.host_sessions.len(), 2);
+        assert_eq!(snapshot.tasks.len(), 2);
+        assert_eq!(
+            snapshot
+                .tasks
+                .iter()
+                .find(|task| task.id == first_task_id)
+                .unwrap()
+                .host_session_id
+                .as_deref(),
+            Some("codex-1")
+        );
+        assert_eq!(
+            snapshot
+                .tasks
+                .iter()
+                .find(|task| task.id == second_task_id)
+                .unwrap()
+                .host_session_id
+                .as_deref(),
+            Some("opencode:2")
+        );
+
+        assert_eq!(
+            manager
+                .close_host_session(first.as_bytes())
+                .unwrap()
+                .connected_sessions,
+            1
+        );
+        assert_eq!(
+            manager
+                .heartbeat_host_session(first.as_bytes())
+                .unwrap_err()
+                .0,
+            404
+        );
+        assert_eq!(
+            manager
+                .heartbeat_host_session(second.as_bytes())
+                .unwrap()
+                .connected_sessions,
+            1
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_host_session_ids_and_enforces_live_session_limit() {
+        let manager = TaskManager::default();
+        let too_long = "x".repeat(65);
+        for id in ["", "has space", "../unsafe", too_long.as_str()] {
+            let body = json!({"sessionId":id}).to_string();
+            assert_eq!(
+                manager.open_host_session(body.as_bytes()).unwrap_err().0,
+                400
+            );
+        }
+        for index in 0..MAX_HOST_SESSIONS {
+            let body = json!({"sessionId":format!("session-{index}")}).to_string();
+            manager.open_host_session(body.as_bytes()).unwrap();
+        }
+        let overflow = json!({"sessionId":"session-overflow"}).to_string();
+        assert_eq!(
+            manager
+                .open_host_session(overflow.as_bytes())
+                .unwrap_err()
+                .0,
+            503
         );
     }
 
@@ -2440,6 +2796,7 @@ mod tests {
             json!({
                 "id": id,
                 "protocol": "MCP",
+                "hostSessionId": null,
                 "prompt": "Review local changes.",
                 "handoffContext": {
                     "sourceAgent": "Parent",
@@ -2723,6 +3080,8 @@ mod tests {
         assert_eq!(manager.a2a_records().len(), 1);
         assert!(manager.a2a_record(&mcp_id).is_err());
         assert!(a2a_record.has_a2a_message_id("message-1"));
+        assert!(a2a_record.has_a2a_message_in_context("context-1", "message-1"));
+        assert!(!a2a_record.has_a2a_message_in_context("context-2", "message-1"));
         assert!(!a2a_record.remember_a2a_message_id("message-1"));
         assert!(a2a_record.remember_a2a_message_id("message-2"));
     }

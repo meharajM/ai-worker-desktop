@@ -24,15 +24,17 @@ const safeLocalModelError = 'The selected local model returned no answer text. C
 test('MCP task lifecycle uses authenticated Tauri routes and filters task responses', async () => {
   const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-worker-lifecycle-'))
   const requests = []
+  const hostSessionRequests = []
   let answered = false
   let cancelState = 'queued'
   let cancelStatusPolls = 0
   let privacyMode = 'local-only'
+  const hostSessions = new Set()
   const httpServer = createServer(async (request, response) => {
     const chunks = []
     for await (const chunk of request) chunks.push(chunk)
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : undefined
-    requests.push({ method: request.method, url: request.url, body, authorization: request.headers.authorization })
+    const entry = { method: request.method, url: request.url, body, authorization: request.headers.authorization }
     assert.equal(request.headers.host, `127.0.0.1:${httpServer.address().port}`)
 
     const send = (status, value) => {
@@ -43,6 +45,14 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
       send(401, { error: 'Invalid local bridge token.' })
       return
     }
+    if (request.url.startsWith('/host-session/')) {
+      hostSessionRequests.push(entry)
+      if (request.url === '/host-session/open') hostSessions.add(body.sessionId)
+      if (request.url === '/host-session/close') hostSessions.delete(body.sessionId)
+      send(200, { sessionId: body.sessionId, connectedSessions: hostSessions.size })
+      return
+    }
+    requests.push(entry)
     if (request.url === '/start-agent-task') {
       if (body.capabilities?.includes('web') && privacyMode !== 'connected') {
         send(403, { error: 'Public web research is off in AI-Worker Settings.' })
@@ -167,11 +177,16 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
     command: process.execPath,
     args: [serverPath],
     cwd: root,
-    env: { AI_WORKER_USER_DATA_DIR: userData },
+    env: {
+      AI_WORKER_USER_DATA_DIR: userData,
+      AI_WORKER_AUTOSTART: 'false',
+      AI_WORKER_HOST_SESSION_ID: 'lifecycle-session',
+    },
     stderr: 'pipe',
   })
   try {
     await client.connect(transport)
+    assert.deepEqual(hostSessionRequests[0].body, { sessionId: 'lifecycle-session' })
     const catalog = await client.listTools()
     const runTaskTool = catalog.tools.find(({ name }) => name === 'run_agent_task')
     const startTaskTool = catalog.tools.find(({ name }) => name === 'start_agent_task')
@@ -188,6 +203,7 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
     assert.deepEqual(requests[0].body, {
       prompt: 'Inspect the current project.',
       capabilities: ['workspace'],
+      hostSessionId: 'lifecycle-session',
       workspaceRoot: root,
       handoffContext: { workingDirectory: root },
     })
@@ -207,6 +223,7 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
     assert.deepEqual(requests.at(-1).body, {
       prompt: 'Read the selected project.',
       capabilities: ['workspace'],
+      hostSessionId: 'lifecycle-session',
       workspaceRoot: explicitWorkspace,
       handoffContext: {
         summary: 'Use the selected project only.',
@@ -239,7 +256,7 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
       arguments: { prompt: 'Public research', capabilities: ['web'] },
     })
     assert.deepEqual(onlineStarted.structuredContent, { id: webTaskId, state: 'queued' })
-    assert.deepEqual(requests.at(-1).body, { prompt: 'Public research', capabilities: ['web'] })
+    assert.deepEqual(requests.at(-1).body, { prompt: 'Public research', capabilities: ['web'], hostSessionId: 'lifecycle-session' })
     const onlineCompleted = await client.callTool({ name: 'get_agent_task', arguments: { taskId: webTaskId } })
     assert.deepEqual(onlineCompleted.structuredContent.result, {
       content: 'Public research summary.', sources: ['https://example.com/research'],
@@ -335,6 +352,7 @@ test('MCP task lifecycle uses authenticated Tauri routes and filters task respon
     assert.ok(requests.every(request => request.authorization === `Bearer ${token}`))
   } finally {
     await client.close().catch(() => {})
+    assert.equal(hostSessions.size, 0)
     await new Promise((resolve) => httpServer.close(resolve))
     await fs.rm(userData, { recursive: true, force: true })
   }

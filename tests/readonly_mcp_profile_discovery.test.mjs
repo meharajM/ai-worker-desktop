@@ -43,7 +43,10 @@ async function connect(t, platform, home, env = {}) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [`--import=data:text/javascript,${encodeURIComponent(prelude)}`, serverPath],
-    env: { AI_WORKER_USER_DATA_DIR: '', APPDATA: '', XDG_CONFIG_HOME: '', XDG_DATA_HOME: '', ...env },
+    env: {
+      AI_WORKER_USER_DATA_DIR: '', APPDATA: '', XDG_CONFIG_HOME: '', XDG_DATA_HOME: '',
+      AI_WORKER_AUTOSTART: 'false', AI_WORKER_HOST_SESSION_ID: 'profile-test-session', ...env,
+    },
     stderr: 'pipe',
   })
   const protocolErrors = []
@@ -98,7 +101,13 @@ test('prefers live Linux Tauri profile over an earlier stale Electron profile', 
   const bridge = createServer(async (request, response) => {
     const chunks = []
     for await (const chunk of request) chunks.push(chunk)
-    requests.push([request.url, request.headers.authorization, JSON.parse(Buffer.concat(chunks))])
+    const body = JSON.parse(Buffer.concat(chunks))
+    if (request.url.startsWith('/host-session/')) {
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ sessionId: body.sessionId, connectedSessions: 1 }))
+      return
+    }
+    requests.push([request.url, request.headers.authorization, body])
     response.writeHead(200, { 'Content-Type': 'application/json' })
     response.end(JSON.stringify({ content: 'Live Tauri answer', provider: 'ollama', model: 'fixture' }))
   })
@@ -136,7 +145,13 @@ test('selects the freshest macOS profile for inference and keeps delegation on T
   const bridge = createServer(async (request, response) => {
     const chunks = []
     for await (const chunk of request) chunks.push(chunk)
-    requests.push([request.url, request.headers.authorization, JSON.parse(Buffer.concat(chunks))])
+    const body = JSON.parse(Buffer.concat(chunks))
+    if (request.url.startsWith('/host-session/')) {
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ sessionId: body.sessionId, connectedSessions: 1 }))
+      return
+    }
+    requests.push([request.url, request.headers.authorization, body])
     const result = request.url === '/ask-local'
       ? { content: 'Local answer', provider: 'ollama', model: 'fixture' }
       : { content: 'Delegated answer', sources: [] }
@@ -160,7 +175,7 @@ test('selects the freshest macOS profile for inference and keeps delegation on T
   assert.equal(task.content[0].text, 'Delegated answer')
   assert.deepEqual(requests, [
     ['/ask-local', `Bearer ${tauriToken}`, { prompt: 'Answer locally.' }],
-    ['/run-agent-task', `Bearer ${tauriToken}`, { prompt: 'Delegate.', capabilities: [] }],
+    ['/run-agent-task', `Bearer ${tauriToken}`, { prompt: 'Delegate.', capabilities: [], hostSessionId: 'profile-test-session' }],
   ])
 
   await writeProfile(tauri, 'tauri-stale', { heartbeatAt: now - 46_000 })

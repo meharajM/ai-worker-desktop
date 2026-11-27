@@ -1,7 +1,10 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
@@ -16,9 +19,22 @@ const MAX_PARENT_ANSWER_LENGTH = 2000
 const REQUEST_TIMEOUT_MS = 125_000
 const TASK_REQUEST_TIMEOUT_MS = 30_000
 const TASK_RUN_TIMEOUT_MS = 305_000
+const HOST_SESSION_HEARTBEAT_MS = 15_000
+const RUNTIME_START_TIMEOUT_MS = 30_000
 const TASK_ID_PATTERN = /^[a-f0-9]{64}$/
+const HOST_SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/
 const TASK_STATES = new Set(['queued', 'running', 'waiting_for_parent', 'waiting_for_approval', 'completed', 'failed', 'cancelling', 'cancelled'])
 const SAFE_LOCAL_MODEL_ERROR = 'The selected local model returned no answer text. Choose another installed local model and retry. No cloud fallback was used.'
+const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url))
+const configuredHostSessionId = process.env.AI_WORKER_HOST_SESSION_ID?.trim()
+const hostSessionId = configuredHostSessionId || randomBytes(16).toString('hex')
+if (!HOST_SESSION_ID_PATTERN.test(hostSessionId)) throw new Error('AI_WORKER_HOST_SESSION_ID must contain 1–64 letters, digits, dots, underscores, colons or hyphens.')
+
+let runtimeStartPromise
+let heartbeatTimer
+let heartbeatInFlight = false
+let shuttingDown = false
+const activeHostSessionIds = new Set()
 
 function getUserDataDirectories(profile = 'all') {
   if (USER_DATA_OVERRIDE) return [path.resolve(USER_DATA_OVERRIDE)]
@@ -121,6 +137,167 @@ function getLocalEndpoint({ profile = 'all' } = {}) {
   return { port: runtime.port, token: runtime.token }
 }
 
+function validateTauriExecutable(candidate) {
+  const executable = path.resolve(candidate)
+  try {
+    if (!fs.statSync(executable).isFile()) return null
+    if (process.platform !== 'win32') fs.accessSync(executable, fs.constants.X_OK)
+    return executable
+  } catch {
+    return null
+  }
+}
+
+function findTauriExecutable() {
+  const override = process.env.AI_WORKER_TAURI_EXECUTABLE?.trim()
+  if (override) {
+    const executable = validateTauriExecutable(override)
+    if (!executable) throw new Error('AI_WORKER_TAURI_EXECUTABLE does not point to an executable file.')
+    return executable
+  }
+
+  const name = process.platform === 'win32' ? 'ai-worker-tauri.exe' : 'ai-worker-tauri'
+  const candidates = [
+    path.resolve(SCRIPT_DIRECTORY, `../src-tauri/target/debug/${name}`),
+    path.resolve(SCRIPT_DIRECTORY, `../src-tauri/target/release/${name}`),
+  ]
+  if (process.platform === 'darwin') {
+    candidates.push(
+      path.resolve(SCRIPT_DIRECTORY, '../../../MacOS/AI-Worker'),
+      path.resolve(SCRIPT_DIRECTORY, '../../../MacOS/ai-worker-tauri'),
+    )
+  } else if (process.platform === 'win32') {
+    candidates.push(
+      path.resolve(SCRIPT_DIRECTORY, '../../AI-Worker.exe'),
+      path.resolve(SCRIPT_DIRECTORY, '../../../AI-Worker.exe'),
+    )
+  } else {
+    candidates.push(
+      path.resolve(SCRIPT_DIRECTORY, '../../AI-Worker'),
+      path.resolve(SCRIPT_DIRECTORY, '../../../AI-Worker'),
+      path.resolve(SCRIPT_DIRECTORY, '../../ai-worker-tauri'),
+      path.resolve(SCRIPT_DIRECTORY, '../../../ai-worker-tauri'),
+    )
+  }
+  return candidates.map(validateTauriExecutable).find(Boolean) || null
+}
+
+const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
+
+function acquireStartupLock() {
+  const dataDirectory = getUserDataDirectories('tauri')[0]
+  fs.mkdirSync(dataDirectory, { recursive: true, mode: 0o700 })
+  const lockPath = path.join(dataDirectory, 'ai-worker-mcp-start.lock')
+  const lockContents = JSON.stringify({ pid: process.pid, nonce: randomBytes(16).toString('hex'), createdAt: Date.now() })
+  const openLock = () => {
+    const descriptor = fs.openSync(lockPath, 'wx', 0o600)
+    try {
+      fs.writeFileSync(descriptor, lockContents)
+    } catch (error) {
+      fs.closeSync(descriptor)
+      fs.unlinkSync(lockPath)
+      throw error
+    }
+    return { descriptor, lockPath, lockContents }
+  }
+  try {
+    return openLock()
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error
+  }
+
+  try {
+    const entry = fs.lstatSync(lockPath)
+    if (entry.isSymbolicLink() || !entry.isFile() || Date.now() - entry.mtimeMs < RUNTIME_START_TIMEOUT_MS + 5_000) return null
+    const owner = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
+    if (!Number.isSafeInteger(owner.pid) || owner.pid < 1) {
+      fs.unlinkSync(lockPath)
+      return openLock()
+    }
+    try {
+      process.kill(owner.pid, 0)
+      return null
+    } catch (error) {
+      if (error?.code !== 'ESRCH') return null
+    }
+    fs.unlinkSync(lockPath)
+    return openLock()
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'EEXIST') return null
+    if (error instanceof SyntaxError) {
+      try { fs.unlinkSync(lockPath); return openLock() } catch { return null }
+    }
+    throw error
+  }
+}
+
+function releaseStartupLock(lock) {
+  fs.closeSync(lock.descriptor)
+  try {
+    if (fs.readFileSync(lock.lockPath, 'utf8') === lock.lockContents) fs.unlinkSync(lock.lockPath)
+  } catch {}
+}
+
+async function ensureTauriRuntime() {
+  try {
+    getLocalEndpoint({ profile: 'tauri' })
+    return
+  } catch (initialError) {
+    if (['false', '0'].includes(process.env.AI_WORKER_AUTOSTART?.trim().toLowerCase())) {
+      throw new Error(`${initialError instanceof Error ? initialError.message : 'AI-Worker is not running.'} Automatic startup is disabled by AI_WORKER_AUTOSTART.`)
+    }
+    if (!runtimeStartPromise) {
+      runtimeStartPromise = (async () => {
+        const deadline = Date.now() + RUNTIME_START_TIMEOUT_MS
+        while (Date.now() < deadline) {
+          try {
+            getLocalEndpoint({ profile: 'tauri' })
+            return
+          } catch {
+            const startupLock = acquireStartupLock()
+            if (startupLock) {
+              try {
+                try {
+                  getLocalEndpoint({ profile: 'tauri' })
+                  return
+                } catch {}
+                const executable = findTauriExecutable()
+                if (!executable) {
+                  throw new Error('AI-Worker background app was not found. Open AI-Worker once or set AI_WORKER_TAURI_EXECUTABLE to its Tauri executable.')
+                }
+                let launchError
+                const child = spawn(executable, ['--worker-service'], {
+                  cwd: path.dirname(executable),
+                  detached: true,
+                  stdio: 'ignore',
+                  windowsHide: true,
+                })
+                child.once('error', error => { launchError = error })
+                child.unref()
+                while (Date.now() < deadline) {
+                  if (launchError) throw new Error(`Could not start AI-Worker background app: ${launchError.message}`)
+                  try {
+                    getLocalEndpoint({ profile: 'tauri' })
+                    return
+                  } catch {
+                    await sleep(250)
+                  }
+                }
+                throw new Error('AI-Worker background app did not become ready within 30 seconds. Open AI-Worker and check its local model and bridge status.')
+              } finally {
+                releaseStartupLock(startupLock)
+              }
+            }
+            await sleep(250)
+          }
+        }
+        throw new Error('AI-Worker background app did not become ready within 30 seconds. Open AI-Worker and check its local model and bridge status.')
+      })().finally(() => { runtimeStartPromise = undefined })
+    }
+    return runtimeStartPromise
+  }
+}
+
 function isAbsolutePath(value) {
   return path.posix.isAbsolute(value) || path.win32.isAbsolute(value)
 }
@@ -160,19 +337,34 @@ async function askLocal(prompt) {
   }
 }
 
-function agentTaskRequest({ capabilities = [], workspaceRoot, handoffContext, prompt }) {
+function resolveHostSessionId(value) {
+  const id = value === undefined ? hostSessionId : value
+  if (typeof id !== 'string' || !HOST_SESSION_ID_PATTERN.test(id)) {
+    throw new Error('Host session ID must contain 1–64 letters, digits, dots, underscores, colons or hyphens.')
+  }
+  return id
+}
+
+function agentTaskRequest({ capabilities = [], workspaceRoot, handoffContext, prompt, hostSessionId: requestedSessionId }) {
   const hasWorkspace = capabilities.includes('workspace')
   const activeWorkspace = hasWorkspace ? process.cwd() : undefined
   const selectedWorkspace = workspaceRoot || activeWorkspace
   const context = handoffContext ? { ...handoffContext } : {}
   if (hasWorkspace && !context.workingDirectory) context.workingDirectory = selectedWorkspace
-  const request = { prompt, capabilities }
+  const request = { prompt, capabilities, hostSessionId: resolveHostSessionId(requestedSessionId) }
   if (selectedWorkspace) request.workspaceRoot = selectedWorkspace
   if (Object.keys(context).length > 0) request.handoffContext = context
   return request
 }
 
-async function requestTauri(pathname, { method = 'GET', body, signal, timeout = TASK_REQUEST_TIMEOUT_MS } = {}) {
+function validateHostSessionAck(value, expectedSessionId) {
+  if (!value || value.sessionId !== expectedSessionId || !Number.isInteger(value.connectedSessions) ||
+      value.connectedSessions < 0 || value.connectedSessions > 16) {
+    throw new Error('AI-Worker returned an invalid host session acknowledgement.')
+  }
+}
+
+async function requestTauriAtRuntime(pathname, { method = 'GET', body, signal, timeout = TASK_REQUEST_TIMEOUT_MS } = {}) {
   const { port, token } = getLocalEndpoint({ profile: 'tauri' })
   const requestSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(timeout)])
@@ -203,6 +395,73 @@ async function requestTauri(pathname, { method = 'GET', body, signal, timeout = 
     throw new Error('AI-Worker returned an invalid task response.')
   }
   return result
+}
+
+async function registerHostSession(sessionId = hostSessionId) {
+  if (shuttingDown) return
+  const result = await requestTauriAtRuntime('/host-session/open', {
+    method: 'POST',
+    body: { sessionId },
+  })
+  validateHostSessionAck(result, sessionId)
+  activeHostSessionIds.add(sessionId)
+  if (!heartbeatTimer) {
+    heartbeatTimer = setInterval(async () => {
+      if (shuttingDown || activeHostSessionIds.size === 0 || heartbeatInFlight) return
+      heartbeatInFlight = true
+      try {
+        for (const sessionId of [...activeHostSessionIds]) {
+          try {
+            const heartbeat = await requestTauriAtRuntime('/host-session/heartbeat', {
+              method: 'POST',
+              body: { sessionId },
+            })
+            validateHostSessionAck(heartbeat, sessionId)
+          } catch {
+            activeHostSessionIds.delete(sessionId)
+            if (!shuttingDown) {
+              try {
+                await ensureTauriRuntime()
+                await registerHostSession(sessionId)
+              } catch (error) {
+                console.error(`[AI-Worker MCP] Host session heartbeat failed: ${error instanceof Error ? error.message : 'local bridge unavailable'}`)
+              }
+            }
+          }
+        }
+      } finally {
+        heartbeatInFlight = false
+      }
+    }, HOST_SESSION_HEARTBEAT_MS)
+    heartbeatTimer.unref?.()
+  }
+}
+
+async function closeHostSession() {
+  shuttingDown = true
+  if (heartbeatTimer) clearInterval(heartbeatTimer)
+  heartbeatTimer = undefined
+  while (heartbeatInFlight) await sleep(10)
+  const sessionIds = [...activeHostSessionIds]
+  activeHostSessionIds.clear()
+  await Promise.all(sessionIds.map(sessionId => requestTauriAtRuntime('/host-session/close', {
+    method: 'POST',
+    body: { sessionId },
+    timeout: 2_000,
+  }).then(value => validateHostSessionAck(value, sessionId)).catch(() => {})))
+}
+
+async function requestTauri(pathname, options = {}) {
+  await ensureTauriRuntime()
+  if (!activeHostSessionIds.has(hostSessionId) && !pathname.startsWith('/host-session/')) {
+    await registerHostSession(hostSessionId)
+  }
+  return requestTauriAtRuntime(pathname, options)
+}
+
+async function ensureHostSession(sessionId) {
+  await ensureTauriRuntime()
+  if (!activeHostSessionIds.has(sessionId)) await registerHostSession(sessionId)
 }
 
 function validateTaskId(id, label = 'task ID') {
@@ -279,7 +538,9 @@ function normalizeTaskAck(value, expectedId, allowedStates) {
 }
 
 async function startAgentTask(input) {
-  const request = agentTaskRequest(input)
+  const taskHostSessionId = resolveHostSessionId(input.hostSessionId)
+  await ensureHostSession(taskHostSessionId)
+  const request = agentTaskRequest({ ...input, hostSessionId: taskHostSessionId })
   const result = await requestTauri('/start-agent-task', { method: 'POST', body: request })
   if (typeof result.id !== 'string' || !TASK_ID_PATTERN.test(result.id) || result.state !== 'queued') {
     throw new Error('AI-Worker returned an invalid task ID.')
@@ -343,6 +604,8 @@ const handoffLine = max => z.string().min(1).max(max).trim().min(1).regex(/^[^\x
 const handoffNote = max => z.string().min(1).max(max).trim().min(1).regex(/^[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+$/)
 const taskInputSchema = {
   prompt: z.string().trim().min(1).max(MAX_TASK_PROMPT_LENGTH),
+  hostSessionId: z.string().regex(HOST_SESSION_ID_PATTERN).optional()
+    .describe('Optional stable ID for this host conversation when one MCP process serves multiple conversations.'),
   capabilities: z.array(z.enum(['workspace', 'web'])).max(2).optional(),
   workspaceRoot: handoffLine(1024).refine(isAbsolutePath, 'Workspace root must be an absolute path.').optional()
     .describe('Absolute active project root supplied by the main agent.'),
@@ -362,9 +625,11 @@ server.registerTool('run_agent_task', {
   description: 'Run a bounded synchronous read-only task with AI-Worker’s Tauri on-device model. For workspace tasks, pass capabilities:["workspace"] and the active project workspaceRoot; workspace reads are limited to that project. This route never writes, browses the web, or accesses connected services. The result is returned to this host, whose model may be remote; use a local host model to keep workspace content on-device.',
   inputSchema: syncTaskInputSchema,
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-}, async ({ prompt, capabilities = [], workspaceRoot, handoffContext }, extra) => {
+}, async ({ prompt, capabilities = [], workspaceRoot, handoffContext, hostSessionId: requestedSessionId }, extra) => {
   try {
-    const request = agentTaskRequest({ prompt, capabilities, workspaceRoot, handoffContext })
+    const taskHostSessionId = resolveHostSessionId(requestedSessionId)
+    await ensureHostSession(taskHostSessionId)
+    const request = agentTaskRequest({ prompt, capabilities, workspaceRoot, handoffContext, hostSessionId: taskHostSessionId })
     const result = await requestTauri('/run-agent-task', {
       method: 'POST', body: request, signal: extra.signal, timeout: TASK_RUN_TIMEOUT_MS,
     })
@@ -380,11 +645,11 @@ server.registerTool('start_agent_task', {
   description: 'Start a process-local task using AI-Worker’s on-device model. Workspace scope is the active project path supplied by the host; bounded reads need no per-file prompts. For public research, both the AI-Worker Settings opt-in and capabilities:["web"] are required. Search terms and requested public HTTPS URLs leave this device; fetched result text and source URLs return to this MCP host, which may be remote. Keep private workspace content out of search terms and URLs. Connected services remain unavailable. If a file write is proposed, the task pauses while the user reviews the exact current and proposed content in AI-Worker’s compact approval window; no write occurs before approval. Dismissing or declining cancels that write. Starting returns an ID only; poll get_agent_task for a parent question, write-approval wait state, or completed result.',
   inputSchema: taskInputSchema,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-}, async ({ prompt, capabilities = [], workspaceRoot, handoffContext }, extra) => {
+}, async ({ prompt, capabilities = [], workspaceRoot, handoffContext, hostSessionId }, extra) => {
   try {
     if (extra.signal.aborted) throw new Error('The MCP caller cancelled this request.')
     // Keep start uncancellable until its ID arrives, so a host cancellation can cancel the task it created.
-    const task = await startAgentTask({ prompt, capabilities, workspaceRoot, handoffContext })
+    const task = await startAgentTask({ prompt, capabilities, workspaceRoot, handoffContext, hostSessionId })
     if (extra.signal.aborted) {
       await cancelAgentTask(task.id).catch(() => {})
       throw new Error('The MCP caller cancelled this request.')
@@ -441,5 +706,22 @@ server.registerTool('cancel_agent_task', {
   }
 })
 
-// Keep stdout exclusively for MCP JSON-RPC; Node reports fatal errors to stderr.
-await server.connect(new StdioServerTransport())
+async function startMcpServer() {
+  try {
+    await ensureTauriRuntime()
+    await registerHostSession()
+  } catch (error) {
+    console.error(`[AI-Worker MCP] Background service unavailable: ${error instanceof Error ? error.message : 'unknown local startup error'}`)
+  }
+  // Keep stdout exclusively for MCP JSON-RPC; Node reports fatal errors to stderr.
+  await server.connect(new StdioServerTransport())
+}
+
+process.once('beforeExit', () => { void closeHostSession() })
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+  process.once(signal, () => {
+    void closeHostSession().finally(() => process.exit(code))
+  })
+}
+
+await startMcpServer()

@@ -153,10 +153,41 @@ impl ModelRuntime {
         prompt: &str,
         cancelled: Option<&AtomicBool>,
     ) -> Result<LocalInferenceResult, &'static str> {
-        let body = completion_body(prompt)?;
+        self.infer_cancellable_with_format(app, prompt, cancelled, false)
+    }
+
+    pub fn infer_task<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        prompt: &str,
+    ) -> Result<LocalInferenceResult, &'static str> {
+        self.infer_task_cancellable(app, prompt, None)
+    }
+
+    pub fn infer_task_cancellable<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        prompt: &str,
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<LocalInferenceResult, &'static str> {
+        self.infer_cancellable_with_format(app, prompt, cancelled, true)
+    }
+
+    fn infer_cancellable_with_format<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        prompt: &str,
+        cancelled: Option<&AtomicBool>,
+        structured_output: bool,
+    ) -> Result<LocalInferenceResult, &'static str> {
+        let body = if structured_output {
+            completion_body_json(prompt)?
+        } else {
+            completion_body(prompt)?
+        };
         check_cancelled(cancelled)?;
         self.check_running()?;
-        let ollama = infer_ollama(prompt, cancelled)?;
+        let ollama = infer_ollama(prompt, cancelled, structured_output)?;
         check_cancelled(cancelled)?;
         if let Some(result) = ollama {
             return Ok(result);
@@ -625,19 +656,33 @@ fn authenticated_models(server: &OwnedServer) -> bool {
 }
 
 fn completion_body(prompt: &str) -> Result<String, &'static str> {
+    completion_body_with_format(prompt, false)
+}
+
+fn completion_body_json(prompt: &str) -> Result<String, &'static str> {
+    completion_body_with_format(prompt, true)
+}
+
+fn completion_body_with_format(
+    prompt: &str,
+    structured_output: bool,
+) -> Result<String, &'static str> {
     if prompt.encode_utf16().count() > MAX_PROMPT_LENGTH {
         return Err("Local prompt exceeds 8000 characters. Shorten it and retry.");
     }
     if prompt.trim().is_empty() {
         return Err("Enter a prompt for the local model.");
     }
-    Ok(serde_json::json!({
+    let mut body = serde_json::json!({
         "model": MODEL_NAME,
         "messages": [{ "role": "user", "content": prompt }],
         "max_tokens": 128,
         "stream": false
-    })
-    .to_string())
+    });
+    if structured_output {
+        body["response_format"] = serde_json::json!({ "type": "json_object" });
+    }
+    Ok(body.to_string())
 }
 
 fn is_cancelled(cancelled: Option<&AtomicBool>) -> bool {
@@ -951,7 +996,11 @@ fn ollama_model_is_loaded(status: &serde_json::Value, selected: &str) -> bool {
         })
 }
 
-fn ollama_generation_request(model: &str, prompt: &str) -> serde_json::Value {
+fn ollama_generation_request(
+    model: &str,
+    prompt: &str,
+    structured_output: bool,
+) -> serde_json::Value {
     let mut request = serde_json::json!({
         "model": model,
         "prompt": prompt,
@@ -967,17 +1016,21 @@ fn ollama_generation_request(model: &str, prompt: &str) -> serde_json::Value {
     if model.starts_with("qwen3") {
         request["think"] = serde_json::Value::Bool(false);
     }
+    if structured_output {
+        request["format"] = serde_json::Value::String("json".into());
+    }
     request
 }
 
 fn infer_ollama(
     prompt: &str,
     cancelled: Option<&AtomicBool>,
+    structured_output: bool,
 ) -> Result<Option<LocalInferenceResult>, &'static str> {
     let Some(model) = ollama_catalog_model()? else {
         return Ok(None);
     };
-    let body = ollama_generation_request(&model, prompt).to_string();
+    let body = ollama_generation_request(&model, prompt, structured_output).to_string();
     let response = ollama_request(
         "POST",
         "/api/generate",
@@ -1187,6 +1240,21 @@ mod tests {
     }
 
     #[test]
+    fn task_inference_requests_json_from_each_supported_local_runtime() {
+        let llama: serde_json::Value =
+            serde_json::from_str(&completion_body_json("Return one action.").unwrap()).unwrap();
+        assert_eq!(llama["response_format"]["type"], "json_object");
+
+        let ollama = ollama_generation_request("gemma3:1b", "Return one action.", true);
+        assert_eq!(ollama["format"], "json");
+        assert!(
+            ollama_generation_request("gemma3:1b", "Answer normally.", false)
+                .get("format")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn inference_checks_status_and_returns_only_assistant_text() {
         assert_eq!(
             parse_completion(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"choices\":[{\"message\":{\"content\":\"answer\"}}]}"),
@@ -1290,12 +1358,12 @@ mod tests {
 
     #[test]
     fn ollama_qwen_request_disables_hidden_reasoning_for_bounded_tool_output() {
-        let request = ollama_generation_request("qwen3-vl:4b", "Return JSON.");
+        let request = ollama_generation_request("qwen3-vl:4b", "Return JSON.", false);
         assert_eq!(request["think"], false);
         assert_eq!(request["options"]["num_predict"], 512);
         assert_eq!(request["stream"], false);
 
-        let other_model = ollama_generation_request("gemma3:4b", "Return text.");
+        let other_model = ollama_generation_request("gemma3:4b", "Return text.", false);
         assert!(other_model.get("think").is_none());
 
         let thinking_only = serde_json::json!({

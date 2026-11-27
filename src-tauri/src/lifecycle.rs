@@ -1,13 +1,49 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    App, AppHandle, Manager, Window, WindowEvent,
+    App, AppHandle, Manager, WebviewWindowBuilder, Window, WindowEvent,
 };
 
 const MAIN_WINDOW: &str = "main";
 const SHOW: &str = "tray-show-main";
 const ACTIVITY: &str = "tray-task-activity";
 const QUIT: &str = "tray-quit";
+pub(crate) const WORKER_IDLE_EXIT_AFTER: Duration = Duration::from_secs(30);
+
+#[derive(Default)]
+pub(crate) struct MainWindowCreateState(Arc<AtomicBool>);
+
+#[derive(Clone, Copy)]
+pub(crate) struct WorkerServiceMode(pub(crate) bool);
+
+pub(crate) fn is_worker_service<R: tauri::Runtime>(app: &AppHandle<R>) -> bool {
+    app.state::<WorkerServiceMode>().0
+}
+
+pub(crate) fn should_prevent_worker_exit(
+    worker_service_mode: bool,
+    has_active_work: bool,
+    exit_code: Option<i32>,
+) -> bool {
+    worker_service_mode && has_active_work && exit_code.is_none()
+}
+
+pub(crate) fn should_exit_worker_service(
+    worker_service_mode: bool,
+    main_window_exists: bool,
+    has_active_work: bool,
+    idle_for: Duration,
+) -> bool {
+    worker_service_mode
+        && !main_window_exists
+        && !has_active_work
+        && idle_for >= WORKER_IDLE_EXIT_AFTER
+}
 
 pub fn setup(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let icon = app
@@ -52,7 +88,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     }
 }
 
-pub(crate) fn show_main(app: &AppHandle) {
+pub(crate) fn show_main<R: tauri::Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         let result = window
             .unminimize()
@@ -61,7 +97,36 @@ pub(crate) fn show_main(app: &AppHandle) {
         if let Err(error) = result {
             eprintln!("[Lifecycle] Failed to show AI-Worker: {error}");
         }
+        return;
     }
+
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == MAIN_WINDOW)
+        .cloned()
+    else {
+        eprintln!("[Lifecycle] Main window configuration is unavailable.");
+        return;
+    };
+    let creating = Arc::clone(&app.state::<MainWindowCreateState>().0);
+    if creating
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = WebviewWindowBuilder::from_config(&app, &config)
+            .and_then(|builder| builder.build().map(|_| ()))
+        {
+            creating.store(false, Ordering::Release);
+            eprintln!("[Lifecycle] Failed to create AI-Worker: {error}");
+        }
+    });
 }
 
 pub(crate) fn should_show_main_on_reopen(has_visible_windows: bool) -> bool {
@@ -115,5 +180,48 @@ mod tests {
     fn reopens_main_window_only_when_no_window_is_visible() {
         assert!(should_show_main_on_reopen(false));
         assert!(!should_show_main_on_reopen(true));
+    }
+
+    #[test]
+    fn only_keeps_the_headless_worker_alive_while_a_host_or_task_is_active() {
+        assert!(should_prevent_worker_exit(true, true, None));
+        assert!(!should_prevent_worker_exit(true, false, None));
+        assert!(!should_prevent_worker_exit(false, true, None));
+        assert!(!should_prevent_worker_exit(false, false, None));
+        assert!(!should_prevent_worker_exit(true, true, Some(0)));
+    }
+
+    #[test]
+    fn headless_worker_sleeps_only_after_idle_without_a_full_app_window() {
+        assert!(!should_exit_worker_service(
+            true,
+            false,
+            false,
+            WORKER_IDLE_EXIT_AFTER - Duration::from_secs(1)
+        ));
+        assert!(should_exit_worker_service(
+            true,
+            false,
+            false,
+            WORKER_IDLE_EXIT_AFTER
+        ));
+        assert!(!should_exit_worker_service(
+            true,
+            false,
+            true,
+            WORKER_IDLE_EXIT_AFTER
+        ));
+        assert!(!should_exit_worker_service(
+            true,
+            true,
+            false,
+            WORKER_IDLE_EXIT_AFTER
+        ));
+        assert!(!should_exit_worker_service(
+            false,
+            false,
+            false,
+            WORKER_IDLE_EXIT_AFTER
+        ));
     }
 }

@@ -262,6 +262,7 @@ pub(crate) fn parse_send_message(params: &Map<String, Value>) -> Result<SendMess
         context_id: message.context_id,
         task: TaskRequest {
             prompt: part.text,
+            host_session_id: None,
             capabilities,
             workspace_root,
             handoff_context,

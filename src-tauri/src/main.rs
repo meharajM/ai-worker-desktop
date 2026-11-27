@@ -73,21 +73,38 @@ mod history_proof;
 mod native_proof;
 
 fn main() {
+    let worker_service_mode = std::env::args().any(|argument| argument == "--worker-service");
     #[cfg(feature = "history-proof")]
     let history_proof = history_proof::options();
-    #[cfg(feature = "history-proof")]
     let mut context = tauri::generate_context!();
-    #[cfg(not(feature = "history-proof"))]
-    let context = tauri::generate_context!();
+    if worker_service_mode {
+        if let Some(main_window) = context
+            .config_mut()
+            .app
+            .windows
+            .iter_mut()
+            .find(|window| window.label == "main")
+        {
+            main_window.create = false;
+        }
+    }
     #[cfg(feature = "history-proof")]
     if let Some(options) = &history_proof {
         history_proof::configure(&mut context, options);
     }
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|argument| argument == "--worker-service") {
+                lifecycle::show_main(app);
+            }
+        }))
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .manage(lifecycle::MainWindowCreateState::default())
+        .manage(lifecycle::WorkerServiceMode(worker_service_mode))
         .manage(bridge::BridgeState::default())
         .manage(external_mcp::ExternalMcp::default())
+        .manage(task_activity::ActivityWindowState::default())
         .manage(model_runtime::ModelRuntime::default())
         .manage(model_setup::ModelSetup::default())
         .manage(preferences::PreferenceState::default())
@@ -155,7 +172,17 @@ fn main() {
         ])
         .build(context)
         .expect("failed to build Tauri application")
-        .run(|app, event| {
+        .run(move |app, event| {
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+                let has_active_work = app.state::<external_mcp::ExternalMcp>().has_active_work();
+                if lifecycle::should_prevent_worker_exit(
+                    worker_service_mode,
+                    has_active_work,
+                    *code,
+                ) {
+                    api.prevent_exit();
+                }
+            }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
                 has_visible_windows,

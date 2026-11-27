@@ -1,13 +1,35 @@
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    thread,
+    time::Duration,
+};
+
 use tauri::{
     utils::config::CapabilityEntry, AppHandle, Manager, State, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder,
 };
 
-use crate::external_mcp::{ActivityTask, ExternalMcp};
+use crate::external_mcp::{ActivitySnapshot, ExternalMcp};
 
 const WINDOW: &str = "task-activity";
+const IDLE_CLOSE_AFTER: Duration = Duration::from_secs(20);
 
-pub(crate) fn is_enabled(app: &AppHandle) -> bool {
+#[derive(Default)]
+pub struct ActivityWindowState {
+    generation: AtomicU64,
+}
+
+impl ActivityWindowState {
+    fn mark_shown(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::Acquire) == generation
+    }
+}
+
+pub(crate) fn is_enabled<R: tauri::Runtime>(app: &AppHandle<R>) -> bool {
     let capabilities = &app.config().app.security.capabilities;
     capabilities.is_empty()
         || capabilities.iter().any(|entry| match entry {
@@ -20,14 +42,15 @@ pub(crate) fn is_enabled(app: &AppHandle) -> bool {
 pub(crate) fn get_task_activity(
     window: WebviewWindow,
     external_mcp: State<'_, ExternalMcp>,
-) -> Result<Vec<ActivityTask>, String> {
+) -> Result<ActivitySnapshot, String> {
     if window.label() != WINDOW {
         return Err("Task activity is available only in the activity window.".into());
     }
     Ok(external_mcp.task_activity())
 }
 
-pub(crate) fn show(app: &AppHandle, focus: bool) {
+pub(crate) fn show<R: tauri::Runtime>(app: &AppHandle<R>, focus: bool) {
+    app.state::<ActivityWindowState>().mark_shown();
     if !is_enabled(app) {
         return;
     }
@@ -59,4 +82,34 @@ pub(crate) fn show(app: &AppHandle, focus: bool) {
     if let Err(error) = queued {
         eprintln!("[Task activity] Could not schedule window: {error}");
     }
+}
+
+pub(crate) fn close_after_idle<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    is_idle: impl Fn() -> bool + Send + 'static,
+) {
+    let generation = app
+        .state::<ActivityWindowState>()
+        .generation
+        .load(Ordering::Acquire);
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(IDLE_CLOSE_AFTER);
+        if !is_idle() {
+            return;
+        }
+        let main_thread_app = app.clone();
+        if let Err(error) = app.run_on_main_thread(move || {
+            let state = main_thread_app.state::<ActivityWindowState>();
+            if state.is_current(generation) && is_idle() {
+                if let Some(window) = main_thread_app.get_webview_window(WINDOW) {
+                    if let Err(error) = window.close() {
+                        eprintln!("[Task activity] Could not close idle window: {error}");
+                    }
+                }
+            }
+        }) {
+            eprintln!("[Task activity] Could not schedule idle close: {error}");
+        }
+    });
 }
