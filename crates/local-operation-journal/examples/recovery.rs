@@ -22,12 +22,15 @@ impl TempDir {
             .as_nanos();
         let path =
             std::env::temp_dir().join(format!("local-journal-{}-{nonce}", std::process::id()));
-        let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::DirBuilderExt;
+            let mut builder = fs::DirBuilder::new();
             builder.mode(0o700);
-        }
+            builder
+        };
+        #[cfg(not(unix))]
+        let builder = fs::DirBuilder::new();
         builder.create(&path)?;
         Ok(Self(path))
     }
