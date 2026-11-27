@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createDesktopBridgeClient, DesktopBridgeError } from '../src/renderer/src/desktop-bridge.ts'
+import { createDesktopBridgeClient, createWriteApprovalBridgeClient, DesktopBridgeError } from '../src/renderer/src/desktop-bridge.ts'
 
 const opened = (request) => ({
   protocolVersion: 1,
@@ -226,4 +226,53 @@ test('stale preference mutation is not replayed and next explicit call reopens',
   await client.getPreferences()
   assert.equal(opens, 2)
   assert.equal(updates, 1)
+})
+
+test('write approval bridge returns the exact pending proposal and resolution arguments', async () => {
+  const taskId = 'a'.repeat(64)
+  const approvalId = 'b'.repeat(64)
+  const proposal = {
+    taskId, approvalId, taskPrompt: 'Update the release checklist for the current task.',
+    handoffContext: {
+      summary: 'Review the release process.', constraints: ['Keep edits focused'],
+      relevantFiles: ['README.md'], sourceAgent: 'OpenCode', workingDirectory: '/workspace/project',
+    },
+    workspaceRoot: '/workspace/project', relativePath: 'README.md', before: 'old text', proposed: 'new text',
+  }
+  const calls = []
+  const client = createWriteApprovalBridgeClient({
+    isTauri: () => true,
+    invoke: async (command, args) => {
+      calls.push({ command, args })
+      return command === 'get_pending_write_approval' ? proposal : undefined
+    },
+  })
+  assert.deepEqual(await client.getPendingWriteApproval(), proposal)
+  await client.resolveWriteApproval(taskId, approvalId, true)
+  assert.deepEqual(calls, [
+    { command: 'get_pending_write_approval', args: undefined },
+    { command: 'resolve_write_approval', args: { taskId, approvalId, approved: true } },
+  ])
+})
+
+test('write approval bridge rejects unavailable, malformed, and stale-shaped requests', async () => {
+  let calls = 0
+  const preview = createWriteApprovalBridgeClient({ isTauri: () => false, invoke: async () => { calls++ } })
+  await assert.rejects(preview.getPendingWriteApproval(), { code: 'unavailable' })
+  await assert.rejects(preview.resolveWriteApproval('a'.repeat(64), 'b'.repeat(64), true), { code: 'unavailable' })
+  assert.equal(calls, 0)
+
+  const client = createWriteApprovalBridgeClient({
+    isTauri: () => true,
+    invoke: async () => {
+      calls++
+      return {
+        taskId: 'a'.repeat(64), approvalId: 'b'.repeat(64), taskPrompt: 'Create a new file.',
+        workspaceRoot: '/workspace', relativePath: 'file.txt', before: null, proposed: 'new', extra: true,
+      }
+    },
+  })
+  await assert.rejects(client.getPendingWriteApproval(), { code: 'protocol_error' })
+  await assert.rejects(client.resolveWriteApproval('bad id', 'b'.repeat(64), true), { code: 'invalid_request' })
+  assert.equal(calls, 1)
 })

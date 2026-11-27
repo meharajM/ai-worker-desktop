@@ -247,9 +247,11 @@ test('real authenticated HTTP route cancels on client disconnect and renderer lo
   t.after(async () => { await bridge.stopLocalMcpBridge(); fs.rmSync(dir, { recursive: true, force: true }) })
   const { port, token } = JSON.parse(fs.readFileSync(path.join(dir, 'ai-worker-mcp-status.json')))
   const url = 'http://127.0.0.1:' + port + '/run-agent-task'
+  const widePrompt = '漢'.repeat(8000)
+  assert.ok(Buffer.byteLength(JSON.stringify({ prompt: widePrompt, capabilities: ['workspace'] })) > 12 * 1024)
   const run = (headers = {}, signal) => fetch(url, { method: 'POST', signal,
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token, ...headers },
-    body: JSON.stringify({ prompt: '漢'.repeat(8000), capabilities: ['workspace'] }) })
+    body: JSON.stringify({ prompt: widePrompt, capabilities: ['workspace'] }) })
   assert.equal((await run({ Authorization: 'Bearer x' })).status, 401)
   assert.equal((await run({ Origin: 'https://example.org' })).status, 403)
   const controller = new AbortController()

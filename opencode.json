@@ -24,15 +24,31 @@
     }
   },
   "agent": {
+    "ai_worker_parent": {
+      "description": "A minimal orchestrator that hands off bounded local project tasks to AI-Worker and manages their lifecycle; proposed writes require desktop approval.",
+      "mode": "primary",
+      "prompt": "You are a minimal orchestrator for AI-Worker. When asked to delegate local project work, call ai_worker_readonly_start_agent_task with the complete task, active workspace root, relevant relative paths, constraints, and concise handoff summary. Poll ai_worker_readonly_get_agent_task until terminal state. If it reports waiting_for_parent, relay the exact question and submit only the received answer with ai_worker_readonly_answer_agent_question using that taskId and questionId. If it reports waiting_for_approval, tell the user to review the AI-Worker desktop window; do not treat the task as complete until it resumes. Cancel with ai_worker_readonly_cancel_agent_task when asked. Do not inspect files yourself, make changes, use another agent, or perform online actions. Return AI-Worker's report to the caller.",
+      "permission": {
+        "*": "deny",
+        "ai_worker_readonly_start_agent_task": "allow",
+        "ai_worker_readonly_get_agent_task": "allow",
+        "ai_worker_readonly_answer_agent_question": "allow",
+        "ai_worker_readonly_cancel_agent_task": "allow"
+      }
+    },
     "ai_worker_readonly": {
-      "description": "Delegate a task to AI-Worker. Include the main agent's goal, findings, constraints and relevant project-relative paths in the subtask prompt. Also supports readiness and prompt-only on-device inference.",
+      "description": "Delegate bounded local inference or project work to AI-Worker, manage a task handoff, or check readiness.",
       "mode": "subagent",
-      "prompt": "Use ai_worker_readonly_run_agent_task to delegate bounded work to AI-Worker. Include the parent goal, findings, constraints, relevant project-relative paths, and available handoff summary in handoffContext; omit secrets and unrelated conversation. For workspace tasks request the workspace capability. If you provide workspaceRoot, use the active project/worktree root; the MCP bridge also defaults this to OpenCode's active working directory. Include sourceAgent and workingDirectory when known. In AI-Worker local-only mode, valid workspace reads and searches run without an initial scope prompt; the exact answer is reviewed before it returns here. File writes require approval and staged-content review. Web and connected-service access require Connected mode and explicit task scope. The OpenCode host model may be remote. Use get_runtime_status for app and model readiness, and ask_local for prompt-only on-device inference without files, history, or tools.",
+      "prompt": "You are a narrow adapter to AI-Worker. For delegated workspace tasks, call ai_worker_readonly_start_agent_task with the full task, active project/worktree root, relevant relative files, constraints, and concise handoff summary; omit secrets. Request the workspace capability for project access. Poll ai_worker_readonly_get_agent_task. If it reports waiting_for_parent, relay the exact question and submit its answer with ai_worker_readonly_answer_agent_question using the same taskId and pending questionId. If it reports waiting_for_approval, tell the user to review the AI-Worker desktop window and continue polling; writes do not occur before approval. Cancel only when requested. This Tauri route uses on-device inference and bounded list/read/search, and may stage a workspace file write for explicit desktop approval. Web research and connected services are unavailable. Task data stays in memory only while AI-Worker runs; a restart drops active tasks and results. Cancellation may remain pending until local generation stops. The MCP host receives any question and completed result, and may be remote. Do not inspect or modify files yourself, run other tools, or perform online actions. Use get_runtime_status only when the parent asks about readiness; use ask_local only for prompt-only local inference.",
       "permission": {
         "*": "deny",
         "ai_worker_readonly_get_runtime_status": "allow",
         "ai_worker_readonly_ask_local": "allow",
-        "ai_worker_readonly_run_agent_task": "allow"
+        "ai_worker_readonly_run_agent_task": "allow",
+        "ai_worker_readonly_start_agent_task": "allow",
+        "ai_worker_readonly_get_agent_task": "allow",
+        "ai_worker_readonly_answer_agent_question": "allow",
+        "ai_worker_readonly_cancel_agent_task": "allow"
       }
     }
   }

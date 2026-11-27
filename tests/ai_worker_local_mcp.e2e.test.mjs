@@ -25,11 +25,17 @@ test('stdio MCP handshake exposes status, inference and desktop-approved tasks w
     assert.ok(['/ask-local', '/run-agent-task'].includes(request.url))
     assert.equal(request.headers.authorization, `Bearer ${token}`)
     assert.equal(request.headers.host, `127.0.0.1:${httpServer.address().port}`)
-    response.writeHead(200, { 'Content-Type': 'application/json' })
     if (request.url === '/run-agent-task') {
+      if (body.capabilities?.some((capability) => ['web', 'services'].includes(capability))) {
+        response.writeHead(422, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ error: 'This Tauri task route is local-only and does not provide web or connected-service tools.' }))
+        return
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify({ content: 'Approved.', sources: ['https://example.org/'] }))
       return
     }
+    response.writeHead(200, { 'Content-Type': 'application/json' })
     response.end(JSON.stringify({ content: 'Local answer: pong', provider: 'browser', model: 'fixture-model' }))
   })
 
@@ -66,7 +72,10 @@ test('stdio MCP handshake exposes status, inference and desktop-approved tasks w
   try {
     await client.connect(transport)
     const catalog = await client.listTools()
-    assert.deepEqual(catalog.tools.map((tool) => tool.name).sort(), ['ask_local', 'get_runtime_status', 'run_agent_task'])
+    assert.deepEqual(catalog.tools.map((tool) => tool.name).sort(), [
+      'answer_agent_question', 'ask_local', 'cancel_agent_task', 'get_agent_task',
+      'get_runtime_status', 'run_agent_task', 'start_agent_task',
+    ])
 
     const statusResult = await client.callTool({ name: 'get_runtime_status', arguments: {} })
     const status = JSON.parse(statusResult.content[0].text)
@@ -74,6 +83,7 @@ test('stdio MCP handshake exposes status, inference and desktop-approved tasks w
     assert.equal(status.privacyMode, 'local-only')
     assert.equal(status.modelReady, true)
     assert.equal(status.version, 'test-version')
+    assert.match(status.scope, /staged file writes that require explicit desktop approval/)
     assert.doesNotMatch(JSON.stringify(status), /SECRET_(?:CHAT|MEMORY|TOKEN)_SENTINEL/)
 
     const answer = await client.callTool({ name: 'ask_local', arguments: { prompt: 'Say pong.' } })
@@ -84,19 +94,23 @@ test('stdio MCP handshake exposes status, inference and desktop-approved tasks w
 
     const task = await client.callTool({ name: 'run_agent_task', arguments: { prompt: 'Find public material.', capabilities: ['workspace', 'web', 'services'], workspaceRoot: root,
       handoffContext: { summary: 'Inspect the selected repository.', constraints: ['Read only'], relevantFiles: ['README.md'], sourceAgent: 'test-agent', workingDirectory: root } } })
-    assert.equal(task.content[0].text, 'Approved.')
-    assert.deepEqual(task.structuredContent.sources, ['https://example.org/'])
-    assert.deepEqual(promptSeen[1], { prompt: 'Find public material.', capabilities: ['workspace', 'web', 'services'], workspaceRoot: root,
+    assert.equal(task.isError, true)
+    assert.match(task.content[0].text, /does not provide web or connected-service tools/i)
+    const workspaceTask = await client.callTool({ name: 'run_agent_task', arguments: { prompt: 'Inspect this workspace.', capabilities: ['workspace'], workspaceRoot: root,
+      handoffContext: { summary: 'Inspect the selected repository.', constraints: ['Read only'], relevantFiles: ['README.md'], sourceAgent: 'test-agent', workingDirectory: root } } })
+    assert.equal(workspaceTask.content[0].text, 'Approved.')
+    assert.deepEqual(workspaceTask.structuredContent.sources, ['https://example.org/'])
+    assert.deepEqual(promptSeen[2], { prompt: 'Inspect this workspace.', capabilities: ['workspace'], workspaceRoot: root,
       handoffContext: { summary: 'Inspect the selected repository.', constraints: ['Read only'], relevantFiles: ['README.md'], sourceAgent: 'test-agent', workingDirectory: root } })
     const defaultWorkspace = await client.callTool({ name: 'run_agent_task', arguments: { prompt: 'Summarize this project.', capabilities: ['workspace'] } })
     assert.equal(defaultWorkspace.content[0].text, 'Approved.')
-    assert.deepEqual(promptSeen[2], { prompt: 'Summarize this project.', capabilities: ['workspace'], workspaceRoot: root,
+    assert.deepEqual(promptSeen[3], { prompt: 'Summarize this project.', capabilities: ['workspace'], workspaceRoot: root,
       handoffContext: { workingDirectory: root } })
     const unsupported = await client.callTool({ name: 'run_agent_task', arguments: { prompt: 'Bad', capabilities: ['shell'] } })
     assert.equal(unsupported.isError, true)
     const tooLarge = await client.callTool({ name: 'ask_local', arguments: { prompt: 'x'.repeat(8001) } })
     assert.equal(tooLarge.isError, true)
-    assert.equal(promptSeen.length, 3)
+    assert.equal(promptSeen.length, 4)
 
     await fs.writeFile(path.join(userData, 'ai-worker-mcp-status.json'), JSON.stringify({
       schemaVersion: 1,
@@ -131,7 +145,7 @@ test('stdio MCP handshake exposes status, inference and desktop-approved tasks w
     const stoppedResult = await client.callTool({ name: 'ask_local', arguments: { prompt: 'Should fail while stopped.' } })
     assert.equal(stoppedResult.isError, true)
     assert.match(stoppedResult.content[0].text, /not running/i)
-    assert.equal(promptSeen.length, 3)
+    assert.equal(promptSeen.length, 4)
   } finally {
     await client.close().catch(() => {})
     await new Promise((resolve) => httpServer.close(resolve))
