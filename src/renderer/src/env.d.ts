@@ -89,7 +89,6 @@ interface ElectronAPI {
     }
 
     memory: {
-        runTests: () => Promise<{ success: boolean; result?: { results: string[]; passed: boolean }; error?: string }>
         getStats: () => Promise<{
             success: boolean
             stats?: {

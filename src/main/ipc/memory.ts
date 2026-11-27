@@ -114,21 +114,5 @@ export function registerMemoryHandlers(): void {
       }
   })
 
-  // TEMP: Run verification tests
-  ipcMain.handle('memory:run-tests', async () => {
-    try {
-      if (!isMemoryConnected()) throw new Error('Connect local memory in Connections before using memory features.')
-      const { MemoryTestRunner } = await import('../tests/MemoryTestRunner')
-      const runner = new MemoryTestRunner()
-      const result = await runner.runTests()
-      return { success: true, result }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error)
-      }
-    }
-  })
-
   console.log('[IPC] Memory handlers registered')
 }

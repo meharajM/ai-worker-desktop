@@ -171,7 +171,6 @@ const electronAPI = {
     },
     // Memory operations
     memory: {
-        runTests: () => ipcRenderer.invoke('memory:run-tests'),
         getStats: () => ipcRenderer.invoke('memory:get-stats'),
         exportAll: () => ipcRenderer.invoke('memory:export-all'),
         callTool: (name: string, args: any) => ipcRenderer.invoke('memory:call-tool', { name, args }),

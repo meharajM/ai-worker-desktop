@@ -9,6 +9,7 @@ import { trustRenderer, isTrustedRendererUrl } from './ipc/trustedIpc'
 import { getExternalServiceChoices } from './ipc/mcp'
 import { getStoredPrivacyMode } from './ipc/store'
 import { cancelExternalTask, startLocalMcpBridge, stopLocalMcpBridge } from './services/LocalMcpBridge'
+import { MemoryServiceFactory } from './services/memory/MemoryServiceFactory'
 
 // Initialize environment (fix PATH, etc.)
 initEnv()
@@ -211,13 +212,48 @@ function rendererLoaded(window: BrowserWindow): Promise<void> {
     return new Promise(resolve => window.webContents.once('did-finish-load', () => resolve()))
 }
 
+async function runStandaloneMemoryVerification(): Promise<void> {
+    let result: { results: string[]; passed: boolean }
+    try {
+        const backend = MemoryServiceFactory.getCurrentBackend()
+        if (backend !== 'server-memory') {
+            throw new Error(`Memory verification only runs against on-device server-memory. Configured backend: ${backend}.`)
+        }
+        const { MemoryTestRunner } = await import('./tests/MemoryTestRunner')
+        result = await new MemoryTestRunner().runTests()
+    } catch (error) {
+        result = {
+            results: [`❌ ${error instanceof Error ? error.message : String(error)}`],
+            passed: false,
+        }
+    }
+
+    process.exitCode = result.passed ? 0 : 1
+    process.stdout.write(`AI_WORKER_MEMORY_VERIFICATION_RESULT=${JSON.stringify(result)}\n`, () => app.quit())
+}
+
+const isMemoryVerification = process.argv.includes('--ai-worker-run-memory-verification')
 const hasSingleInstance = app.requestSingleInstanceLock()
 if (!hasSingleInstance) {
-    app.quit()
+    if (isMemoryVerification) {
+        process.stdout.write(
+            'AI_WORKER_MEMORY_VERIFICATION_RESULT={"results":["❌ AI-Worker is already running. Close it before running standalone memory verification."],"passed":false}\n',
+            () => app.exit(1),
+        )
+    } else {
+        app.quit()
+    }
 } else {
-    app.on('second-instance', showHub)
+    app.on('second-instance', (_event, commandLine) => {
+        if (!commandLine.includes('--ai-worker-run-memory-verification')) showHub()
+    })
     app.whenReady().then(async () => {
     electronApp.setAppUserModelId('com.aiworker.app')
+
+    if (isMemoryVerification) {
+        await runStandaloneMemoryVerification()
+        return
+    }
 
     // Verify environment and paths
     setupIpcHandlers()

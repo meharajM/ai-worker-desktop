@@ -2,6 +2,8 @@
 const { _electron: electron } = require('playwright');
 const path = require('path');
 
+const RESULT_PREFIX = 'AI_WORKER_MEMORY_VERIFICATION_RESULT='
+
 (async () => {
     console.log('🚀 Starting Memory Architecture Verification Driver...');
 
@@ -12,47 +14,46 @@ const path = require('path');
     if (!require('fs').existsSync(macPath)) execPath = linuxPath;
 
     let electronApp;
+    let stdout = '';
     try {
         electronApp = await electron.launch({
             executablePath: execPath,
-            args: [path.join(__dirname, '../out/main/index.js'), '--no-sandbox'],
+            args: [path.join(__dirname, '../out/main/index.js'), '--no-sandbox', '--ai-worker-run-memory-verification'],
             env: { ...process.env, NODE_ENV: 'production' }
         });
 
-        // Capture main process console logs
-        electronApp.process().stdout.on('data', data => console.log(`[Main] ${data}`));
+        const child = electronApp.process();
+        child.stdout.on('data', data => {
+            const text = data.toString()
+            stdout += text
+            console.log(`[Main] ${text.trimEnd()}`)
+        });
         electronApp.process().stderr.on('data', data => console.error(`[Main Error] ${data}`));
 
-        const window = await electronApp.firstWindow();
-        await window.waitForLoadState('domcontentloaded');
-        console.log('✅ Window Loaded');
-
-        // Trigger the test via IPC
-        console.log('⚡ Triggering memory:run-tests IPC...');
-        const result = await window.evaluate(async () => {
-            // @ts-ignore
-            return await window.electron.memory.runTests();
+        const { code } = await new Promise((resolve, reject) => {
+            child.once('error', reject)
+            child.once('exit', code => resolve({ code }))
         });
+        const marker = stdout.split(/\r?\n/).find(line => line.startsWith(RESULT_PREFIX))
+        if (!marker) throw new Error(`Electron exited with code ${code} without memory verification results.`)
+        const result = JSON.parse(marker.slice(RESULT_PREFIX.length))
 
         console.log('\n--- Test Results ---');
-        if (result.success) {
-            result.result.results.forEach(line => console.log(line));
-            if (result.result.passed) {
-                console.log('\n🎉 ALL MEMORY TESTS PASSED');
-                process.exit(0);
-            } else {
-                console.log('\n❌ SOME TESTS FAILED');
-                process.exit(1);
-            }
+        result.results.forEach(line => console.log(line));
+        if (result.passed && code === 0) {
+            console.log('\n🎉 ALL MEMORY TESTS PASSED');
+            process.exitCode = 0;
         } else {
-            console.error('❌ IPC Call Failed:', result.error);
-            process.exit(1);
+            console.error('\n❌ SOME TESTS FAILED');
+            process.exitCode = 1;
         }
 
     } catch (error) {
         console.error('❌ Driver Error:', error);
-        process.exit(1);
+        process.exitCode = 1;
     } finally {
-        if (electronApp) await electronApp.close();
+        if (electronApp) {
+            try { await electronApp.close() } catch { /* Electron may have already exited. */ }
+        }
     }
 })();
