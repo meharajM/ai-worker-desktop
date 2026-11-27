@@ -191,6 +191,7 @@ function validatePageInput(sessionId: unknown, limit: unknown, cursor: unknown):
 /** Open the fixed history database; callers get only bounded, validated DTO operations. */
 export async function openChatHistory(): Promise<{
   createSession(title: string): Promise<ChatSession>
+  ensureSession(session: ChatSession): Promise<'created' | 'already_exists'>
   listSessions(): Promise<ChatSession[]>
   listTurns(sessionId: string, options?: { limit?: number; cursor?: TurnCursor }): Promise<{ rows: TerminalTurn[]; nextCursor: TurnCursor | null }>
   commitTerminalTurn(turn: TerminalTurn): Promise<'committed' | 'already_committed'>
@@ -221,6 +222,36 @@ export async function openChatHistory(): Promise<{
       }
       await done
       return sessionDto(result)
+    },
+    async ensureSession(input: ChatSession): Promise<'created' | 'already_exists'> {
+      const session = sessionDto(input)
+      ensureOpen()
+      const tx = db.transaction('sessions', 'readwrite')
+      let abortReason: HistoryErrorCode | null = null
+      const done = transactionDone(tx, () => abortReason)
+      const store = tx.objectStore('sessions')
+      let outcome: 'created' | 'already_exists' = 'created'
+      store.get(session.id).onsuccess = (event) => {
+        const existing = (event.target as IDBRequest).result
+        if (existing !== undefined) {
+          let prior: ChatSession
+          try { prior = sessionDto(existing) } catch { abortReason = 'invalid_schema'; tx.abort(); return }
+          if (prior.title !== session.title || prior.createdAt !== session.createdAt) {
+            abortReason = 'conflict'
+            tx.abort()
+            return
+          }
+          if (prior.updatedAt < session.updatedAt) store.put({ ...prior, updatedAt: session.updatedAt })
+          outcome = 'already_exists'
+          return
+        }
+        store.count().onsuccess = (countEvent) => {
+          if ((countEvent.target as IDBRequest<number>).result >= SESSION_CAP) { abortReason = 'history_full'; tx.abort(); return }
+          store.add(session)
+        }
+      }
+      await done
+      return outcome
     },
     async listSessions(): Promise<ChatSession[]> {
       ensureOpen()

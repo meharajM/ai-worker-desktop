@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './components/primitives/Button'
 import { TextArea } from './components/input/TextArea'
 import { DesktopBridgeError, desktopBridge, type DesktopPreferences, type ModelCatalog, type ModelImportProgress } from './desktop-bridge'
+import { HistoryError, openChatHistory, type ChatSession, type TerminalTurn } from './lib/chat-history'
 import { buildLocalChatPrompt, MAX_LOCAL_CHAT_PROMPT_LENGTH } from './lib/local-chat-context'
 
 type View = 'chat' | 'settings'
@@ -16,24 +17,121 @@ type LocalChatMessage = {
 }
 
 const LOCAL_CHAT_STORAGE_KEY = 'ai-worker.local-chat.v1'
+const ACTIVE_CHAT_SESSION_KEY = 'ai-worker.local-chat.active-session.v1'
 const MAX_LOCAL_CHAT_MESSAGES = 100
+const HISTORY_PAGE_SIZE = 50
+const LEGACY_SESSION_ID = 'tauri-legacy-v1'
+
+function isLocalChatMessage(message: unknown): message is LocalChatMessage {
+  return message !== null && typeof message === 'object' && !Array.isArray(message) &&
+    'id' in message && typeof message.id === 'string' && message.id.length <= 96 &&
+    'role' in message && (message.role === 'user' || message.role === 'assistant') &&
+    'content' in message && typeof message.content === 'string' && message.content.length <= 64 * 1024 &&
+    (message.role === 'user' || ('provider' in message && (message.provider === 'Ollama (local)' || message.provider === 'llama.cpp'))) &&
+    (message.role === 'user' || ('model' in message && typeof message.model === 'string' && message.model.length <= 128))
+}
 
 function readLocalChat(): LocalChatMessage[] {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(LOCAL_CHAT_STORAGE_KEY) ?? 'null')
     if (!value || typeof value !== 'object' || Array.isArray(value) || !('version' in value) || value.version !== 1 ||
-      !('messages' in value) || !Array.isArray(value.messages)) return []
-    return value.messages.slice(-MAX_LOCAL_CHAT_MESSAGES).filter((message): message is LocalChatMessage =>
-      message !== null && typeof message === 'object' && !Array.isArray(message) &&
-      typeof message.id === 'string' && message.id.length <= 96 &&
-      (message.role === 'user' || message.role === 'assistant') &&
-      typeof message.content === 'string' && message.content.length <= 64 * 1024 &&
-      (message.role === 'user' || message.provider === 'Ollama (local)' || message.provider === 'llama.cpp') &&
-      (message.role === 'user' || (typeof message.model === 'string' && message.model.length <= 128)),
-    )
+      !('messages' in value) || !Array.isArray(value.messages) || value.messages.length > MAX_LOCAL_CHAT_MESSAGES ||
+      !value.messages.every(isLocalChatMessage)) return []
+    return value.messages
   } catch {
     return []
   }
+}
+
+function localChatDataIsUnsupported(): boolean {
+  const stored = localStorage.getItem(LOCAL_CHAT_STORAGE_KEY)
+  if (stored === null) return false
+  try {
+    const value: unknown = JSON.parse(stored)
+    return !value || typeof value !== 'object' || Array.isArray(value) || !('version' in value) || value.version !== 1 ||
+      !('messages' in value) || !Array.isArray(value.messages) || value.messages.length > MAX_LOCAL_CHAT_MESSAGES ||
+      !value.messages.every(isLocalChatMessage)
+  } catch {
+    return true
+  }
+}
+
+function legacyTimestamp(message: LocalChatMessage): string {
+  const timestamp = Number(message.id.split('-', 1)[0])
+  return Number.isSafeInteger(timestamp) && timestamp >= 0 && timestamp <= 8.64e15
+    ? new Date(timestamp).toISOString()
+    : new Date(0).toISOString()
+}
+
+function legacyTurns(messages: LocalChatMessage[]): TerminalTurn[] {
+  const turns: TerminalTurn[] = []
+  let pendingUser: LocalChatMessage | null = null
+  const addTurn = (user: LocalChatMessage | null, assistant: LocalChatMessage | null) => {
+    const endedAt = legacyTimestamp(assistant ?? user!)
+    turns.push({
+      turnId: `legacy-${turns.length}`,
+      sessionId: LEGACY_SESSION_ID,
+      userText: user?.content ?? '',
+      assistantText: assistant?.content ?? '',
+      status: user && assistant ? 'completed' : user ? 'failed' : 'completed',
+      endedAt,
+    })
+  }
+
+  for (const message of messages) {
+    if (message.role === 'user') {
+      if (pendingUser) addTurn(pendingUser, null)
+      pendingUser = message
+    } else if (pendingUser) {
+      addTurn(pendingUser, message)
+      pendingUser = null
+    } else {
+      addTurn(null, message)
+    }
+  }
+  if (pendingUser) addTurn(pendingUser, null)
+  return turns
+}
+
+function messagesFromTurns(turns: TerminalTurn[]): LocalChatMessage[] {
+  return turns.flatMap((turn) => [
+    ...(turn.userText ? [{ id: `${turn.turnId}-user`, role: 'user' as const, content: turn.userText }] : []),
+    ...(turn.assistantText ? [{ id: `${turn.turnId}-assistant`, role: 'assistant' as const, content: turn.assistantText }] : []),
+  ]).slice(-MAX_LOCAL_CHAT_MESSAGES)
+}
+
+async function listAllTurns(history: Awaited<ReturnType<typeof openChatHistory>>, sessionId: string): Promise<TerminalTurn[]> {
+  const turns: TerminalTurn[] = []
+  let cursor: { endedAt: string; turnId: string } | undefined
+  do {
+    const page = await history.listTurns(sessionId, { limit: HISTORY_PAGE_SIZE, cursor })
+    turns.push(...page.rows)
+    if (turns.length > HISTORY_PAGE_SIZE) turns.splice(0, turns.length - HISTORY_PAGE_SIZE)
+    cursor = page.nextCursor ?? undefined
+  } while (cursor)
+  return turns
+}
+
+async function restoreLegacyChat(history: Awaited<ReturnType<typeof openChatHistory>>): Promise<void> {
+  const messages = readLocalChat()
+  if (!messages.length) return
+
+  const turns = legacyTurns(messages)
+  const encoder = new TextEncoder()
+  if (turns.some((turn) => turn.userText.length + turn.assistantText.length > 32 * 1024 ||
+      encoder.encode(turn.userText).byteLength + encoder.encode(turn.assistantText).byteLength > 32 * 1024)) {
+    throw new HistoryError('invalid_schema')
+  }
+  const createdAt = legacyTimestamp(messages[0])
+  const updatedAt = legacyTimestamp(messages[messages.length - 1])
+  const firstUserText = messages.find((message) => message.role === 'user')?.content
+  await history.ensureSession({
+    id: LEGACY_SESSION_ID,
+    title: firstUserText?.slice(0, 64) || 'Earlier local chat',
+    createdAt,
+    updatedAt: updatedAt < createdAt ? createdAt : updatedAt,
+  })
+  for (const turn of turns) await history.commitTerminalTurn(turn)
 }
 
 function preferencesFor(resourcePreset: PreferencePreset, allowOnlineResearch: boolean): DesktopPreferences {
@@ -50,6 +148,17 @@ function safeError(error: unknown) {
   return error instanceof DesktopBridgeError ? error.message : 'Native app request failed.'
 }
 
+function historyErrorMessage(error: unknown) {
+  if (!(error instanceof HistoryError)) return 'Local chat history could not be saved. Existing chat data remains on this device.'
+  switch (error.code) {
+    case 'history_full': return 'Local chat history reached its storage limit. Existing chats remain available.'
+    case 'storage_full': return 'This device is low on storage. Existing chat data remains available.'
+    case 'unsupported_version': return 'Local chat history uses a newer format. The saved data was left untouched.'
+    case 'conflict': return 'Local chat history changed during restore. The original local chat was left untouched.'
+    default: return 'Local chat history could not be opened. Existing chat data remains on this device.'
+  }
+}
+
 function formatBytes(bytes: number) {
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
   return `${Math.round(bytes / 1024 ** 2)} MB`
@@ -59,7 +168,10 @@ export function LocalApp() {
   const [view, setView] = useState<View>('chat')
   const [status, setStatus] = useState('Checking native bridge…')
   const [text, setText] = useState('')
-  const [messages, setMessages] = useState<LocalChatMessage[]>(readLocalChat)
+  const [messages, setMessages] = useState<LocalChatMessage[]>([])
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [historyReady, setHistoryReady] = useState(false)
   const [chatBusy, setChatBusy] = useState(false)
   const [chatError, setChatError] = useState('')
   const [chatStorageWarning, setChatStorageWarning] = useState('')
@@ -82,6 +194,9 @@ export function LocalApp() {
   const mounted = useRef(false)
   const modelRequestIdRef = useRef<string>()
   const modelOperationRef = useRef<'import' | 'install' | null>(null)
+  const historyRef = useRef<Awaited<ReturnType<typeof openChatHistory>> | null>(null)
+  const historyGeneration = useRef(0)
+  const chatBusyRef = useRef(false)
 
   const checkStatus = useCallback(async () => {
     const generation = ++checkGeneration.current
@@ -258,58 +373,171 @@ export function LocalApp() {
     }
   }, [modelRequestId])
 
+  const refreshSessions = useCallback(async () => {
+    const history = historyRef.current
+    if (!history) throw new HistoryError('closed')
+    const rows = await history.listSessions()
+    setSessions(rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)))
+  }, [])
+
+  const selectSession = useCallback(async (sessionId: string | null) => {
+    const generation = ++historyGeneration.current
+    setChatStorageWarning('')
+    if (!sessionId) {
+      setActiveSessionId(null)
+      setMessages([])
+      try { localStorage.removeItem(ACTIVE_CHAT_SESSION_KEY) } catch { /* selection can remain in memory */ }
+      return
+    }
+    try {
+      const history = historyRef.current
+      if (!history) throw new HistoryError('closed')
+      const turns = await listAllTurns(history, sessionId)
+      if (!mounted.current || generation !== historyGeneration.current) return
+      setActiveSessionId(sessionId)
+      setMessages(messagesFromTurns(turns))
+      localStorage.setItem(ACTIVE_CHAT_SESSION_KEY, sessionId)
+    } catch (error) {
+      if (!mounted.current || generation !== historyGeneration.current) return
+      setChatStorageWarning(historyErrorMessage(error))
+    }
+  }, [])
+
+  const startNewChat = useCallback(() => {
+    if (chatBusy) return
+    void selectSession(null)
+  }, [chatBusy, selectSession])
+
   const sendChat = useCallback(async () => {
     const prompt = text.trim()
-    if (!prompt || chatBusy) return
+    if (!prompt || chatBusyRef.current || !historyReady) return
     if (prompt.length > MAX_LOCAL_CHAT_PROMPT_LENGTH) {
       setChatError('Local prompts are limited to 8,000 characters. Shorten this message and retry.')
       return
     }
+    chatBusyRef.current = true
+    setChatBusy(true)
     const userMessage: LocalChatMessage = {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       role: 'user',
       content: prompt,
     }
-    setMessages((current) => [...current, userMessage].slice(-MAX_LOCAL_CHAT_MESSAGES))
-    setText('')
-    setChatError('')
-    setChatBusy(true)
     try {
-      const reply = await desktopBridge.sendLocalChat(buildLocalChatPrompt(messages, prompt))
-      setMessages((current) => [...current, {
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        role: 'assistant' as const,
-        content: reply.content,
-        provider: reply.provider,
-        model: reply.model,
-      }].slice(-MAX_LOCAL_CHAT_MESSAGES))
+      const history = historyRef.current
+      if (!history) throw new HistoryError('closed')
+      let sessionId = activeSessionId
+      if (!sessionId) {
+        const session = await history.createSession(prompt.slice(0, 64) || 'Local chat')
+        sessionId = session.id
+        setActiveSessionId(sessionId)
+        setSessions((current) => [session, ...current].slice(0, 50))
+        localStorage.setItem(ACTIVE_CHAT_SESSION_KEY, sessionId)
+      }
+      setMessages((current) => [...current, userMessage].slice(-MAX_LOCAL_CHAT_MESSAGES))
+      setText('')
+      setChatError('')
+      const turnId = crypto.randomUUID()
+      let assistantMessage: LocalChatMessage | null = null
+      try {
+        const reply = await desktopBridge.sendLocalChat(buildLocalChatPrompt(messages, prompt))
+        assistantMessage = {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          role: 'assistant',
+          content: reply.content,
+          provider: reply.provider,
+          model: reply.model,
+        }
+      } catch (error) {
+        setChatError(error instanceof DesktopBridgeError && error.code === 'transport_error'
+          ? 'The local model is unavailable or still loading. Check On-device model setup in Settings and retry.'
+          : safeError(error))
+      }
+
+      try {
+        await history.commitTerminalTurn({
+          turnId,
+          sessionId,
+          userText: prompt,
+          assistantText: assistantMessage?.content ?? '',
+          status: assistantMessage ? 'completed' : 'failed',
+          endedAt: new Date().toISOString(),
+        })
+        if (assistantMessage) setMessages((current) => [...current, assistantMessage!].slice(-MAX_LOCAL_CHAT_MESSAGES))
+        await refreshSessions()
+        setChatStorageWarning('')
+      } catch (error) {
+        setChatStorageWarning(historyErrorMessage(error))
+        if (assistantMessage) {
+          setChatError('The local model replied, but the turn could not be saved to local chat history.')
+          setMessages((current) => [...current, assistantMessage!].slice(-MAX_LOCAL_CHAT_MESSAGES))
+        }
+      }
     } catch (error) {
-      setChatError(error instanceof DesktopBridgeError && error.code === 'transport_error'
-        ? 'The local model is unavailable or still loading. Check On-device model setup in Settings and retry.'
-        : safeError(error))
+      setChatStorageWarning(historyErrorMessage(error))
     } finally {
+      chatBusyRef.current = false
       setChatBusy(false)
     }
-  }, [chatBusy, messages, text])
+  }, [activeSessionId, historyReady, messages, refreshSessions, text])
 
   useEffect(() => {
+    let current = true
     mounted.current = true
     void checkStatus()
     void loadModelCatalog()
+    void (async () => {
+      try {
+        const history = await openChatHistory()
+        if (!current) {
+          history.close()
+          return
+        }
+        historyRef.current = history
+        const oldChatUnsupported = localChatDataIsUnsupported()
+        let restoreError: unknown = null
+        try {
+          await restoreLegacyChat(history)
+        } catch (error) {
+          restoreError = error
+        }
+        const rows = await history.listSessions()
+        if (!current) return
+        rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        const visibleRows = restoreError ? rows.filter((session) => session.id !== LEGACY_SESSION_ID) : rows
+        setSessions(visibleRows)
+        const storedSession = localStorage.getItem(ACTIVE_CHAT_SESSION_KEY)
+        const selected = visibleRows.find((session) => session.id === storedSession)?.id ?? visibleRows[0]?.id ?? null
+        setActiveSessionId(selected)
+        if (selected) {
+          const turns = await listAllTurns(history, selected)
+          if (!current) return
+          setMessages(messagesFromTurns(turns))
+          localStorage.setItem(ACTIVE_CHAT_SESSION_KEY, selected)
+        } else if (restoreError || oldChatUnsupported) {
+          setMessages(readLocalChat())
+        }
+        if (oldChatUnsupported) {
+          setChatStorageWarning('Earlier local chat data uses an unsupported format and remains preserved in local app storage.')
+        } else if (restoreError) {
+          setChatStorageWarning(`${historyErrorMessage(restoreError)} Earlier local chat data remains preserved in local app storage.`)
+        }
+        setHistoryReady(true)
+      } catch (error) {
+        if (!current) return
+        setMessages(readLocalChat())
+        setChatStorageWarning(historyErrorMessage(error))
+        setHistoryReady(false)
+      }
+    })()
     return () => {
+      current = false
       mounted.current = false
       checkGeneration.current += 1
+      historyGeneration.current += 1
+      historyRef.current?.close()
+      historyRef.current = null
     }
   }, [checkStatus, loadModelCatalog])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_CHAT_STORAGE_KEY, JSON.stringify({ version: 1, messages }))
-      setChatStorageWarning('')
-    } catch {
-      setChatStorageWarning('This conversation is visible now but could not be saved in local app storage.')
-    }
-  }, [messages])
 
   useEffect(() => {
     if (view !== 'settings') {
@@ -341,6 +569,34 @@ export function LocalApp() {
             </Button>
           ))}
         </div>
+        {view === 'chat' && (
+          <section aria-label="Chat sessions" className="mt-6 flex min-h-0 flex-1 flex-col">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="text-xs font-medium text-[var(--color-text-secondary)]">Recent chats</h2>
+              <Button type="button" variant="ghost" size="sm" onClick={startNewChat} disabled={!historyReady || chatBusy}>
+                New
+              </Button>
+            </div>
+            {!historyReady && <p role="status" className="text-xs text-[var(--color-text-secondary)]">Opening local history…</p>}
+            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+              {sessions.map((session) => (
+                <Button
+                  key={session.id}
+                  type="button"
+                  variant={session.id === activeSessionId ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="justify-start truncate text-left"
+                  title={session.title}
+                  onClick={() => void selectSession(session.id)}
+                  disabled={!historyReady || chatBusy}
+                  aria-current={session.id === activeSessionId ? 'page' : undefined}
+                >
+                  {session.title}
+                </Button>
+              ))}
+            </div>
+          </section>
+        )}
         <div className="mt-auto border-t border-[var(--color-border)] pt-4">
           <p className="mb-2 text-xs text-[var(--color-text-secondary)]">Native status</p>
           <p role="status" aria-live="polite" className="break-words text-xs text-[var(--color-text-primary)]">{status}</p>
@@ -365,6 +621,11 @@ export function LocalApp() {
                     AI-Worker sends prompts to an installed local model only. It never switches to a cloud model when local inference is unavailable.
                   </p>
                 </div>
+              )}
+              {!historyReady && (
+                <p role="status" aria-live="polite" className="text-sm text-[var(--color-text-secondary)]">
+                  Opening local chat history. Sending stays disabled until saved history is ready.
+                </p>
               )}
               {modelSetupState === 'installing' && (
                 <div role="status" aria-live="polite" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -406,10 +667,10 @@ export function LocalApp() {
                     }
                   }}
                   placeholder="Message your local model… (Enter sends, Shift+Enter adds a line)"
-                  disabled={chatBusy}
+                  disabled={chatBusy || !historyReady}
                 />
                 <div className="flex justify-end pt-2">
-                  <Button type="button" size="sm" variant="secondary" onClick={() => void sendChat()} disabled={!text.trim() || chatBusy || !desktopBridge.isAvailable() || !modelCatalog?.selectedModel}>
+                  <Button type="button" size="sm" variant="secondary" onClick={() => void sendChat()} disabled={!text.trim() || chatBusy || !historyReady || !desktopBridge.isAvailable() || !modelCatalog?.selectedModel}>
                     {chatBusy ? 'Thinking…' : 'Send locally'}
                   </Button>
                 </div>

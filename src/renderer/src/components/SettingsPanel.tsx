@@ -51,6 +51,8 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { LLMProviderSettings } from './settings/llm/LLMProviderSettings'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { ArrowLeft } from 'lucide-react'
+import { useChatStore } from '../stores/chatStore'
+import { buildLegacyDataExport } from '../lib/legacy-data-export'
 
 type SettingsSection = 'privacy' | 'account' | 'llm' | 'voice' | 'memory' | 'browser' | 'appearance' | 'logs' | 'flags' | 'about'
 
@@ -73,6 +75,7 @@ export function SettingsPanel({ onClose, initialSection = 'privacy' }: SettingsP
     const auth = useAuthStore()
     const { openLogFolder, getLogPath } = useLogStore()
     const [logPath, setLogPath] = useState<string>('')
+    const [dataExportMessage, setDataExportMessage] = useState('')
 
     useEffect(() => {
         if (settings.privacyMode !== 'connected' && activeSection === 'account') {
@@ -83,6 +86,37 @@ export function SettingsPanel({ onClose, initialSection = 'privacy' }: SettingsP
     useEffect(() => {
         getLogPath().then(setLogPath)
     }, [getLogPath])
+
+    const exportMigrationData = async () => {
+        if (!useChatStore.persist.hasHydrated() || !useSettingsStore.persist.hasHydrated()) {
+            setDataExportMessage('Chat or settings are still loading. Try again in a moment.')
+            return
+        }
+
+        setDataExportMessage('Preparing your export…')
+        try {
+            const settings = useSettingsStore.getState()
+            const result = await buildLegacyDataExport(useChatStore.getState().sessions, {
+                theme: settings.theme,
+                displayMode: settings.displayMode,
+                speechLang: settings.speechLang,
+                offlineSpeech: settings.offlineSpeech,
+                ttsEnabled: settings.ttsEnabled,
+                ttsRate: settings.ttsRate,
+                ttsPitch: settings.ttsPitch,
+                ttsVoice: settings.ttsVoice,
+            })
+            const url = URL.createObjectURL(new Blob([result.json], { type: 'application/json' }))
+            const link = document.createElement('a')
+            link.href = url
+            link.download = `ai-worker-export-${new Date().toISOString().slice(0, 10)}.json`
+            link.click()
+            window.setTimeout(() => URL.revokeObjectURL(url), 0)
+            setDataExportMessage(`Exported ${result.sessionCount} chats and ${result.turnCount} turns to a local JSON file.`)
+        } catch (error) {
+            setDataExportMessage(error instanceof Error ? error.message : 'Could not create the data export.')
+        }
+    }
 
 
     // Synchronize with global background download status
@@ -494,6 +528,26 @@ export function SettingsPanel({ onClose, initialSection = 'privacy' }: SettingsP
                                     </div>
                                 </Card>
                             </div>
+
+                            <Card variant="default" padding="md">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                        <h5 className="text-sm font-semibold text-[var(--color-text-primary)]">Export chat data</h5>
+                                        <p className="mt-1 max-w-2xl text-xs text-[var(--color-text-secondary)]">
+                                            Create a local file that is not uploaded. It includes up to 50 chats and 512 turns plus safe display/speech preferences; it excludes credentials, workspace paths, approvals, tool records, attachments, memory, MCP configuration, and connected-account data. Keep the file private. Tauri import is not available yet.
+                                        </p>
+                                        <p role="status" aria-live="polite" className="mt-2 text-xs text-[var(--color-text-muted)]">{dataExportMessage}</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => void exportMigrationData()}
+                                        className="flex shrink-0 items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-border)]"
+                                    >
+                                        <Download size={16} />
+                                        Export data
+                                    </button>
+                                </div>
+                            </Card>
 
                             <SystemDependenciesSettings />
                         </div>
