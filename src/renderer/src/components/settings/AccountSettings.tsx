@@ -66,7 +66,6 @@ export function AccountSettings() {
                 </div>
             )}
 
-            {/* Antigravity account linking temporarily disabled. */}
         </div>
     )
 }

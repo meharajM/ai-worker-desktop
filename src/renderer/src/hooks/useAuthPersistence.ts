@@ -5,8 +5,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 
 /**
  * Hook to handle Firebase Auth state persistence
- * Ensures the auth listener is initialized exactly once on app mount.
- * Antigravity OAuth session initialization is temporarily disabled.
+ * Ensures the Firebase auth listener is initialized once while connected mode is active.
  */
 export function useAuthPersistence() {
     const { initializeAuthListener } = useAuthStore()
@@ -18,8 +17,6 @@ export function useAuthPersistence() {
         const initAuth = async () => {
             // initializeAuthListener handles FEATURE_FLAGS check internally
             const unsubscribe = await initializeAuthListener()
-
-            // Antigravity OAuth initialization disabled.
 
             return unsubscribe
         }

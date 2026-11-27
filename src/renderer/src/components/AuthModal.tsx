@@ -176,8 +176,6 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
                             Google sign-in is unavailable in this secure desktop build. Use email sign-in instead.
                         </p>
 
-                        {/* Antigravity login integration temporarily disabled. */}
-
                         <div className="text-center text-sm">
                             <span className="text-[var(--color-text-muted)]">
                                 {mode === 'signin' ? "Don't have an account?" : "Already have an account?"}

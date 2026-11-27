@@ -2,7 +2,7 @@
  * GeminiSettings — self-contained Gemini provider config card.
  *
  * Extracted from SettingsPanel.tsx.
- * Handles: API key input, model select, test connection, Antigravity OAuth link.
+ * Handles the API key, model selection, and connection check.
  */
 import React, { useState } from 'react'
 import { useSettingsStore } from '../../../stores/settingsStore'

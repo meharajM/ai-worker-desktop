@@ -33,11 +33,6 @@ interface AuthState {
     error: string | null
     usage: UsageTracking
 
-    // Antigravity OAuth state (for Gemini access without API key)
-    antigravitySignedIn: boolean
-    antigravityEmail: string | null
-    antigravityLoading: boolean
-
     // Actions
     setUser: (user: User | null) => void
     setLoading: (loading: boolean) => void
@@ -47,11 +42,6 @@ interface AuthState {
     signUpWithEmail: (email: string, pass: string, name: string) => Promise<void>
     signOut: () => Promise<void>
     initializeAuthListener: () => Promise<() => void>
-
-    // Antigravity actions
-    signInWithAntigravity: () => Promise<void>
-    signOutFromAntigravity: () => Promise<void>
-    initializeAntigravity: () => Promise<void>
 
     // Rate limiting
     canChat: () => boolean
@@ -76,11 +66,6 @@ export const useAuthStore = create<AuthState>()(
             loading: false,
             error: null,
             usage: getDefaultUsage(),
-
-            // Antigravity OAuth defaults (integration disabled)
-            antigravitySignedIn: false,
-            antigravityEmail: null,
-            antigravityLoading: false,
 
             setUser: (user) => set({ user, error: null }),
             setLoading: (loading) => set({ loading }),
@@ -174,7 +159,7 @@ export const useAuthStore = create<AuthState>()(
 
                 try {
                     await signOutFromFirebase()
-                    set({ user: null, loading: false, antigravitySignedIn: false, antigravityEmail: null })
+                    set({ user: null, loading: false })
                 } catch (error) {
                     console.error('Sign out failed:', error)
                     set({
@@ -182,25 +167,6 @@ export const useAuthStore = create<AuthState>()(
                         loading: false,
                     })
                 }
-            },
-
-            // Antigravity OAuth — sign in for Gemini access without API key
-            signInWithAntigravity: async () => {
-                set({
-                    antigravitySignedIn: false,
-                    antigravityEmail: null,
-                    antigravityLoading: false,
-                    error: 'Antigravity login is temporarily disabled',
-                })
-            },
-
-            signOutFromAntigravity: async () => {
-                set({ antigravitySignedIn: false, antigravityEmail: null, antigravityLoading: false })
-            },
-
-            // Initialize Antigravity — restore session on app start
-            initializeAntigravity: async () => {
-                set({ antigravitySignedIn: false, antigravityEmail: null, antigravityLoading: false })
             },
 
             initializeAuthListener: async () => {
@@ -336,8 +302,6 @@ export const useAuthStore = create<AuthState>()(
             partialize: (state) => ({
                 user: state.user,
                 usage: state.usage,
-                antigravitySignedIn: state.antigravitySignedIn,
-                antigravityEmail: state.antigravityEmail,
             }),
         }
     )

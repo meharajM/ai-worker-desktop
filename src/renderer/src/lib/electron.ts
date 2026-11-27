@@ -266,28 +266,6 @@ export const electron = {
         }
     },
 
-    // Antigravity OAuth operations temporarily disabled.
-    antigravity: {
-        initialize: async (): Promise<{ signedIn: boolean; email: string | null; projectId: string | null }> => {
-            return { signedIn: false, email: null, projectId: null }
-        },
-        signIn: async (): Promise<{ signedIn: boolean; email: string | null; projectId: string | null }> => {
-            throw new Error('Antigravity sign-in is temporarily disabled')
-        },
-        getToken: async (): Promise<{ token: string | null; headers: Record<string, string> | null }> => {
-            return { token: null, headers: null }
-        },
-        signOut: async (): Promise<{ success: boolean }> => {
-            return { success: true }
-        },
-        getStatus: async (): Promise<{ signedIn: boolean; email: string | null; projectId: string | null }> => {
-            return { signedIn: false, email: null, projectId: null }
-        },
-        callGateway: async (_url: string, _headers: Record<string, string>, _body: string): Promise<unknown> => {
-            throw new Error('Antigravity gateway calls are temporarily disabled')
-        },
-    },
-
     // Log operations
     logs: {
         add: async (entry: unknown) => {
