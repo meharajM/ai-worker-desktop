@@ -62,6 +62,7 @@
         "test:e2e:real:sequential": "node tests/real_e2e_test.cjs --critical-only --only-critical=1,2,3,4,5,6 --extended-criticals --rate-safe",
         "test:mock": "node tests/e2e_ui_mocked.cjs",
         "test:playwright": "node tests/playwright_tools_test.cjs",
+        "test:tauri:import": "npm run web:build && node tests/tauri_legacy_import_e2e.cjs",
         "test:speech": "node tests/speech_e2e.cjs",
         "test:regression:critical": "node tests/regression_critical_checks.cjs",
         "clean": "rm -rf out dist",
