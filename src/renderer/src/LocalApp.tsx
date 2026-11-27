@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './components/primitives/Button'
 import { TextArea } from './components/input/TextArea'
+import { LegacyDataImportPanel } from './components/LegacyDataImportPanel'
 import { DesktopBridgeError, desktopBridge, type DesktopPreferences, type ModelCatalog, type ModelImportProgress } from './desktop-bridge'
 import { HistoryError, openChatHistory, type ChatSession, type TerminalTurn } from './lib/chat-history'
 import { buildLocalChatPrompt, MAX_LOCAL_CHAT_PROMPT_LENGTH } from './lib/local-chat-context'
@@ -402,6 +403,18 @@ export function LocalApp() {
       setChatStorageWarning(historyErrorMessage(error))
     }
   }, [])
+
+  const handleLegacyImported = useCallback(async (sessionIds: string[]) => {
+    await refreshSessions()
+    if (sessionIds.length) await selectSession(sessionIds[0])
+  }, [refreshSessions, selectSession])
+
+  const handleLegacyRolledBack = useCallback(async (sessionIds: string[]) => {
+    await refreshSessions()
+    if (!activeSessionId || !sessionIds.includes(activeSessionId)) return
+    const remaining = await historyRef.current?.listSessions()
+    await selectSession(remaining?.[0]?.id ?? null)
+  }, [activeSessionId, refreshSessions, selectSession])
 
   const startNewChat = useCallback(() => {
     if (chatBusy) return
@@ -837,6 +850,14 @@ export function LocalApp() {
                   </div>
                 )}
               </section>
+              {historyReady && historyRef.current && (
+                <LegacyDataImportPanel
+                  history={historyRef.current}
+                  disabled={chatBusy}
+                  onImported={handleLegacyImported}
+                  onRolledBack={handleLegacyRolledBack}
+                />
+              )}
             </div>
           </>
         )}

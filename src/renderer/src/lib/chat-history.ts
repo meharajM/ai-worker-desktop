@@ -378,3 +378,5 @@ export async function openChatHistory(): Promise<{
   }
   return api
 }
+
+export type ChatHistory = Awaited<ReturnType<typeof openChatHistory>>

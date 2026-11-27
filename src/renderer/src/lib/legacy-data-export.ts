@@ -1,5 +1,8 @@
 import type { ChatSession } from '../stores/chatStore'
 import type { DisplayMode, Theme } from '../stores/settingsStore'
+import type { LegacyDataExport } from './legacy-data-schema'
+
+export type { LegacyDataExport } from './legacy-data-schema'
 
 const MAX_SESSIONS = 50
 const MAX_TURNS = 512
@@ -7,37 +10,6 @@ const MAX_TURN_TEXT_BYTES = 32 * 1024
 const MAX_EXPORT_BYTES = 18 * 1024 * 1024
 const ID = /^[a-zA-Z0-9_-]{1,64}$/
 const encoder = new TextEncoder()
-
-export type LegacyDataExport = {
-  format: 'ai-worker-electron-export'
-  schemaVersion: 1
-  migrationId: string
-  exportedAt: string
-  sessions: Array<{
-    id: string
-    title: string
-    createdAt: string
-    updatedAt: string
-    turns: Array<{
-      turnId: string
-      userText: string
-      assistantText: string
-      status: 'completed' | 'failed'
-      endedAt: string
-    }>
-  }>
-  preferences: {
-    theme: Theme
-    displayMode: DisplayMode
-    speechLang: string
-    offlineSpeech: boolean
-    ttsEnabled: boolean
-    ttsRate: number
-    ttsPitch: number
-    ttsVoice: string | null
-  }
-  omissions: string[]
-}
 
 type SafePreferences = LegacyDataExport['preferences']
 
@@ -99,7 +71,7 @@ export async function buildLegacyDataExport(
   preferences: Parameters<typeof safePreferences>[0],
   now = new Date(),
 ): Promise<{ json: string; sessionCount: number; turnCount: number }> {
-  if (!Array.isArray(sessions) || sessions.length > MAX_SESSIONS) {
+  if (sessions.length > MAX_SESSIONS) {
     throw new Error(`This export supports up to ${MAX_SESSIONS} chat sessions. Nothing was exported.`)
   }
 
@@ -107,7 +79,7 @@ export async function buildLegacyDataExport(
   const exportedSessions: LegacyDataExport['sessions'] = []
 
   for (const session of sessions) {
-    if (!ID.test(session.id) || typeof session.title !== 'string' || session.title.length > 256 ||
+    if (!ID.test(session.id) || typeof session.title !== 'string' || session.title.length > 256 || encoder.encode(session.title).byteLength > 256 ||
         !Array.isArray(session.messages) || !Number.isFinite(session.createdAt) || !Number.isFinite(session.updatedAt)) {
       throw new Error('A chat session is invalid; no export was created.')
     }
