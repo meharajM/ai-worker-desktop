@@ -8,6 +8,7 @@ import { buildLocalChatPrompt, MAX_LOCAL_CHAT_PROMPT_LENGTH } from './lib/local-
 
 type View = 'chat' | 'settings'
 type PreferencePreset = DesktopPreferences['resourcePreset']
+type ThemePreference = DesktopPreferences['theme']
 type PreferenceLoadState = 'idle' | 'loading' | 'ready' | 'error' | 'unavailable'
 type LocalChatMessage = {
   id: string
@@ -135,13 +136,14 @@ async function restoreLegacyChat(history: Awaited<ReturnType<typeof openChatHist
   for (const turn of turns) await history.commitTerminalTurn(turn)
 }
 
-function preferencesFor(resourcePreset: PreferencePreset, allowOnlineResearch: boolean): DesktopPreferences {
+function preferencesFor(resourcePreset: PreferencePreset, allowOnlineResearch: boolean, theme: ThemePreference): DesktopPreferences {
   return {
     schemaVersion: 1,
     selectedProfileId: null,
     resourcePreset,
     idlePolicy: resourcePreset === 'balanced' ? 'shortIdle' : 'taskEnd',
     allowOnlineResearch,
+    theme,
   }
 }
 
@@ -180,6 +182,7 @@ export function LocalApp() {
   const [preferences, setPreferences] = useState<DesktopPreferences>()
   const [selectedPreset, setSelectedPreset] = useState<PreferencePreset | ''>('')
   const [selectedAllowOnlineResearch, setSelectedAllowOnlineResearch] = useState(false)
+  const [selectedTheme, setSelectedTheme] = useState<ThemePreference>('dark')
   const [preferenceError, setPreferenceError] = useState('')
   const [saveNotice, setSaveNotice] = useState('')
   const [saving, setSaving] = useState(false)
@@ -236,6 +239,7 @@ export function LocalApp() {
       setPreferences(result.preferences)
       setSelectedPreset(result.preferences.resourcePreset)
       setSelectedAllowOnlineResearch(result.preferences.allowOnlineResearch)
+      setSelectedTheme(result.preferences.theme)
       setPreferenceLoadState('ready')
     } catch (error) {
       if (!mounted.current || generation !== preferencesGeneration.current) return
@@ -252,11 +256,12 @@ export function LocalApp() {
     setPreferenceError('')
     setSaveNotice('')
     try {
-      const result = await desktopBridge.updatePreferences(preferencesFor(selectedPreset, selectedAllowOnlineResearch))
+      const result = await desktopBridge.updatePreferences(preferencesFor(selectedPreset, selectedAllowOnlineResearch, selectedTheme))
       if (!mounted.current || generation !== preferencesGeneration.current) return
       setPreferences(result.preferences)
       setSelectedPreset(result.preferences.resourcePreset)
       setSelectedAllowOnlineResearch(result.preferences.allowOnlineResearch)
+      setSelectedTheme(result.preferences.theme)
       setSaveNotice('Preferences saved.')
     } catch (error) {
       if (!mounted.current || generation !== preferencesGeneration.current) return
@@ -265,7 +270,7 @@ export function LocalApp() {
       saveBusy.current = false
       if (mounted.current) setSaving(false)
     }
-  }, [preferenceLoadState, selectedAllowOnlineResearch, selectedPreset])
+  }, [preferenceLoadState, selectedAllowOnlineResearch, selectedPreset, selectedTheme])
 
   const loadModelCatalog = useCallback(async () => {
     if (!desktopBridge.isAvailable()) return
@@ -564,6 +569,30 @@ export function LocalApp() {
     }
   }, [loadModelCatalog, loadPreferences, view])
 
+  useEffect(() => {
+    const root = document.documentElement
+    if (selectedTheme !== 'system') {
+      root.setAttribute('data-theme', selectedTheme)
+      return
+    }
+    const colorScheme = window.matchMedia('(prefers-color-scheme: dark)')
+    const applySystemTheme = () => root.setAttribute('data-theme', colorScheme.matches ? 'dark' : 'light')
+    applySystemTheme()
+    colorScheme.addEventListener('change', applySystemTheme)
+    return () => colorScheme.removeEventListener('change', applySystemTheme)
+  }, [selectedTheme])
+
+  useEffect(() => {
+    if (!desktopBridge.isAvailable()) return
+    let current = true
+    void desktopBridge.getPreferences().then((result) => {
+      if (current && mounted.current) setSelectedTheme(result.preferences.theme)
+    }).catch(() => {
+      // Settings exposes any load error; the homepage keeps its dark default.
+    })
+    return () => { current = false }
+  }, [])
+
   return (
     <main className="flex min-h-screen bg-[var(--color-bg-dark)] text-[var(--color-text-primary)]">
       <nav aria-label="Main navigation" className="flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] p-5">
@@ -814,7 +843,19 @@ export function LocalApp() {
                 )}
                 {preferenceLoadState === 'ready' && preferences && (
                   <div className="mt-4">
-                    <label htmlFor="resource-preset" className="block text-sm font-medium">Resource preference</label>
+                    <label htmlFor="theme-preference" className="block text-sm font-medium">Color theme</label>
+                    <select
+                      id="theme-preference"
+                      value={selectedTheme}
+                      disabled={saving}
+                      onChange={(event) => setSelectedTheme(event.target.value as ThemePreference)}
+                      className="mt-2 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-dark)] px-3 py-2 text-sm text-[var(--color-text-primary)] disabled:opacity-60"
+                    >
+                      <option value="dark">Dark</option>
+                      <option value="light">Light</option>
+                      <option value="system">Match device</option>
+                    </select>
+                    <label htmlFor="resource-preset" className="mt-4 block text-sm font-medium">Resource preference</label>
                     <select
                       id="resource-preset"
                       value={selectedPreset}
@@ -840,8 +881,8 @@ export function LocalApp() {
                       </span>
                     </label>
                     <div className="mt-4 flex items-center justify-between gap-4">
-                      <p className="text-sm text-[var(--color-text-secondary)]">Saved: {preferences.resourcePreset === 'balanced' ? 'Balanced' : 'Low impact'} · web {preferences.allowOnlineResearch ? 'enabled' : 'off'}</p>
-                      <Button type="button" variant="secondary" onClick={() => void savePreferences()} disabled={saving || (selectedPreset === preferences.resourcePreset && selectedAllowOnlineResearch === preferences.allowOnlineResearch)}>
+                      <p className="text-sm text-[var(--color-text-secondary)]">Saved: {preferences.theme} theme · {preferences.resourcePreset === 'balanced' ? 'Balanced' : 'Low impact'} · web {preferences.allowOnlineResearch ? 'enabled' : 'off'}</p>
+                      <Button type="button" variant="secondary" onClick={() => void savePreferences()} disabled={saving || (selectedTheme === preferences.theme && selectedPreset === preferences.resourcePreset && selectedAllowOnlineResearch === preferences.allowOnlineResearch)}>
                         {saving ? 'Saving…' : 'Save preferences'}
                       </Button>
                     </div>

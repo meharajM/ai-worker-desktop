@@ -8,8 +8,8 @@ const opened = (request) => ({
   sessionId: 's-1',
   requestId: request.requestId,
 })
-const lowImpact = { schemaVersion: 1, selectedProfileId: null, resourcePreset: 'lowImpact', idlePolicy: 'taskEnd', allowOnlineResearch: false }
-const balanced = { schemaVersion: 1, selectedProfileId: null, resourcePreset: 'balanced', idlePolicy: 'shortIdle', allowOnlineResearch: false }
+const lowImpact = { schemaVersion: 1, selectedProfileId: null, resourcePreset: 'lowImpact', idlePolicy: 'taskEnd', allowOnlineResearch: false, theme: 'dark' }
+const balanced = { schemaVersion: 1, selectedProfileId: null, resourcePreset: 'balanced', idlePolicy: 'shortIdle', allowOnlineResearch: false, theme: 'dark' }
 const preferenceReply = (request, preferences = lowImpact) => ({
   protocolVersion: 1, ownerId: 'main', sessionId: request.sessionId, requestId: request.requestId, preferences,
 })
@@ -187,6 +187,8 @@ test('preferences reject malformed input before invocation and malformed replies
     { ...lowImpact, path: '/tmp/private' },
     { ...lowImpact, idlePolicy: undefined },
     { ...lowImpact, allowOnlineResearch: 'true' },
+    { ...lowImpact, theme: 'blue' },
+    { ...lowImpact, theme: undefined },
   ]) {
     await assert.rejects(client.updatePreferences(invalid), { code: 'invalid_request' })
   }
@@ -199,6 +201,8 @@ test('preferences reject malformed input before invocation and malformed replies
     { ...lowImpact, schemaVersion: 2 },
     { ...lowImpact, extra: true },
     { ...lowImpact, allowOnlineResearch: undefined },
+    { ...lowImpact, theme: 'blue' },
+    { ...lowImpact, theme: undefined },
     null,
   ]) {
     client.replyPreferences = invalid
@@ -226,6 +230,22 @@ test('preferences preserve explicit opt-in for delegated public web research', a
   })
   const result = await client.updatePreferences(online)
   assert.equal(result.preferences.allowOnlineResearch, true)
+})
+
+test('preferences preserve explicit light and system theme selections', async (t) => {
+  for (const theme of ['light', 'system']) {
+    await t.test(theme, async () => {
+      const selected = { ...lowImpact, theme }
+      const client = createDesktopBridgeClient({
+        isTauri: () => true,
+        invoke: async (command, { request }) => command === 'bridge_open_session'
+          ? opened(request)
+          : preferenceReply(request, selected),
+      })
+      const result = await client.updatePreferences(selected)
+      assert.equal(result.preferences.theme, theme)
+    })
+  }
 })
 
 test('preference identity mismatch and native errors preserve protocol/static codes', async (t) => {

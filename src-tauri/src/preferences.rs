@@ -27,6 +27,20 @@ pub enum IdlePolicy {
     ShortIdle,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ThemePreference {
+    Dark,
+    Light,
+    System,
+}
+
+impl Default for ThemePreference {
+    fn default() -> Self {
+        Self::Dark
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Preferences {
@@ -34,6 +48,8 @@ pub struct Preferences {
     pub selected_profile_id: Option<String>,
     pub resource_preset: ResourcePreset,
     pub idle_policy: IdlePolicy,
+    #[serde(default)]
+    pub theme: ThemePreference,
     #[serde(default)]
     pub allow_online_research: bool,
 }
@@ -45,6 +61,7 @@ impl Default for Preferences {
             selected_profile_id: None,
             resource_preset: ResourcePreset::LowImpact,
             idle_policy: IdlePolicy::TaskEnd,
+            theme: ThemePreference::Dark,
             allow_online_research: false,
         }
     }
@@ -227,7 +244,26 @@ mod tests {
         )
         .unwrap();
         assert!(!preferences.allow_online_research);
+        assert_eq!(preferences.theme, ThemePreference::Dark);
         preferences.validate().unwrap();
+    }
+
+    #[test]
+    fn theme_preference_roundtrips_all_supported_values() {
+        for theme in [
+            ThemePreference::Dark,
+            ThemePreference::Light,
+            ThemePreference::System,
+        ] {
+            let preferences = Preferences {
+                theme,
+                ..Preferences::default()
+            };
+            let encoded = serde_json::to_string(&preferences).unwrap();
+            let decoded: Preferences = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(decoded.theme, theme);
+            decoded.validate().unwrap();
+        }
     }
 
     #[test]

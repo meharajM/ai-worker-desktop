@@ -47,6 +47,7 @@ export type DesktopPreferences = {
   resourcePreset: 'lowImpact' | 'balanced'
   idlePolicy: 'taskEnd' | 'shortIdle'
   allowOnlineResearch: boolean
+  theme: 'dark' | 'light' | 'system'
 }
 
 export type DesktopPreferencesReply = {
@@ -251,8 +252,9 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
   const object = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value)
   const validPreferences = (value: unknown): value is DesktopPreferences => {
-    if (!object(value) || Object.keys(value).sort().join(',') !== 'allowOnlineResearch,idlePolicy,resourcePreset,schemaVersion,selectedProfileId') return false
-    if (value.schemaVersion !== 1 || value.selectedProfileId !== null || typeof value.allowOnlineResearch !== 'boolean') return false
+    if (!object(value) || Object.keys(value).sort().join(',') !== 'allowOnlineResearch,idlePolicy,resourcePreset,schemaVersion,selectedProfileId,theme') return false
+    if (value.schemaVersion !== 1 || value.selectedProfileId !== null || typeof value.allowOnlineResearch !== 'boolean' ||
+      !['dark', 'light', 'system'].includes(String(value.theme))) return false
     return (value.resourcePreset === 'lowImpact' && value.idlePolicy === 'taskEnd') ||
       (value.resourcePreset === 'balanced' && value.idlePolicy === 'shortIdle')
   }
@@ -290,7 +292,7 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
   function samePreferences(left: DesktopPreferences, right: DesktopPreferences) {
     return left.schemaVersion === right.schemaVersion && left.selectedProfileId === right.selectedProfileId &&
       left.resourcePreset === right.resourcePreset && left.idlePolicy === right.idlePolicy &&
-      left.allowOnlineResearch === right.allowOnlineResearch
+      left.allowOnlineResearch === right.allowOnlineResearch && left.theme === right.theme
   }
 
   async function correlatedRequest<T>(
