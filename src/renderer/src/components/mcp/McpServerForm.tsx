@@ -23,7 +23,7 @@ export function McpServerForm({
   const [name, setName] = useState(
     editingServer?.name || DEFAULT_SEQUENTIAL_THINKING.name
   );
-  const [serverType, setServerType] = useState<"stdio" | "sse">(
+  const [serverType, setServerType] = useState<"stdio" | "sse" | "http">(
     (editingServer?.type as any) || "stdio"
   );
   const [command, setCommand] = useState(
@@ -62,7 +62,7 @@ export function McpServerForm({
   useEffect(() => {
     if (editingServer) {
       setName(editingServer.name);
-      setServerType(editingServer.type as any);
+      setServerType(editingServer.type);
       setCommand(editingServer.command || "");
       setArgs(editingServer.args?.join(" ") || "");
       setUrl(editingServer.url || "");
@@ -79,11 +79,11 @@ export function McpServerForm({
   const handleSubmit = () => {
     if (!name.trim()) return;
     if (serverType === "stdio" && !command.trim()) return;
-    if (serverType === "sse" && !url.trim()) return;
+    if (serverType !== "stdio" && !url.trim()) return;
 
     // Generate description based on server type and name
     let description =
-      serverType === "stdio" ? "Local CLI Tool" : "Remote SSE Server";
+      serverType === "stdio" ? "Local CLI Tool" : serverType === "http" ? "Remote Streamable HTTP MCP Server" : "Remote SSE MCP Server";
     if (
       name.toLowerCase().includes("sequential") ||
       name.toLowerCase().includes("thinking")
@@ -105,7 +105,7 @@ export function McpServerForm({
       command: serverType === "stdio" ? command.trim() : undefined,
       args:
         serverType === "stdio" ? args.split(" ").filter(Boolean) : undefined,
-      url: serverType === "sse" ? url.trim() : undefined,
+      url: serverType !== "stdio" ? url.trim() : undefined,
       env: Object.keys(envObject).length > 0 ? envObject : undefined
     });
   };
@@ -168,6 +168,17 @@ export function McpServerForm({
               <Globe size={16} />
               SSE (Remote)
             </button>
+            <button
+              onClick={() => setServerType("http")}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm transition-colors border ${
+                serverType === "http"
+                  ? "bg-[var(--color-brand-teal)]/10 border-[var(--color-brand-teal)] text-[var(--color-brand-teal)]"
+                  : "bg-[var(--color-input-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
+              }`}
+            >
+              <Globe size={16} />
+              Streamable HTTP
+            </button>
           </div>
         </div>
 
@@ -208,7 +219,7 @@ export function McpServerForm({
             </label>
             <input
               type="text"
-              placeholder="http://localhost:8000/sse"
+              placeholder={serverType === "http" ? "https://example.com/mcp" : "http://localhost:8000/sse"}
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               className="w-full bg-[var(--color-input-bg)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-primary)]

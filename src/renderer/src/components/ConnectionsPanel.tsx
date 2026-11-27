@@ -6,6 +6,7 @@ import { useWhatsAppStore } from "../stores/whatsappStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { McpServerCard } from "./mcp/McpServerCard";
 import { McpServerForm } from "./mcp/McpServerForm";
+import { McpRegistryBrowser } from "./mcp/McpRegistryBrowser";
 
 export function ConnectionsPanel() {
   const mcp = useMcpStore();
@@ -109,7 +110,7 @@ Can you help me troubleshoot this?`;
     !server.url &&
     (server.command === 'internal-memory' || server.command === 'internal-filesystem')
   );
-  const visibleServers = connectedMode ? servers.filter((s) => s.name !== 'playwright') : localServers;
+  const visibleServers = connectedMode ? servers : localServers;
   const connectedCount = visibleServers.filter((s) => s.connected).length;
   const editingServer = servers.find((s) => s.id === editingServerId) || null;
 
@@ -189,6 +190,7 @@ Can you help me troubleshoot this?`;
           <p className="text-sm text-white/40 mt-1">
             {connectedCount} connected · {visibleServers.length} {connectedMode ? 'configured' : 'available'}
           </p>
+          {connectedMode && <p className="text-xs text-white/30 mt-1">Connect Browser Automation to enable computer and web tasks. Workspace file access remains scoped by the local filesystem service.</p>}
         </div>
 
         {connectedMode && <button
@@ -220,6 +222,13 @@ Can you help me troubleshoot this?`;
             setShowForm(false);
             setEditingServerId(null);
           }}
+        />
+      )}
+
+      {connectedMode && (
+        <McpRegistryBrowser
+          configuredNames={servers.map(server => server.name)}
+          onAdd={mcp.addServer}
         />
       )}
 

@@ -206,6 +206,8 @@ export function useAgent(): UseAgentReturn {
                 geminiModel: settings.geminiModel,
                 openrouterApiKey: settings.openrouterApiKey,
                 openrouterModel: settings.openrouterModel,
+                anthropicApiKey: settings.anthropicApiKey,
+                anthropicModel: settings.anthropicModel,
             };
 
             // Resolve the WhatsApp target once — shared by the try block (typing/delivery)

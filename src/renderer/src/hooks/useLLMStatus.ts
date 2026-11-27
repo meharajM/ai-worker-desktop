@@ -63,7 +63,7 @@ export function useLLMStatus(currentView: string): { llmStatus: LLMStatus; local
 
     /**
      * Checks all configured LLM providers and updates `llmStatus`.
-     * Priority order: WebLLM (on-device) > Ollama > Gemini > OpenRouter > OpenAI.
+     * Priority order follows chat routing: loaded WebLLM > Ollama > OpenAI > Anthropic > Gemini > OpenRouter.
      *
      * WHY useCallback: `checkLLM` is used as a dependency in multiple useEffects.
      * Memoizing it prevents infinite re-render loops when settings change.
@@ -93,6 +93,8 @@ export function useLLMStatus(currentView: string): { llmStatus: LLMStatus; local
                     geminiModel: settings.geminiModel,
                     openrouterApiKey: settings.openrouterApiKey,
                     openrouterModel: settings.openrouterModel,
+                    anthropicApiKey: settings.anthropicApiKey,
+                    anthropicModel: settings.anthropicModel,
                     browserModel: settings.browserModel,
                 };
 
@@ -120,23 +122,27 @@ export function useLLMStatus(currentView: string): { llmStatus: LLMStatus; local
                         setLlmStatus({ provider: `On-Device (Loading...)`, available: false });
                     } else if (providers.ollama.available) {
                         setLlmStatus({ provider: `Ollama (${providers.ollama.model})`, available: true });
+                    } else if (providers.openai.available) {
+                        setLlmStatus({ provider: `OpenAI (${providers.openai.model})`, available: true });
+                    } else if (providers.anthropic.available) {
+                        setLlmStatus({ provider: `Anthropic (${providers.anthropic.model})`, available: true });
                     } else if (providers.gemini.available) {
                         setLlmStatus({ provider: `Gemini (${providers.gemini.model})`, available: true });
                     } else if (providers.openrouter.available) {
                         setLlmStatus({ provider: `OpenRouter (${providers.openrouter.model})`, available: true });
-                    } else if (providers.openai.available) {
-                        setLlmStatus({ provider: `OpenAI (${providers.openai.model})`, available: true });
                     } else {
                         setLlmStatus({ provider: null, available: false });
                     }
                 } else if (providers.ollama.available) {
                     setLlmStatus({ provider: `Ollama (${providers.ollama.model})`, available: true });
+                } else if (providers.openai.available) {
+                    setLlmStatus({ provider: `OpenAI (${providers.openai.model})`, available: true });
+                } else if (providers.anthropic.available) {
+                    setLlmStatus({ provider: `Anthropic (${providers.anthropic.model})`, available: true });
                 } else if (providers.gemini.available) {
                     setLlmStatus({ provider: `Gemini (${providers.gemini.model})`, available: true });
                 } else if (providers.openrouter.available) {
                     setLlmStatus({ provider: `OpenRouter (${providers.openrouter.model})`, available: true });
-                } else if (providers.openai.available) {
-                    setLlmStatus({ provider: `OpenAI (${providers.openai.model})`, available: true });
                 } else {
                     setLlmStatus({ provider: null, available: false });
                 }
@@ -166,6 +172,8 @@ export function useLLMStatus(currentView: string): { llmStatus: LLMStatus; local
         settings.geminiModel,
         settings.openrouterApiKey,
         settings.openrouterModel,
+        settings.anthropicApiKey,
+        settings.anthropicModel,
         settings.browserModel,
         currentView,
     ]);

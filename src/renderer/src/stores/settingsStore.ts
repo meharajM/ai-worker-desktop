@@ -34,6 +34,8 @@ interface SettingsState {
     geminiModel: string
     openrouterApiKey: string
     openrouterModel: string
+    anthropicApiKey: string
+    anthropicModel: string
     browserModel: string
 
     // Appearance
@@ -76,6 +78,8 @@ interface SettingsState {
     setGeminiModel: (model: string) => void
     setOpenrouterApiKey: (key: string) => void
     setOpenrouterModel: (model: string) => void
+    setAnthropicApiKey: (key: string) => void
+    setAnthropicModel: (model: string) => void
     setBrowserModel: (model: string) => void
     setTheme: (theme: Theme) => void
     setDisplayMode: (mode: DisplayMode) => void
@@ -121,6 +125,8 @@ const defaultSettings = {
     geminiModel: import.meta.env.VITE_GEMINI_MODEL || import.meta.env.VITE_LLM_MODEL || LLM_CONFIG.GEMINI.DEFAULT_MODEL,
     openrouterApiKey: '',
     openrouterModel: import.meta.env.VITE_OPENROUTER_MODEL || import.meta.env.VITE_LLM_MODEL || LLM_CONFIG.OPENROUTER.DEFAULT_MODEL,
+    anthropicApiKey: '',
+    anthropicModel: import.meta.env.VITE_ANTHROPIC_MODEL || import.meta.env.VITE_LLM_MODEL || LLM_CONFIG.ANTHROPIC.DEFAULT_MODEL,
     browserModel: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', // Default small model
     theme: 'dark' as Theme,
     displayMode: 'dev' as DisplayMode, // Default to dev; flip to 'prod' for release builds
@@ -185,6 +191,12 @@ export const useSettingsStore = create<SettingsState>()(
                 await electron.secure.set('openrouter_api_key', key || '', uid)
             },
             setOpenrouterModel: (model) => set({ openrouterModel: model }),
+            setAnthropicApiKey: async (key) => {
+                set({ anthropicApiKey: key })
+                const uid = get().activeUserId || undefined
+                await electron.secure.set('anthropic_api_key', key || '', uid)
+            },
+            setAnthropicModel: (model) => set({ anthropicModel: model }),
             setBrowserModel: (model) => set({ browserModel: model }),
             setTheme: (theme) => set({ theme }),
             setDisplayMode: (mode) => set({ displayMode: mode }),
@@ -227,6 +239,7 @@ export const useSettingsStore = create<SettingsState>()(
                 set((state) => ({
                     ...state,
                     ...remoteSettings,
+                    anthropicApiKey: state.anthropicApiKey,
                     privacyMode: state.privacyMode,
                     isSyncing: false,
                     lastSyncTime: Date.now()
@@ -239,6 +252,7 @@ export const useSettingsStore = create<SettingsState>()(
                 const openaiResult = await electron.secure.get('openai_api_key', uid)
                 const geminiResult = await electron.secure.get('gemini_api_key', uid)
                 const openrouterResult = await electron.secure.get('openrouter_api_key', uid)
+                const anthropicResult = await electron.secure.get('anthropic_api_key', uid)
                 // Base URL is not sensitive, use regular store
                 const openaiUrl = await electron.store.get<string>(`user_${uid}_openai_base_url`)
 
@@ -246,7 +260,8 @@ export const useSettingsStore = create<SettingsState>()(
                     openaiApiKey: openaiResult.value || '',
                     openaiBaseUrl: openaiUrl || 'https://api.openai.com/v1',
                     geminiApiKey: geminiResult.value || '',
-                    openrouterApiKey: openrouterResult.value || ''
+                    openrouterApiKey: openrouterResult.value || '',
+                    anthropicApiKey: anthropicResult.value || ''
                 })
                 console.log(`[Settings] Loaded secrets for user ${uid} (encrypted: ${openaiResult.encrypted})`)
             },
@@ -256,7 +271,8 @@ export const useSettingsStore = create<SettingsState>()(
                     activeUserId: null,
                     openaiApiKey: '',
                     geminiApiKey: '',
-                    openrouterApiKey: ''
+                    openrouterApiKey: '',
+                    anthropicApiKey: ''
                     // We might typically clear Base URL too, or leave it as default?
                     // Let's clear it to be safe/reset to default
                 })
@@ -285,6 +301,7 @@ export const useSettingsStore = create<SettingsState>()(
                             openaiModel,
                             geminiModel,
                             openrouterModel,
+                            anthropicModel,
                             browserModel,
                             ttsEnabled,
                             ttsRate,
@@ -302,6 +319,7 @@ export const useSettingsStore = create<SettingsState>()(
                             openaiModel: openaiModel ?? state.openaiModel,
                             geminiModel: geminiModel ?? state.geminiModel,
                             openrouterModel: openrouterModel ?? state.openrouterModel,
+                            anthropicModel: anthropicModel ?? state.anthropicModel,
                             browserModel: browserModel ?? state.browserModel,
                             ttsEnabled: ttsEnabled ?? state.ttsEnabled,
                             ttsRate: ttsRate ?? state.ttsRate,
@@ -349,12 +367,14 @@ export const useSettingsStore = create<SettingsState>()(
                 openaiApiKey: '',
                 geminiApiKey: '',
                 openrouterApiKey: '',
+                anthropicApiKey: '',
             }),
             partialize: (state) => ({
                 ...state,
                 openaiApiKey: '',
                 geminiApiKey: '',
                 openrouterApiKey: '',
+                anthropicApiKey: '',
             }),
             // Force offlineSpeech to true in Electron after rehydration
             onRehydrateStorage: () => (state) => {

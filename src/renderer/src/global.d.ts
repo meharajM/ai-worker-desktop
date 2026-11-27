@@ -7,6 +7,23 @@ export interface ElectronAPI {
     platform: string
 
     mcp: {
+        searchRegistry: (search: string) => Promise<{
+            success: boolean
+            error?: string
+            servers?: Array<{
+                name: string
+                description: string
+                version: string
+                repositoryUrl?: string
+                requirements: string[]
+                configuration?: {
+                    type: 'stdio' | 'sse' | 'http'
+                    command?: string
+                    args?: string[]
+                    url?: string
+                }
+            }>
+        }>
         connect: (serverConfig: unknown) => Promise<{ success: boolean; serverId?: string; error?: string }>
         disconnect: (serverId: string) => Promise<{ success: boolean }>
         listTools: (serverId: string) => Promise<{ tools: Array<{ name: string; description: string }> }>
@@ -17,7 +34,11 @@ export interface ElectronAPI {
         chat: (messages: unknown[], tools?: unknown[]) => Promise<unknown>
         getProviders: () => Promise<Record<string, { available: boolean }>>
         fetchOpenAIModels: (baseUrl: string, apiKey: string) => Promise<{ success: boolean; models?: string[]; error?: string }>
+        fetchAnthropicModels: (apiKey: string) => Promise<{ success: boolean; models?: string[]; error?: string }>
+        anthropicChat: (requestId: string, apiKey: string, body: unknown) => Promise<{ success: boolean; data?: unknown; error?: string }>
+        cancelAnthropicChat: (requestId: string) => Promise<{ success: boolean }>
         fetchOllamaModels: (baseUrl: string) => Promise<{ success: boolean; models?: string[]; error?: string }>
+        fetchOllamaModelCapabilities: (baseUrl: string, model: string, localOnly: boolean) => Promise<{ success: boolean; capabilities?: string[]; error?: string }>
     }
 
     store: {

@@ -29,6 +29,7 @@ import { checkOllama, testOllamaConnection, callOllama } from "./llm/ollama";
 import { checkBrowserLLM, testWebLLMConnection, callBrowserLLM, downloadBrowserModel } from "./llm/browser-llm";
 import { checkOpenAI, checkOpenRouter, testOpenAIConnection, callOpenAI } from "./llm/openai";
 import { checkGemini, testGeminiConnection, callGemini } from "./llm/gemini";
+import { checkAnthropic, callAnthropic } from "./llm/anthropic";
 import { buildSystemPrompt } from "./llm/prompts";
 import { ensureRecord, safeParseJSON, getEnvFallback } from "./llm/utils";
 
@@ -57,6 +58,7 @@ export {
   checkOpenAI,
   checkOpenRouter,
   checkGemini,
+  checkAnthropic,
   testGeminiConnection,
   testOpenAIConnection,
   downloadBrowserModel,
@@ -70,11 +72,12 @@ export {
  */
 export async function getAvailableProviders(
   settings?: LLMSettings
-): Promise<{ browser: ProviderStatus; ollama: ProviderStatus; openai: ProviderStatus; gemini: ProviderStatus; openrouter: ProviderStatus }> {
-  const [webLLM, ollama, openai, gemini, openrouter] = await Promise.all([
+): Promise<{ browser: ProviderStatus; ollama: ProviderStatus; openai: ProviderStatus; anthropic: ProviderStatus; gemini: ProviderStatus; openrouter: ProviderStatus }> {
+  const [webLLM, ollama, openai, anthropic, gemini, openrouter] = await Promise.all([
     getWebLLMStatus(),
     checkOllama(settings),
     settings?.localOnly ? { available: false, error: "Disabled in local-only mode" } : checkOpenAI(settings, "openai"),
+    settings?.localOnly ? { available: false, error: "Disabled in local-only mode" } : checkAnthropic(settings),
     settings?.localOnly ? { available: false, error: "Disabled in local-only mode" } : checkGemini(settings),
     settings?.localOnly ? { available: false, error: "Disabled in local-only mode" } : checkOpenRouter(settings),
   ]);
@@ -90,6 +93,7 @@ export async function getAvailableProviders(
     browser,
     ollama,
     openai,
+    anthropic,
     gemini,
     openrouter,
   };
@@ -137,7 +141,7 @@ export async function chat(
       );
     }
   } else if (preferredProvider === "auto" || !preferredProvider) {
-    // Auto-select: browser ONLY IF already loaded, then ollama, then openai, then gemini, then openrouter
+    // Auto-select local models first, then configured connected providers.
     // We don't auto-select browser if it's just 'available' (supported) to avoid
     // triggering large downloads automatically.
     if (providers.browser.available && providers.browser.isLoaded) {
@@ -146,6 +150,8 @@ export async function chat(
       provider = "ollama";
     } else if (providers.openai.available) {
       provider = "openai";
+    } else if (providers.anthropic.available) {
+      provider = "anthropic";
     } else if (providers.gemini.available) {
       provider = "gemini";
     } else if (providers.openrouter.available) {
@@ -157,6 +163,8 @@ export async function chat(
     provider = "ollama";
   } else if (preferredProvider === "openai" && providers.openai.available) {
     provider = "openai";
+  } else if (preferredProvider === "anthropic" && providers.anthropic.available) {
+    provider = "anthropic";
   } else if (preferredProvider === "gemini" && providers.gemini.available) {
     provider = "gemini";
   } else if (preferredProvider === "openrouter" && providers.openrouter.available) {
@@ -165,7 +173,7 @@ export async function chat(
 
   if (!provider) {
     throw new Error(
-      "No LLM provider available. Please enable a provider (Browser LLM, Ollama, OpenAI, Gemini, or OpenRouter) and configure it appropriately."
+      "No LLM provider available. Configure a local model or select a connected provider and add its API key."
     );
   }
 
@@ -218,6 +226,8 @@ export async function chat(
       return callOllama(messagesWithSystem, tools, settings, abortSignal, workspacePath);
     case "openai":
       return callOpenAI(messagesWithSystem, tools, settings, useJsonFallback, servers, false, abortSignal, dynamicRules, isSubAgent, workspacePath);
+    case "anthropic":
+      return callAnthropic(messagesWithSystem, tools, settings, abortSignal);
     case "gemini":
       return callGemini(messagesWithSystem, tools, settings, abortSignal);
     case "openrouter":

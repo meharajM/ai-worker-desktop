@@ -4,6 +4,7 @@ import { MemoryServiceFactory } from '../services/memory/MemoryServiceFactory'
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { PlaywrightService } from '../services/PlaywrightService'
 import { MemoryService } from '../services/MemoryService'
 import { FileSystemService } from '../services/FileSystemService'
@@ -60,6 +61,14 @@ function isConnectionClosedError(error: string | Error): boolean {
         errorMessage.includes('EPIPE')
 }
 
+function parseMcpRemoteUrl(value: string): URL {
+    const url = new URL(value)
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+        throw new Error('MCP remote URL must use HTTP(S) and cannot include embedded credentials.')
+    }
+    return url
+}
+
 function cleanupClosedConnection(serverId: string): void {
     const client = activeConnections.get(serverId)
     if (client) {
@@ -87,6 +96,80 @@ function sanitizeArgs(args: unknown): unknown {
 // --- IPC Register ---
 
 export function registerMcpHandlers(): void {
+    ipcMain.handle('mcp:registry-search', async (_event, search: string) => {
+        try {
+            if (getStoredPrivacyMode() !== 'connected') {
+                throw new Error('Enable connected mode before searching the MCP Registry.')
+            }
+            if (typeof search !== 'string' || search.trim().length < 3 || search.length > 80) {
+                throw new Error('Search must contain 3 to 80 characters.')
+            }
+
+            const url = new URL('https://registry.modelcontextprotocol.io/v0.1/servers')
+            url.searchParams.set('search', search.trim())
+            url.searchParams.set('version', 'latest')
+            url.searchParams.set('limit', '20')
+            const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(10000) })
+            const result = await response.json().catch(() => ({}))
+            if (!response.ok) throw new Error(result?.message || `Registry returned HTTP ${response.status}`)
+
+            const servers = (Array.isArray(result.servers) ? result.servers : []).flatMap((entry: any) => {
+                const server = entry?.server
+                const official = entry?._meta?.['io.modelcontextprotocol.registry/official']
+                if (!server || official?.status !== 'active' || official?.isLatest !== true) return []
+
+                const packages = Array.isArray(server.packages) ? server.packages : []
+                const npmPackage = packages.find((pkg: any) =>
+                    pkg?.registryType === 'npm' && pkg?.transport?.type === 'stdio' &&
+                    typeof pkg.identifier === 'string' && typeof pkg.version === 'string' &&
+                    /^(@[a-z0-9._-]+\/)?[a-z0-9._-]+$/i.test(pkg.identifier) &&
+                    /^[a-z0-9.+_-]+$/i.test(pkg.version) &&
+                    (!pkg.runtimeHint || pkg.runtimeHint === 'npx') &&
+                    (!pkg.runtimeArguments || (Array.isArray(pkg.runtimeArguments) && pkg.runtimeArguments.every((arg: any) => arg?.type === 'positional' && ['-y', '--yes'].includes(arg.value)))) &&
+                    (!pkg.packageArguments || (Array.isArray(pkg.packageArguments) && pkg.packageArguments.length === 0))
+                )
+                const remotes = Array.isArray(server.remotes) ? server.remotes : []
+                const remote = remotes.find((item: any) =>
+                    ['sse', 'streamable-http'].includes(item?.type) &&
+                    typeof item.url === 'string' &&
+                    (() => { try { parseMcpRemoteUrl(item.url); return true } catch { return false } })() &&
+                    (!Array.isArray(item.headers) || item.headers.length === 0)
+                )
+
+                let configuration: Record<string, unknown> | undefined
+                let requirements: string[] = []
+                if (npmPackage) {
+                    const runtimeArgs = (npmPackage.runtimeArguments || []).map((arg: any) => arg.value)
+                    if (!runtimeArgs.includes('-y') && !runtimeArgs.includes('--yes')) runtimeArgs.unshift('-y')
+                    configuration = {
+                        type: 'stdio',
+                        command: 'npx',
+                        args: [...runtimeArgs, `${npmPackage.identifier}@${npmPackage.version}`],
+                    }
+                    requirements = (npmPackage.environmentVariables || []).filter((item: any) => item.isRequired).map((item: any) => item.name)
+                } else if (remote) {
+                    configuration = { type: remote.type === 'sse' ? 'sse' : 'http', url: remote.url }
+                }
+
+                const repositoryUrl = typeof server.repository?.url === 'string' && server.repository.url.startsWith('https://')
+                    ? server.repository.url
+                    : undefined
+                return [{
+                    name: String(server.name || 'Unnamed MCP server').slice(0, 160),
+                    description: String(server.description || server.title || '').slice(0, 800),
+                    version: String(server.version || '').slice(0, 80),
+                    repositoryUrl,
+                    requirements,
+                    configuration,
+                }]
+            })
+
+            return { success: true, servers }
+        } catch (error) {
+            return { success: false, error: error instanceof Error ? error.message : 'MCP Registry search failed', servers: [] }
+        }
+    })
+
     ipcMain.handle('mcp:connect', async (_event, serverConfig) => {
         const startTime = Date.now()
         const { id, type, command, args, url, env } = serverConfig
@@ -95,7 +178,7 @@ export function registerMcpHandlers(): void {
             operation: 'connect',
             serverId: id,
             type, command, args: args?.join(' '),
-            url: type === 'sse' ? url : undefined,
+            url: type === 'stdio' ? undefined : url,
             hasEnv: !!env,
         })
 
@@ -137,7 +220,7 @@ export function registerMcpHandlers(): void {
                 }
             }
 
-            let transport: StdioClientTransport | SSEClientTransport
+            let transport: StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport
 
             if (type === 'stdio') {
                 let finalCommand = command
@@ -181,7 +264,9 @@ export function registerMcpHandlers(): void {
                     }
                 }
             } else if (type === 'sse' && url) {
-                transport = new SSEClientTransport(new URL(url))
+                transport = new SSEClientTransport(parseMcpRemoteUrl(url))
+            } else if (type === 'http' && url) {
+                transport = new StreamableHTTPClientTransport(parseMcpRemoteUrl(url))
             } else {
                 throw new Error(`Unsupported transport type: ${type}`)
             }

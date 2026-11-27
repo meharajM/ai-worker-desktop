@@ -48,6 +48,9 @@ export const LLM_CONFIG = {
         BASE_URL: '', // User configurable
         DEFAULT_MODEL: 'gpt-4o-mini',
     },
+    ANTHROPIC: {
+        DEFAULT_MODEL: 'claude-haiku-5-5',
+    },
     OPENROUTER: {
         BASE_URL: 'https://openrouter.ai/api/v1',
         DEFAULT_MODEL: 'qwen/qwen3.6-plus:free',

@@ -11,6 +11,7 @@ import {
     getAvailableProviders,
     checkOllama,
     checkOpenAI,
+    checkAnthropic,
     checkGemini,
     checkOpenRouter,
     getWebLLMStatus,
@@ -24,6 +25,7 @@ import {
 import { useSettingsStore, LLMProviderType } from '../../../stores/settingsStore'
 import { OllamaSettings } from './OllamaSettings'
 import { OpenAISettings } from './OpenAISettings'
+import { AnthropicSettings } from './AnthropicSettings'
 import { GeminiSettings } from './GeminiSettings'
 import { ProviderCard } from './ProviderCard'
 import { ModelSelect } from '../../ModelSelect'
@@ -39,6 +41,7 @@ interface SingleProviderStatus {
 interface ProviderStatusMap {
     ollama: SingleProviderStatus
     openai: SingleProviderStatus
+    anthropic: SingleProviderStatus
     gemini: SingleProviderStatus
     openrouter: SingleProviderStatus
     browser?: SingleProviderStatus
@@ -47,6 +50,7 @@ interface ProviderStatusMap {
 const PROVIDERS: { id: LLMProviderType; label: string }[] = [
     { id: 'ollama', label: 'Ollama' },
     { id: 'openai', label: 'OpenAI / Compatible' },
+    { id: 'anthropic', label: 'Anthropic' },
     { id: 'gemini', label: 'Gemini' },
     { id: 'openrouter', label: 'OpenRouter' },
     { id: 'auto', label: 'Auto' },
@@ -111,6 +115,8 @@ export function LLMProviderSettings() {
             geminiModel: settings.geminiModel,
             openrouterApiKey: settings.openrouterApiKey,
             openrouterModel: settings.openrouterModel,
+            anthropicApiKey: settings.anthropicApiKey,
+            anthropicModel: settings.anthropicModel,
             browserModel: settings.browserModel,
         }
 
@@ -122,21 +128,25 @@ export function LLMProviderSettings() {
                     setProviderStatus(await getAvailableProviders(settingsForLLM))
                 } else if (p === 'ollama') {
                     const ollama = await checkOllama(settingsForLLM)
-                    setProviderStatus({ ollama, openai: { available: false }, gemini: { available: false }, openrouter: { available: false } })
+                    setProviderStatus({ ollama, openai: { available: false }, anthropic: { available: false }, gemini: { available: false }, openrouter: { available: false } })
                 } else if (p === 'openai') {
                     const openai = await checkOpenAI(settingsForLLM)
-                    setProviderStatus({ ollama: { available: false }, openai, gemini: { available: false }, openrouter: { available: false } })
+                    setProviderStatus({ ollama: { available: false }, openai, anthropic: { available: false }, gemini: { available: false }, openrouter: { available: false } })
+                } else if (p === 'anthropic') {
+                    const anthropic = await checkAnthropic(settingsForLLM)
+                    setProviderStatus({ ollama: { available: false }, openai: { available: false }, anthropic, gemini: { available: false }, openrouter: { available: false } })
                 } else if (p === 'gemini') {
                     const gemini = await checkGemini(settingsForLLM)
-                    setProviderStatus({ ollama: { available: false }, openai: { available: false }, gemini, openrouter: { available: false } })
+                    setProviderStatus({ ollama: { available: false }, openai: { available: false }, anthropic: { available: false }, gemini, openrouter: { available: false } })
                 } else if (p === 'openrouter') {
                     const openrouter = await checkOpenRouter(settingsForLLM)
-                    setProviderStatus({ ollama: { available: false }, openai: { available: false }, gemini: { available: false }, openrouter })
+                    setProviderStatus({ ollama: { available: false }, openai: { available: false }, anthropic: { available: false }, gemini: { available: false }, openrouter })
                 } else {
                     const providers = await getAvailableProviders(settingsForLLM)
                     setProviderStatus({
                         ollama: providers.ollama,
                         openai: providers.openai,
+                        anthropic: providers.anthropic,
                         gemini: providers.gemini,
                         openrouter: providers.openrouter,
                         browser: providers.browser,
@@ -157,6 +167,7 @@ export function LLMProviderSettings() {
         settings.privacyMode,
         settings.ollamaModel, settings.ollamaBaseUrl,
         settings.openaiApiKey, settings.openaiBaseUrl, settings.openaiModel,
+        settings.anthropicApiKey, settings.anthropicModel,
         settings.geminiApiKey, settings.geminiModel,
         settings.openrouterApiKey, settings.openrouterModel,
         settings.browserModel,
@@ -172,6 +183,7 @@ export function LLMProviderSettings() {
     const localOnly = settings.privacyMode === 'local-only'
     const showOllama = localOnly || p === 'ollama' || p === 'auto'
     const showOpenAI = !localOnly && (p === 'openai' || p === 'auto')
+    const showAnthropic = !localOnly && (p === 'anthropic' || p === 'auto')
     const showGemini = !localOnly && (p === 'gemini' || p === 'auto')
     const showOpenRouter = !localOnly && (p === 'openrouter' || p === 'auto')
     const downloaded = browserStatus.downloadedModels.includes(settings.browserModel)
@@ -247,6 +259,15 @@ export function LLMProviderSettings() {
                         models={providerStatus?.openai.models}
                         modelsEndpointAvailable={providerStatus?.openai.modelsEndpointAvailable}
                         error={providerStatus?.openai.error}
+                        checking={checking}
+                        onRefresh={checkProviders}
+                    />
+                )}
+                {showAnthropic && (
+                    <AnthropicSettings
+                        available={providerStatus?.anthropic.available}
+                        models={providerStatus?.anthropic.models}
+                        error={providerStatus?.anthropic.error}
                         checking={checking}
                         onRefresh={checkProviders}
                     />

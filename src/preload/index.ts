@@ -33,6 +33,7 @@ const electronAPI = {
 
     // MCP Server operations
     mcp: {
+        searchRegistry: (search: string) => ipcRenderer.invoke('mcp:registry-search', search),
         connect: (serverConfig: unknown) => ipcRenderer.invoke('mcp:connect', serverConfig),
         disconnect: (serverId: string) => ipcRenderer.invoke('mcp:disconnect', serverId),
         listTools: (serverId: string) => ipcRenderer.invoke('mcp:list-tools', serverId),
@@ -52,8 +53,16 @@ const electronAPI = {
         getProviders: () => ipcRenderer.invoke('llm:get-providers'),
         fetchOpenAIModels: (baseUrl: string, apiKey: string) =>
             ipcRenderer.invoke('llm:fetch-openai-models', baseUrl, apiKey),
+        fetchAnthropicModels: (apiKey: string) =>
+            ipcRenderer.invoke('llm:fetch-anthropic-models', apiKey),
+        anthropicChat: (requestId: string, apiKey: string, body: unknown) =>
+            ipcRenderer.invoke('llm:anthropic-chat', requestId, apiKey, body),
+        cancelAnthropicChat: (requestId: string) =>
+            ipcRenderer.invoke('llm:anthropic-cancel', requestId),
         fetchOllamaModels: (baseUrl: string) =>
             ipcRenderer.invoke('llm:fetch-ollama-models', baseUrl),
+        fetchOllamaModelCapabilities: (baseUrl: string, model: string, localOnly: boolean) =>
+            ipcRenderer.invoke('llm:fetch-ollama-model-capabilities', baseUrl, model, localOnly),
     },
 
     // Storage operations (using electron-store in main process)

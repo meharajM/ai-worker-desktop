@@ -30,6 +30,11 @@ function loadEnv() {
     fs.writeFileSync(tempFilePath, 'This is a test file for upload tool.');
 
     let electronApp;
+    let testWindow;
+    let previousPrivacyMode;
+    let privacyModeChanged = false;
+    let filesystemTestDir;
+    let filesystemServerId;
     try {
         console.log('🚀 Launching Electron...');
         electronApp = await electron.launch({
@@ -51,10 +56,49 @@ function loadEnv() {
     }
 
     try {
-        const window = await electronApp.firstWindow();
+        const windows = await electronApp.windows();
+        let window;
+        for (const candidate of windows) {
+            if (await candidate.evaluate(() => !!window.electron?.mcp)) {
+                window = candidate;
+                break;
+            }
+        }
+        if (!window) throw new Error('Main renderer with MCP preload bridge was not found');
+        testWindow = window;
         await window.waitForLoadState('domcontentloaded');
         console.log('✅ Window Loaded');
         await window.waitForTimeout(2000);
+
+        // This suite exercises browser and internet tools. Opt into Connected mode for
+        // the test process, then restore the user's saved privacy mode in finally.
+        previousPrivacyMode = await window.evaluate(() => window.electron.store.get('privacyMode'));
+        await window.evaluate(() => window.electron.store.set('privacyMode', 'connected'));
+        privacyModeChanged = true;
+
+        // Search active registry metadata without installing or starting any listed package.
+        const registryResult = await window.evaluate(() => window.electron.mcp.searchRegistry('filesystem'));
+        if (!registryResult.success || !registryResult.servers?.length) {
+            throw new Error(`MCP Registry search failed: ${registryResult.error || 'no active results'}`);
+        }
+        console.log(`✅ MCP Registry returned ${registryResult.servers.length} active filesystem listing(s)`);
+
+        // Exercise the in-process, workspace-scoped filesystem connector with a temporary home-folder file.
+        filesystemTestDir = fs.mkdtempSync(path.join(os.homedir(), '.ai-worker-filesystem-test-'));
+        const filesystemTestFile = path.join(filesystemTestDir, 'read-test.txt');
+        fs.writeFileSync(filesystemTestFile, 'workspace filesystem tool ok', 'utf8');
+        const filesystemConnect = await window.evaluate(() => window.electron.mcp.connect({
+            id: 'filesystem-test', type: 'stdio', command: 'internal-filesystem'
+        }));
+        if (!filesystemConnect.success) throw new Error(`Filesystem connection failed: ${filesystemConnect.error}`);
+        filesystemServerId = filesystemConnect.serverId;
+        const filesystemRead = await window.evaluate(({ id, workspacePath, filePath }) =>
+            window.electron.mcp.callTool(id, 'fs_read_file', { workspacePath, path: filePath }),
+        { id: filesystemServerId, workspacePath: filesystemTestDir, filePath: filesystemTestFile });
+        if (filesystemRead.error || !filesystemRead.result?.content?.[0]?.text?.includes('workspace filesystem tool ok')) {
+            throw new Error(`Filesystem read failed: ${filesystemRead.error || JSON.stringify(filesystemRead.result)}`);
+        }
+        console.log('✅ Workspace-scoped filesystem read works');
 
         // --- 1. Connect ---
         console.log('\n--- 1. Testing Connection ---');
@@ -252,19 +296,26 @@ function loadEnv() {
         if (!tabsJson.includes('tabs') || (!tabsJson.includes('Tab2') && !tabsJson.includes('tab'))) throw new Error(`get_tabs return mismatch: ${tabsJson}`);
         console.log('✅ get_tabs validates new tab');
 
-        const tabsData = tabsRes.raw.tabs || [];
+        let tabsData = tabsRes.raw.tabs || [];
+        if (tabsData.length === 0) {
+            try { tabsData = JSON.parse(tabsRes.text).tabs || []; } catch { /* keep raw fallback */ }
+        }
         console.log(`Tabs found: ${tabsData.length}, JSON: ${tabsJson}`);
         if (tabsData.length > 1) {
             console.log(`Switching between ${tabsData.length} tabs...`);
-            // Switch to a different tab (the one that isn't active)
-            const otherTab = tabsData.find(t => !t.active) || tabsData[0];
-            await callTool('switch_tab', { index: otherTab.index });
+            // Close the tab created by this test and preserve the page with the iframe.
+            const testTab = tabsData.find(t => t.url === 'data:text/plain,Tab2') || tabsData.find(t => !t.active);
+            await callTool('switch_tab', { index: testTab.index });
             await callTool('close_tab');
             console.log('✅ Tab management verified');
-            // Switch back to original tab if needed (or just ensure next tests use tab 1)
+            // Ensure the original page remains selected for the frame test.
             const remainingTabs = await callTool('get_tabs');
-            const mainTab = remainingTabs.raw.tabs.find(t => t.url.includes('data:text/html')) || remainingTabs.raw.tabs[0];
-            await callTool('switch_tab', { index: mainTab.index });
+            let remainingTabList = remainingTabs.raw.tabs || [];
+            if (remainingTabList.length === 0) {
+                try { remainingTabList = JSON.parse(remainingTabs.text).tabs || []; } catch { /* keep raw fallback */ }
+            }
+            const mainTab = remainingTabList.find(t => t.url.includes('data:text/html')) || remainingTabList[0];
+            if (mainTab && !mainTab.active) await callTool('switch_tab', { index: mainTab.index });
         } else {
             console.log('ℹ️ Only one tab open, skipping tab switch/close test');
         }
@@ -309,15 +360,17 @@ function loadEnv() {
 
         // --- 9. Advanced Find ---
         console.log('\n--- 9. Advanced Find ---');
+        // Use the local fixture for a deterministic DOM lookup even when example.com changes.
+        await callTool('navigate', { url: testUrl });
         const xpathRes = await callTool('find_by_xpath', { xpath: '//h1' });
-        if (!xpathRes.text.includes('h1') && !xpathRes.text.includes('Example Domain')) throw new Error(`find_by_xpath return mismatch: ${xpathRes.text}`);
+        if (!xpathRes.text.includes('h1') && !xpathRes.text.includes('Welcome')) throw new Error(`find_by_xpath return mismatch: ${xpathRes.text}`);
         console.log('✅ find_by_xpath returns results');
 
         // Note: there is no 'find_by_css' tool — CSS-based element lookup uses
         // check_element (for a single element) or evaluate (for bulk queries).
         // Validate CSS selector lookup via check_element:
         const checkH1Res = await callTool('check_element', { selector: 'h1', property: 'text' });
-        if (!checkH1Res.text.includes('Example Domain') && !checkH1Res.text.includes('value')) throw new Error(`check_element (CSS) mismatch: ${checkH1Res.text}`);
+        if (!checkH1Res.text.includes('Welcome') && !checkH1Res.text.includes('value')) throw new Error(`check_element (CSS) mismatch: ${checkH1Res.text}`);
         console.log('✅ check_element with CSS selector returns element text (CSS lookup verified)');
 
         // --- 10. Background Scrape ---
@@ -409,9 +462,19 @@ function loadEnv() {
 
     } catch (error) {
         console.error('\n❌ TEST FAILED:', error);
-        process.exit(1);
+        process.exitCode = 1;
     } finally {
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        await electronApp.close();
+        if (filesystemTestDir && fs.existsSync(filesystemTestDir)) fs.rmSync(filesystemTestDir, { recursive: true, force: true });
+        if (testWindow && !testWindow.isClosed() && filesystemServerId) {
+            await testWindow.evaluate(id => window.electron.mcp.disconnect(id), filesystemServerId).catch(() => {});
+        }
+        if (testWindow && !testWindow.isClosed() && privacyModeChanged) {
+            await testWindow.evaluate(async (previousMode) => {
+                if (previousMode === undefined) await window.electron.store.delete('privacyMode');
+                else await window.electron.store.set('privacyMode', previousMode);
+            }, previousPrivacyMode).catch(() => {});
+        }
+        if (electronApp) await electronApp.close();
     }
 })();

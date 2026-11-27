@@ -28,6 +28,7 @@ function loadPersistenceOptions() {
         LLM_CONFIG: {
           OLLAMA: { DEFAULT_MODEL: 'local' },
           OPENAI_COMPATIBLE: { DEFAULT_MODEL: 'cloud' },
+          ANTHROPIC: { DEFAULT_MODEL: 'claude-haiku-5-5' },
           GEMINI: { DEFAULT_MODEL: 'cloud' },
           OPENROUTER: { DEFAULT_MODEL: 'cloud' },
         },
@@ -49,6 +50,7 @@ test('API keys are cleared when old settings are rehydrated and excluded from fu
     openaiApiKey: 'old-openai-secret',
     geminiApiKey: 'old-gemini-secret',
     openrouterApiKey: 'old-openrouter-secret',
+    anthropicApiKey: 'old-anthropic-secret',
   }
 
   const migrated = options.migrate(oldState, 0)
@@ -57,6 +59,7 @@ test('API keys are cleared when old settings are rehydrated and excluded from fu
     assert.equal(state.openaiApiKey, '')
     assert.equal(state.geminiApiKey, '')
     assert.equal(state.openrouterApiKey, '')
+    assert.equal(state.anthropicApiKey, '')
   }
   assert.equal(migrated.theme, 'light')
 })

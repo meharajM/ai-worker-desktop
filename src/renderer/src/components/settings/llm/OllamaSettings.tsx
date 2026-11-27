@@ -31,8 +31,12 @@ export function OllamaSettings({ available, error, models, checking, onRefresh }
                 settings.privacyMode === 'local-only'
             )
             if (result.success) {
-                setTestResult('Connection successful!')
-                await onRefresh()
+                setTestResult(result.capabilities?.includes('tools')
+                    ? 'Ollama is reachable. This model supports tool calling.'
+                    : 'Ollama is reachable. This model can generate text, but cannot call AI-Worker integrations.')
+                void onRefresh().catch((refreshError) => {
+                    console.warn('[OllamaSettings] Provider status refresh failed:', refreshError)
+                })
             } else {
                 setTestResult(`Error: ${result.error}`)
             }

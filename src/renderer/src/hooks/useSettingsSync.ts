@@ -73,6 +73,7 @@ export function useSettingsSync() {
                      openaiModel: state.openaiModel,
                      geminiModel: state.geminiModel,
                      openrouterModel: state.openrouterModel,
+                     anthropicModel: state.anthropicModel,
                      browserModel: state.browserModel,
                      ttsEnabled: state.ttsEnabled,
                      ttsRate: state.ttsRate,

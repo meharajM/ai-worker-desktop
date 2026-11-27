@@ -3,6 +3,11 @@ import { ProviderStatus } from "./types";
 import { LLM_CONFIG, FEATURE_FLAGS } from "../constants";
 import { extractTextForLegacyProviders, getEnvFallback } from "./utils";
 
+type OllamaModelInfo = { capabilities?: string[] };
+
+const MODEL_CAPABILITY_CACHE_TTL_MS = 5 * 60 * 1000;
+const modelCapabilityCache = new Map<string, { capabilities: string[]; checkedAt: number }>();
+
 export // Get Ollama settings from store or use defaults
   function getOllamaSettings(settings?: LLMSettings) {
   const envModel = getEnvFallback('ollama', 'model');
@@ -90,34 +95,56 @@ export async function testOllamaConnection(
   baseUrl: string,
   model: string,
   localOnly = false
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; capabilities?: string[] }> {
   try {
     getOllamaSettings({ ollamaBaseUrl: baseUrl, ollamaModel: model, localOnly });
-    if (localOnly) {
-      const ready = await checkOllama({ localOnly, ollamaBaseUrl: baseUrl, ollamaModel: model });
-      if (!ready.available) throw new Error(ready.error);
-    }
-    const response = await fetch(`${baseUrl}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      ...(localOnly ? { redirect: 'error' as const } : {}),
-      body: JSON.stringify({
-        model,
-        prompt: "test",
-        stream: false,
-      }),
-    });
-    if (response.ok) {
-      return { success: true };
-    }
-    const error = await response.json().catch(() => ({}));
-    return { success: false, error: error.error || "Connection failed" };
+    const capabilities = await getOllamaModelCapabilities(baseUrl, model, localOnly);
+    return { success: true, capabilities };
   } catch (error) {
     return {
       success: false,
       error: error instanceof Error ? error.message : "Connection failed",
     };
   }
+}
+
+async function getOllamaModelCapabilities(
+  baseUrl: string,
+  model: string,
+  localOnly = false,
+  abortSignal?: AbortSignal
+): Promise<string[]> {
+  const cacheKey = `${baseUrl.replace(/\/$/, "")}:${model}`;
+  const cached = modelCapabilityCache.get(cacheKey);
+  if (cached && Date.now() - cached.checkedAt < MODEL_CAPABILITY_CACHE_TTL_MS) {
+    return cached.capabilities;
+  }
+
+  abortSignal?.throwIfAborted();
+  let capabilities: string[];
+  const result = await window.electron?.llm?.fetchOllamaModelCapabilities?.(baseUrl, model, localOnly);
+  if (result) {
+    if (!result.success) throw new Error(result.error || "Could not inspect Ollama model capabilities.");
+    capabilities = Array.isArray(result.capabilities) ? result.capabilities : [];
+  } else {
+    const timeoutSignal = AbortSignal.timeout(5000);
+    const signal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal;
+    const response = await fetch(`${baseUrl}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      ...(localOnly ? { redirect: "error" as const } : {}),
+      signal,
+      body: JSON.stringify({ model }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `Could not inspect Ollama model capabilities (${response.status}).`);
+    }
+    const info = await response.json() as OllamaModelInfo;
+    capabilities = Array.isArray(info.capabilities) ? info.capabilities : [];
+  }
+  modelCapabilityCache.set(cacheKey, { capabilities, checkedAt: Date.now() });
+  return capabilities;
 }
 
 export // Call Ollama API
@@ -130,11 +157,21 @@ export // Call Ollama API
   ): Promise<LLMResponse> {
   const { baseUrl, model } = getOllamaSettings(settings);
 
+  if (tools?.length) {
+    const capabilities = await getOllamaModelCapabilities(baseUrl, model, settings?.localOnly, abortSignal);
+    if (!capabilities.includes("tools")) {
+      throw new Error(
+        `Ollama model "${model}" does not support tool calling. It can answer text prompts, but AI-Worker integrations require a model with the "tools" capability. Select a tool-capable model such as qwen3-vl:4b if it is installed.`
+      );
+    }
+  }
+
   if (settings?.localOnly) {
     const ready = await checkOllama(settings);
     if (!ready.available) throw new Error(ready.error);
     abortSignal?.throwIfAborted();
   }
+
   console.log(`[LLM Chat] Calling Ollama at: ${baseUrl}/api/chat`);
   const response = await fetch(`${baseUrl}/api/chat`, {
     method: "POST",

@@ -10,7 +10,7 @@ function extractTextForLegacyProviders(content: string | LLMContentPart[]): stri
  * Modularly gets standard environment fallbacks for LLM Configuration.
  * Uses hardcoded `import.meta.env` references since Vite requires static analysis.
  */
-export function getEnvFallback(provider: 'openai' | 'gemini' | 'openrouter' | 'ollama' | 'browser' | 'default', keyType: 'api_key' | 'model' | 'provider'): string | undefined {
+export function getEnvFallback(provider: 'openai' | 'gemini' | 'openrouter' | 'ollama' | 'anthropic' | 'browser' | 'default', keyType: 'api_key' | 'model' | 'provider'): string | undefined {
   if (keyType === 'provider') {
     return import.meta.env.VITE_LLM_PROVIDER;
   }
@@ -22,6 +22,7 @@ export function getEnvFallback(provider: 'openai' | 'gemini' | 'openrouter' | 'o
       case 'openai': return import.meta.env.VITE_OPENAI_MODEL || import.meta.env.VITE_LLM_MODEL;
       case 'gemini': return import.meta.env.VITE_GEMINI_MODEL || import.meta.env.VITE_LLM_MODEL;
       case 'openrouter': return import.meta.env.VITE_OPENROUTER_MODEL || import.meta.env.VITE_LLM_MODEL;
+      case 'anthropic': return import.meta.env.VITE_ANTHROPIC_MODEL || import.meta.env.VITE_LLM_MODEL;
       case 'ollama': return import.meta.env.VITE_OLLAMA_MODEL || import.meta.env.VITE_LLM_MODEL;
       default: return import.meta.env.VITE_LLM_MODEL;
     }
