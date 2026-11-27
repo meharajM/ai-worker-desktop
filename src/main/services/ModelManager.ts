@@ -13,10 +13,6 @@ export class ModelManager {
         this.server = new ModelServer(modelsDir)
     }
 
-    public getModelsDir(): string {
-        return this.modelsDir
-    }
-
     public getModelDirPath(modelName: string): string {
         return path.join(this.modelsDir, modelName)
     }

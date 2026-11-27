@@ -55,15 +55,6 @@ export async function onAuthChange(callback: (user: User | null) => void): Promi
 }
 
 /**
- * Get the current authenticated user (if any)
- */
-export async function getCurrentUser(): Promise<User | null> {
-    const firebase = await initializeFirebase()
-    if (!firebase) return null
-    return firebase.auth.currentUser
-}
-
-/**
  * Sign Up with Email and Password
  */
 export async function signUpWithEmail(email: string, password: string): Promise<User> {

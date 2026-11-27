@@ -428,12 +428,6 @@
 
 .card-hoverable:hover { border-color: var(--color-border-hover); box-shadow: var(--shadow-lg); cursor: pointer; }
 
-/* Card sections */
-.card-header { padding-bottom: var(--space-3); border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-4); }
-.card-title { font-size: var(--text-lg); font-weight: var(--font-weight-semibold); color: var(--color-text-primary); }
-.card-description { font-size: var(--text-sm); color: var(--color-text-muted); margin-top: var(--space-1); }
-.card-footer { padding-top: var(--space-3); margin-top: var(--space-4); border-top: 1px solid var(--color-border); }
-
 /* Button */
 .btn {
   display: inline-flex;

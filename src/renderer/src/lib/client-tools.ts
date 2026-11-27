@@ -192,22 +192,6 @@ export const MEMORY_UPDATE_ENTITY_TOOL: MCPTool = {
   }
 };
 
-// ============================================================
-// Browser Turbo / Recipe Tools
-// Imported from shared schema (single source of truth).
-// The actual execution happens in PlaywrightService.callTool().
-// ============================================================
-
-import {
-  BROWSER_ACTION_SEQUENCE_SCHEMA,
-  WEB_SEARCH_SCHEMA,
-  FILL_FORM_SCHEMA,
-} from '../../../shared/browser-tool-schemas';
-
-export const BROWSER_ACTION_SEQUENCE_TOOL: MCPTool = BROWSER_ACTION_SEQUENCE_SCHEMA as MCPTool;
-export const WEB_SEARCH_TOOL: MCPTool = WEB_SEARCH_SCHEMA as MCPTool;
-export const FILL_FORM_TOOL: MCPTool = FILL_FORM_SCHEMA as MCPTool;
-
 export const WHATSAPP_SEND_MEDIA_TOOL: MCPTool = {
   name: "whatsapp_send_media",
   description: "Send a media file (image, video, audio, document) to a WhatsApp chat. Use this when the user explicitly asks to send a file from their workspace to WhatsApp.",

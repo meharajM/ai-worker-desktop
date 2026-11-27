@@ -4,34 +4,9 @@ import { useWhatsAppStore } from "../stores/whatsappStore";
 
 /// <reference path="../env.d.ts" />
 
-// Add a custom server
-export async function addCustomServer(
-  config: Omit<MCPServer, "id" | "connected" | "tools" | "autoConnect">
-): Promise<void> {
-  return useMcpStore.getState().addServer(config);
-}
-
-// Update an existing server - Delegated to store
-export async function updateServer(
-  serverId: string,
-  config: Partial<Omit<MCPServer, "id" | "connected" | "tools">>
-): Promise<void> {
-  return useMcpStore.getState().updateServer(serverId, config);
-}
-
-// Remove a server - Delegated to store
-export async function removeServer(serverId: string): Promise<void> {
-  return useMcpStore.getState().removeServer(serverId);
-}
-
 // Get all servers - FROM STORE
 export function getServers(): MCPServer[] {
   return useMcpStore.getState().servers;
-}
-
-// Connect to a server - Delegated to store
-export async function connectServer(serverId: string): Promise<void> {
-  return useMcpStore.getState().connectServer(serverId);
 }
 
 // Disconnect from a server - Delegated to store
@@ -479,12 +454,4 @@ export function parseTabsFromResult(toolResult: { result: unknown }): ParsedTab[
 
   // Fallback: raw object
   return normalize(resAny);
-}
-
-export async function setAutoConnect(serverId: string, enabled: boolean): Promise<void> {
-  return useMcpStore.getState().setAutoConnect(serverId, enabled);
-}
-
-export async function initializeMcpServers(): Promise<void> {
-  return useMcpStore.getState().initialize();
 }

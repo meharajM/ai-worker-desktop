@@ -40,17 +40,6 @@ export function loadFeatureFlags(): Partial<FeatureFlags> | null {
 }
 
 /**
- * Save feature flags to localStorage (for development mode)
- */
-export function saveFeatureFlags(flags: Partial<FeatureFlags>): void {
-  try {
-    localStorage.setItem('ai-worker-dev-flags', JSON.stringify(flags))
-  } catch (error) {
-    console.warn('Failed to save feature flags to localStorage:', error)
-  }
-}
-
-/**
  * Get effective feature flags (merge default with localStorage overrides)
  */
 export function getEffectiveFeatureFlags(): FeatureFlags {
@@ -68,11 +57,4 @@ export function getEffectiveFeatureFlags(): FeatureFlags {
   }
 
   return defaultFlags
-}
-
-/**
- * Reset feature flags to defaults
- */
-export function resetFeatureFlags(): void {
-  localStorage.removeItem('ai-worker-dev-flags')
 }

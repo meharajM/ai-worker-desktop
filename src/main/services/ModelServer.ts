@@ -33,11 +33,6 @@ export class ModelServer {
         })
     }
 
-    public getBaseUrl(): string | null {
-        if (this.port) return `http://127.0.0.1:${this.port}/models`
-        return null
-    }
-
     public async stop(): Promise<void> {
         if (this.server) {
             await new Promise<void>((resolve) => this.server!.close(() => resolve()))

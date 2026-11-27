@@ -161,23 +161,6 @@ export interface ExecutionPlan {
     }>;
 }
 
-/**
- * Configuration for spawning a sub-agent.
- * Passed to OrchestrationService to create isolated child agents.
- */
-export interface SubAgentConfig {
-    /** Unique ID pre-generated before spawning (for memory pre-seeding). */
-    agentInstanceId: string;
-    /** The parent agent's ID (for context inheritance). */
-    parentAgentId: string;
-    /** The specific instruction for this sub-agent. */
-    instruction: string;
-    /** Optional context string (from parent's checkpoint or previous steps). */
-    context?: string;
-    /** Dedicated browser tab ID for isolation. */
-    tabId?: number;
-}
-
 export interface IAgentClient {
     getHistory?(): LLMMessage[];
     run(task: string): Promise<string>;

@@ -190,21 +190,3 @@ export function useFileDragDrop({
         }
     }
 }
-
-/**
- * Generate a prompt for file conversion based on the number of files
- */
-export function generateFileConversionPrompt(files: File[]): string {
-    // Extract file paths (Electron provides .path property on standard inputs,
-    // but drag-and-drop requires webUtils wrapper)
-    const filePaths = files.map(f => {
-        const path = (window as any).electron?.utils?.getPathForFile(f) || (f as any).path || f.name;
-        return path;
-    })
-
-    if (files.length === 1) {
-        return `Convert this file to markdown: ${filePaths[0]}`
-    }
-
-    return `Convert these files to markdown:\n${filePaths.map(p => `- ${p}`).join('\n')}`
-}

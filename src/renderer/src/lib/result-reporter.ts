@@ -341,32 +341,3 @@ export function analyzeToolOutput(
         summary: '',
     };
 }
-
-/**
- * Format extracted data for user display
- */
-export function formatForDisplay(data: ExtractedData): string {
-    switch (data.type) {
-        case 'products':
-            if (!data.products) return '';
-            return data.products.map(p =>
-                `• **${p.name}**${p.price ? ` — ${p.price}` : ''}${p.rating ? ` ⭐ ${p.rating}` : ''}`
-            ).join('\n');
-
-        case 'navigation':
-            if (!data.navigation) return '';
-            return `📍 **${data.navigation.title || 'Page loaded'}**\n${data.navigation.url}`;
-
-        case 'confirmation':
-            return `✅ ${data.message}`;
-
-        case 'error':
-            return `⚠️ ${data.message}`;
-
-        case 'text':
-            return data.message || '';
-
-        default:
-            return '';
-    }
-}

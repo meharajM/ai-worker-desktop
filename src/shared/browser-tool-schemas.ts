@@ -1,14 +1,4 @@
-/**
- * Shared Browser Tool Schemas
- * 
- * SINGLE SOURCE OF TRUTH for browser_action_sequence, web_search, and fill_form.
- * Imported by both:
- *   - src/renderer/src/lib/client-tools.ts  (LLM-facing shims)
- *   - src/main/services/PlaywrightService.ts (server-side listTools)
- * 
- * This prevents description drift and avoids bugs like quote collisions 
- * when editing descriptions in two places.
- */
+/** Tool schemas advertised by the Electron Playwright service. */
 
 export interface ToolSchema {
     name: string
@@ -128,14 +118,3 @@ export const REQUEST_HUMAN_INTERVENTION_SCHEMA: ToolSchema = {
         required: ['reason']
     }
 }
-
-/**
- * All browser turbo/recipe tool schemas in one array.
- * Use this for easy iteration in listTools() or client-tools exports.
- */
-export const BROWSER_TURBO_SCHEMAS: ToolSchema[] = [
-    BROWSER_ACTION_SEQUENCE_SCHEMA,
-    WEB_SEARCH_SCHEMA,
-    FILL_FORM_SCHEMA,
-    REQUEST_HUMAN_INTERVENTION_SCHEMA,
-]

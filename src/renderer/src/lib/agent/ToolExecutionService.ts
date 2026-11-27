@@ -651,18 +651,6 @@ export function reportFinding(
     return null;
 }
 
-/**
- * Checks if a tool call represents a progress/state update rather than a functional action.
- */
-export function isProgressUpdate(toolName: string): boolean {
-    const internalTools = [
-        'update_progress_summary',
-        'create_execution_plan',
-        'memory_update_entity'
-    ];
-    return internalTools.includes(toolName);
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function delay(ms: number): Promise<void> {

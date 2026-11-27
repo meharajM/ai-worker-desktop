@@ -5,18 +5,6 @@ export const isElectron = (): boolean => {
     return !!(window.electron && typeof window.electron === 'object')
 }
 
-export const getPlatform = (): 'mac' | 'windows' | 'linux' | 'browser' => {
-    if (!isElectron()) return 'browser'
-
-    const platform = window.electron?.platform
-    switch (platform) {
-        case 'darwin': return 'mac'
-        case 'win32': return 'windows'
-        case 'linux': return 'linux'
-        default: return 'browser'
-    }
-}
-
 // Safe wrapper for Electron APIs with browser fallbacks
 export const electron = {
     // Open external URL

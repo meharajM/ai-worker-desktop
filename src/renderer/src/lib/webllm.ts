@@ -66,8 +66,6 @@ export const WEBLLM_MODELS = [
     },
 ] as const;
 
-export type WebLLMModelId = typeof WEBLLM_MODELS[number]['id'];
-
 export interface WebLLMStatus {
     isSupported: boolean;
     isLoaded: boolean;
@@ -504,77 +502,18 @@ class WebLLMManager {
         }
         return undefined;
     }
-
-    /**
-     * Quick inference for task complexity analysis
-     * Returns a simple classification without tool calling
-     */
-    public async analyzeTaskComplexity(userMessage: string): Promise<{
-        complexity: 'simple' | 'moderate' | 'complex';
-        needsExternalModel: boolean;
-        reason: string;
-    }> {
-        if (!this.engine || !this.status.isLoaded) {
-            throw new Error('Model not loaded');
-        }
-
-        const systemPrompt = `You are a task complexity analyzer. Given a user request, classify it as:
-- "simple": Basic questions, greetings, simple lookups
-- "moderate": Requires some reasoning or tool use
-- "complex": Requires deep reasoning, multiple steps, or specialized knowledge
-
-Respond in JSON format: {"complexity": "simple|moderate|complex", "needsExternalModel": true|false, "reason": "brief explanation"}
-
-Set needsExternalModel to true if the task requires:
-- Complex reasoning or math
-- Specialized domain knowledge
-- Long-form content generation
-- Code generation or debugging`;
-
-        const response = await this.engine.chat.completions.create({
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userMessage },
-            ],
-            temperature: 0.3,
-            max_tokens: 150,
-            response_format: { type: 'json_object' },
-        });
-
-        const content = response.choices[0].message.content || '';
-
-        try {
-            return JSON.parse(content);
-        } catch {
-            // Default to moderate if parsing fails
-            return {
-                complexity: 'moderate',
-                needsExternalModel: false,
-                reason: 'Could not parse complexity analysis',
-            };
-        }
-    }
 }
 
 // Singleton instance
-export const webLLMManager = new WebLLMManager();
+const webLLMManager = new WebLLMManager();
 
 // Export convenience functions
-export const checkWebGPUSupport = async (): Promise<boolean> => {
-    const status = webLLMManager.getStatus();
-    return status.isSupported;
-};
-
 export const getWebLLMStatus = (): WebLLMStatus => {
     return webLLMManager.getStatus();
 };
 
 export const loadWebLLMModel = async (modelId?: string): Promise<void> => {
     return webLLMManager.loadModel(modelId);
-};
-
-export const unloadWebLLMModel = async (): Promise<void> => {
-    return webLLMManager.unloadModel();
 };
 
 export const chatWithWebLLM = async (
@@ -586,10 +525,6 @@ export const chatWithWebLLM = async (
 
 export const subscribeToWebLLMStatus = (callback: StatusCallback): (() => void) => {
     return webLLMManager.subscribe(callback);
-};
-
-export const analyzeComplexity = async (message: string) => {
-    return webLLMManager.analyzeTaskComplexity(message);
 };
 
 export const checkDownloadedWebLLMModels = async (): Promise<void> => {
