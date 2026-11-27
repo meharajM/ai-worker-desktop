@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "write-approval",
+  "description": "Allow the compact write review window to inspect and resolve one pending write request",
+  "windows": ["write-approval"],
+  "permissions": [
+    "allow-get-pending-write-approval",
+    "allow-resolve-write-approval"
+  ]
+}

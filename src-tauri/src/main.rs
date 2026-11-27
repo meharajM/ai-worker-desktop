@@ -1,13 +1,65 @@
-use tauri::Manager;
+use tauri::{Manager, State, WebviewWindow};
 
+mod a2a;
+mod agent_task;
 mod bridge;
+mod external_mcp;
+mod lifecycle;
 mod model_runtime;
 mod model_setup;
 mod preferences;
+mod workspace;
 
 #[tauri::command]
 fn status() -> &'static str {
     concat!("AI-Worker ", env!("CARGO_PKG_VERSION"), ": ready")
+}
+
+#[tauri::command]
+fn get_pending_write_approval(
+    window: WebviewWindow,
+    external_mcp: State<'_, external_mcp::ExternalMcp>,
+) -> Result<Option<external_mcp::PendingWriteApproval>, String> {
+    if !trusted_write_approval_window(&window) {
+        return Err("Write approval is available only in the trusted review window.".into());
+    }
+    Ok(external_mcp.pending_write_approval())
+}
+
+#[tauri::command]
+fn resolve_write_approval(
+    window: WebviewWindow,
+    external_mcp: State<'_, external_mcp::ExternalMcp>,
+    task_id: String,
+    approval_id: String,
+    approved: bool,
+) -> Result<(), String> {
+    if !trusted_write_approval_window(&window) {
+        return Err("Write approval is available only in the trusted review window.".into());
+    }
+    external_mcp.resolve_write_approval(&task_id, &approval_id, approved)?;
+    window
+        .close()
+        .map_err(|_| "Could not close the write approval window.".to_owned())
+}
+
+fn trusted_write_approval_window(window: &WebviewWindow) -> bool {
+    #[cfg(any(target_os = "windows", target_os = "android"))]
+    let (scheme, host) = ("http", "tauri.localhost");
+    #[cfg(not(any(target_os = "windows", target_os = "android")))]
+    let (scheme, host) = ("tauri", "localhost");
+
+    if window.label() != "write-approval" {
+        return false;
+    }
+    let Ok(url) = window.url() else {
+        return false;
+    };
+    url.scheme() == scheme
+        && url.host_str() == Some(host)
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
 }
 
 #[cfg(feature = "history-proof")]
@@ -30,6 +82,7 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(bridge::BridgeState::default())
+        .manage(external_mcp::ExternalMcp::default())
         .manage(model_runtime::ModelRuntime::default())
         .manage(model_setup::ModelSetup::default())
         .manage(preferences::PreferenceState::default())
@@ -41,9 +94,20 @@ fn main() {
                 _app.manage(options.state());
                 history_proof::setup(_app, options)?;
             }
+            lifecycle::setup(_app)?;
+            _app.state::<external_mcp::ExternalMcp>()
+                .start(_app.handle())?;
             Ok(())
         })
         .on_window_event(|window, event| {
+            lifecycle::on_window_event(window, event);
+            if window.label() == "write-approval"
+                && matches!(event, tauri::WindowEvent::CloseRequested { .. })
+            {
+                let app = window.app_handle();
+                app.state::<external_mcp::ExternalMcp>()
+                    .dismiss_pending_write_approval();
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 // A later window may reuse this label; its session must start fresh.
                 window
@@ -60,7 +124,11 @@ fn main() {
             bridge::bridge_update_preferences,
             model_setup::model_catalog,
             model_setup::model_import,
+            model_setup::model_install,
             model_setup::model_cancel_import,
+            model_setup::model_cancel_install,
+            get_pending_write_approval,
+            resolve_write_approval,
             #[cfg(feature = "proof")]
             native_proof::proof_stream,
             #[cfg(feature = "proof")]
@@ -76,7 +144,12 @@ fn main() {
         .expect("failed to build Tauri application")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
-                app.state::<model_runtime::ModelRuntime>().stop();
+                if let Err(error) = app
+                    .state::<external_mcp::ExternalMcp>()
+                    .shutdown(app, &app.state::<model_runtime::ModelRuntime>())
+                {
+                    eprintln!("[Local MCP] Shutdown failed: {error}");
+                }
             }
         });
 }
