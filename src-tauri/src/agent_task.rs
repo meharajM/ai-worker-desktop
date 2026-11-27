@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::{
-    model_runtime::ModelRuntime,
     research,
     workspace::{StagedWrite, Workspace},
 };
@@ -96,27 +95,21 @@ struct Observation {
     result: String,
 }
 
-pub(crate) fn run<R: Runtime>(
+pub(crate) fn run_readonly<R: Runtime>(
     app: &AppHandle<R>,
-    model: &ModelRuntime,
-    body: &[u8],
+    request: &TaskRequest,
+    infer: impl FnMut(&str) -> Result<String, String>,
+    cancelled: impl Fn() -> bool,
 ) -> Result<TaskResult, String> {
-    let request = parse_validated_request(body)?;
-
     run_validated(
         app,
-        &request,
-        |prompt| {
-            model
-                .infer_task(app, prompt)
-                .map(|result| result.content)
-                .map_err(str::to_owned)
-        },
+        request,
+        infer,
         |_| Err("Use start_agent_task when the local model needs a parent answer.".into()),
         |_, _, _| {
             Err("Synchronous task requests cannot write files. Use start_agent_task for user-reviewed writes.".into())
         },
-        || false,
+        cancelled,
         false,
         false,
         || false,
@@ -186,8 +179,14 @@ fn run_validated<R: Runtime>(
     online_allowed: impl Fn() -> bool,
 ) -> Result<TaskResult, String> {
     let root = validate_task_scope(request, online_allowed())?;
+    if cancelled() {
+        return Err("Task cancelled.".into());
+    }
     if root.is_none() && !interactive_without_workspace {
         let result = infer(&request.prompt)?;
+        if cancelled() {
+            return Err("Task cancelled.".into());
+        }
         return Ok(TaskResult {
             content: result.chars().take(MAX_FINAL_CHARS).collect(),
             sources: Vec::new(),
@@ -222,6 +221,9 @@ fn run_validated<R: Runtime>(
             }
         }
         for relative in &context.relevant_files {
+            if cancelled() {
+                return Err("Task cancelled.".into());
+            }
             match workspace.read(relative) {
                 Ok(contents) => {
                     let contents = bounded_observation(&contents, MAX_OBSERVATION_CHARS);
@@ -1298,7 +1300,8 @@ mod tests {
     }
 
     #[test]
-    fn synchronous_task_rejects_model_write_before_approval_or_disk_change() {
+    fn readonly_workspace_planner_rejects_writes_questions_and_web_and_stops_before_a_cancelled_read(
+    ) {
         let root = std::env::temp_dir().join(format!(
             "ai-worker-sync-write-task-{}-{}",
             std::process::id(),
@@ -1318,15 +1321,10 @@ mod tests {
             .to_string(),
         );
         let app = tauri::test::mock_app();
-        let result = run_validated(
-            &app.handle(),
+        let result = run_readonly(
+            app.handle(),
             &request,
             |_| Ok(r#"{"tool":"write","path":"README.md","content":"after"}"#.into()),
-            |_| Err("Parent answer was not expected.".into()),
-            |_, _, _| panic!("Synchronous route must not request write approval."),
-            || false,
-            true,
-            false,
             || false,
         );
 
@@ -1337,6 +1335,28 @@ mod tests {
             fs::read_to_string(root.join("README.md")).unwrap(),
             "before"
         );
+        for (action, error) in [
+            (
+                r#"{"tool":"ask_parent","question":"Continue?"}"#,
+                "Use start_agent_task",
+            ),
+            (r#"{"tool":"web_search","query":"rust"}"#, "web capability"),
+        ] {
+            let result = run_readonly(app.handle(), &request, |_| Ok(action.into()), || false);
+            assert!(result.unwrap_err().contains(error));
+        }
+
+        let cancelled = AtomicBool::new(false);
+        let result = run_readonly(
+            app.handle(),
+            &request,
+            |_| {
+                cancelled.store(true, Ordering::Release);
+                Ok(r#"{"tool":"read","path":"missing.md"}"#.into())
+            },
+            || cancelled.load(Ordering::Acquire),
+        );
+        assert_eq!(result.unwrap_err(), "Task cancelled.");
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -156,14 +156,6 @@ impl ModelRuntime {
         self.infer_cancellable_with_format(app, prompt, cancelled, false)
     }
 
-    pub fn infer_task<R: Runtime>(
-        &self,
-        app: &AppHandle<R>,
-        prompt: &str,
-    ) -> Result<LocalInferenceResult, &'static str> {
-        self.infer_task_cancellable(app, prompt, None)
-    }
-
     pub fn infer_task_cancellable<R: Runtime>(
         &self,
         app: &AppHandle<R>,

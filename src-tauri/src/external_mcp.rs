@@ -57,7 +57,14 @@ struct HostSession {
     last_seen: Instant,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TaskMode {
+    Synchronous,
+    Background,
+}
+
 struct TaskRecord {
+    mode: TaskMode,
     id: String,
     request: agent_task::TaskRequest,
     a2a_context_id: Option<String>,
@@ -533,29 +540,16 @@ impl TaskManager {
                     });
                 }
             }
-            if records.values().filter(|record| record.is_active()).count() >= MAX_ACTIVE_TASKS {
-                return Err((503, "AI-Worker has reached its active task limit.".into()));
-            }
-            if records.len() >= MAX_TASK_RECORDS {
-                let oldest_terminal = records
-                    .iter()
-                    .filter(|(_, record)| record.is_terminal())
-                    .min_by_key(|(_, record)| record.created_at)
-                    .map(|(id, _)| id.clone());
-                if let Some(oldest_terminal) = oldest_terminal {
-                    records.remove(&oldest_terminal);
-                } else {
-                    return Err((503, "AI-Worker has reached its retained task limit.".into()));
-                }
-            }
-            let id =
-                random_hex().map_err(|_| (503, "Could not create a task identifier.".into()))?;
-            let record = Arc::new(TaskRecord::new(id.clone(), context_id, message_id, request));
-            records.insert(id.clone(), Arc::clone(&record));
+            let record = Self::insert_task(
+                &mut records,
+                TaskMode::Background,
+                request,
+                context_id,
+                message_id,
+            )?;
 
             let manager = self.clone();
             let task = Arc::clone(&record);
-            let task_id = id;
             let worker = thread::spawn(move || {
                 let cancelled = || {
                     task.cancelled.load(Ordering::Acquire)
@@ -563,6 +557,7 @@ impl TaskManager {
                 };
                 if cancelled() {
                     task.finish(Err("Task cancelled.".into()));
+                    manager.close_activity_if_idle(&app);
                     return;
                 }
                 crate::task_activity::show(&app, false);
@@ -589,14 +584,67 @@ impl TaskManager {
                     cancelled,
                 );
                 task.finish(result);
-                let tasks = manager.clone();
-                crate::task_activity::close_after_idle(&app, move || !tasks.has_active_tasks());
+                manager.close_activity_if_idle(&app);
             });
             *record.worker.lock().unwrap_or_else(|err| err.into_inner()) = Some(worker);
             return Ok(TaskAck {
-                id: task_id,
+                id: record.id.clone(),
                 state: TaskState::Queued,
             });
+        }
+    }
+
+    fn insert_task(
+        records: &mut HashMap<String, Arc<TaskRecord>>,
+        mode: TaskMode,
+        request: agent_task::TaskRequest,
+        context_id: Option<String>,
+        message_id: Option<String>,
+    ) -> Result<Arc<TaskRecord>, (u16, String)> {
+        if records.values().filter(|record| record.is_active()).count() >= MAX_ACTIVE_TASKS {
+            return Err((503, "AI-Worker has reached its active task limit.".into()));
+        }
+        if records.len() >= MAX_TASK_RECORDS {
+            let oldest_terminal = records
+                .iter()
+                .filter(|(_, record)| record.is_terminal())
+                // Synchronous callers already received their result directly.
+                .min_by_key(|(_, record)| (record.mode == TaskMode::Background, record.created_at))
+                .map(|(id, _)| id.clone());
+            if let Some(oldest_terminal) = oldest_terminal {
+                records.remove(&oldest_terminal);
+            } else {
+                return Err((503, "AI-Worker has reached its retained task limit.".into()));
+            }
+        }
+        let id = random_hex().map_err(|_| (503, "Could not create a task identifier.".into()))?;
+        let record = Arc::new(TaskRecord::new(
+            id.clone(),
+            mode,
+            context_id,
+            message_id,
+            request,
+        ));
+        records.insert(id, Arc::clone(&record));
+        Ok(record)
+    }
+
+    fn begin_readonly_task(&self, body: &[u8]) -> Result<Arc<TaskRecord>, (u16, String)> {
+        let request = agent_task::parse_validated_request(body).map_err(|error| (422, error))?;
+        let mut records = self.records.lock().unwrap_or_else(|err| err.into_inner());
+        if self.stopping.load(Ordering::Acquire) {
+            return Err((503, "AI-Worker is shutting down.".into()));
+        }
+        prune_records(&mut records);
+        let record = Self::insert_task(&mut records, TaskMode::Synchronous, request, None, None)?;
+        record.set_state(TaskState::Running);
+        Ok(record)
+    }
+
+    fn close_activity_if_idle<R: Runtime>(&self, app: &AppHandle<R>) {
+        if !self.has_active_tasks() {
+            let tasks = self.clone();
+            crate::task_activity::close_after_idle(app, move || !tasks.has_active_tasks());
         }
     }
 
@@ -820,25 +868,9 @@ impl TaskManager {
     fn cancel(&self, id: &str) -> Result<TaskAck, (u16, String)> {
         validate_task_id(id)?;
         let record = self.record(id)?;
-        if record.is_active() {
-            record.cancelled.store(true, Ordering::Release);
-            let mut progress = record
-                .progress
-                .lock()
-                .unwrap_or_else(|err| err.into_inner());
-            if progress.state.is_active() {
-                progress.state = TaskState::Cancelling;
-                progress.pending_question = None;
-                progress.answer = None;
-                progress.pending_approval = None;
-                progress.approval_decision = None;
-                record.changed.notify_all();
-            }
-        }
-        let view = record.view();
         Ok(TaskAck {
-            id: view.id,
-            state: view.state,
+            id: record.id.clone(),
+            state: record.cancel(),
         })
     }
 
@@ -934,6 +966,7 @@ impl TaskManager {
 impl TaskRecord {
     fn new(
         id: String,
+        mode: TaskMode,
         a2a_context_id: Option<String>,
         a2a_message_id: Option<String>,
         request: agent_task::TaskRequest,
@@ -941,6 +974,7 @@ impl TaskRecord {
         let a2a_message_ids = a2a_message_id.into_iter().collect();
         Self {
             id,
+            mode,
             request,
             a2a_context_id,
             a2a_message_ids: Mutex::new(a2a_message_ids),
@@ -1147,22 +1181,21 @@ impl TaskRecord {
         Ok(())
     }
 
-    fn cancel(&self) {
-        if self.is_active() {
+    fn cancel(&self) -> TaskState {
+        let mut progress = self.progress.lock().unwrap_or_else(|err| err.into_inner());
+        if progress.state.is_active() {
             self.cancelled.store(true, Ordering::Release);
-            let mut progress = self.progress.lock().unwrap_or_else(|err| err.into_inner());
-            if progress.state.is_active() {
-                progress.state = TaskState::Cancelling;
-                progress.pending_question = None;
-                progress.answer = None;
-                progress.pending_approval = None;
-                progress.approval_decision = None;
-                self.changed.notify_all();
-            }
+            progress.state = TaskState::Cancelling;
+            progress.pending_question = None;
+            progress.answer = None;
+            progress.pending_approval = None;
+            progress.approval_decision = None;
+            self.changed.notify_all();
         }
+        progress.state
     }
 
-    fn finish(&self, result: Result<agent_task::TaskResult, String>) {
+    fn finish(&self, result: Result<agent_task::TaskResult, String>) -> TaskState {
         let mut progress = self.progress.lock().unwrap_or_else(|err| err.into_inner());
         progress.pending_question = None;
         progress.answer = None;
@@ -1185,6 +1218,7 @@ impl TaskRecord {
         }
         progress.terminal_at = Some(Instant::now());
         self.changed.notify_all();
+        progress.state
     }
 
     fn view(&self) -> TaskView {
@@ -1538,7 +1572,27 @@ fn process_request(
         }
         RequestRoute::RunAgentTask => {
             let _guard = try_inference(inference)?;
-            agent_task::run(app, &app.state::<ModelRuntime>(), &request.body)
+            let task = tasks.begin_readonly_task(&request.body)?;
+            crate::task_activity::show(app, false);
+            let model = app.state::<ModelRuntime>();
+            let result = agent_task::run_readonly(
+                app,
+                &task.request,
+                |prompt| {
+                    task.begin_inference();
+                    model
+                        .infer_task_cancellable(app, prompt, Some(&task.cancelled))
+                        .map(|result| result.content)
+                        .map_err(str::to_owned)
+                },
+                || task.cancelled.load(Ordering::Acquire),
+            );
+            let state = task.finish(result.clone());
+            tasks.close_activity_if_idle(app);
+            if state == TaskState::Cancelled {
+                return Err((422, "Task cancelled.".into()));
+            }
+            result
                 .map(|answer| (200, json!(answer)))
                 .map_err(|message| (422, message))
         }
@@ -1548,8 +1602,7 @@ fn process_request(
         RequestRoute::OpenHostSession => {
             let ack = tasks.open_host_session(&request.body)?;
             crate::task_activity::show(app, false);
-            let tasks = tasks.clone();
-            crate::task_activity::close_after_idle(app, move || !tasks.has_active_tasks());
+            tasks.close_activity_if_idle(app);
             Ok((200, json!(ack)))
         }
         RequestRoute::HeartbeatHostSession => tasks
@@ -1557,8 +1610,7 @@ fn process_request(
             .map(|ack| (200, json!(ack))),
         RequestRoute::CloseHostSession => {
             let ack = tasks.close_host_session(&request.body)?;
-            let tasks = tasks.clone();
-            crate::task_activity::close_after_idle(app, move || !tasks.has_active_tasks());
+            tasks.close_activity_if_idle(app);
             Ok((200, json!(ack)))
         }
         RequestRoute::GetAgentTask(id) => tasks.get(&id).map(|status| (200, json!(status))),
@@ -2307,13 +2359,13 @@ mod tests {
             br#"{"prompt":"Review local changes.","handoffContext":{"sourceAgent":"Parent","summary":"Focus on tests."}}"#,
         )
         .unwrap();
-        TaskRecord::new(id, context_id, message_id, request)
+        TaskRecord::new(id, TaskMode::Background, context_id, message_id, request)
     }
 
     fn test_host_task(id: String, session_id: &str) -> TaskRecord {
         let body = json!({"prompt":"Review local changes.", "hostSessionId":session_id});
         let request = agent_task::parse_validated_request(body.to_string().as_bytes()).unwrap();
-        TaskRecord::new(id, None, None, request)
+        TaskRecord::new(id, TaskMode::Background, None, None, request)
     }
 
     fn endpoint() -> Endpoint {
@@ -2536,6 +2588,94 @@ mod tests {
             parse_prompt(&oversized),
             Err((400, "Provide a non-empty prompt up to 8000 characters."))
         );
+    }
+
+    #[test]
+    fn synchronous_handoffs_share_activity_and_capacity_with_background_tasks() {
+        let tasks = TaskManager::default();
+        let body = br#"{"prompt":"Review the handoff.","hostSessionId":"session-two"}"#;
+        assert_eq!(tasks.begin_readonly_task(b"{}").err().unwrap().0, 422);
+        assert!(tasks.activity_snapshot().tasks.is_empty());
+
+        for index in 0..MAX_ACTIVE_TASKS - 1 {
+            let id = format!("{index:064x}");
+            tasks
+                .records
+                .lock()
+                .unwrap()
+                .insert(id.clone(), Arc::new(test_host_task(id, "session-one")));
+        }
+        let sync = tasks.begin_readonly_task(body).unwrap();
+        let snapshot = tasks.activity_snapshot();
+        let activity = snapshot
+            .tasks
+            .iter()
+            .find(|task| task.id == sync.id)
+            .unwrap();
+        assert_eq!(activity.state, TaskState::Running);
+        assert_eq!(activity.host_session_id.as_deref(), Some("session-two"));
+        assert_eq!(tasks.begin_readonly_task(body).err().unwrap().0, 503);
+        sync.finish(Ok(agent_task::TaskResult {
+            content: "Done".into(),
+            sources: vec![],
+        }));
+        assert_eq!(tasks.get(&sync.id).unwrap().state, TaskState::Completed);
+        let next = tasks.begin_readonly_task(body).unwrap();
+        assert_ne!(next.id, sync.id);
+        next.finish(Err("Read failed.".into()));
+        assert_eq!(tasks.get(&next.id).unwrap().state, TaskState::Failed);
+    }
+
+    #[test]
+    fn late_cancellation_preserves_the_finished_result_and_early_cancellation_wins() {
+        let tasks = TaskManager::default();
+        let body = br#"{"prompt":"Review the handoff."}"#;
+        let result = Ok(agent_task::TaskResult {
+            content: "Done".into(),
+            sources: vec![],
+        });
+
+        let finished = tasks.begin_readonly_task(body).unwrap();
+        assert_eq!(finished.finish(result.clone()), TaskState::Completed);
+        assert_eq!(
+            tasks.cancel(&finished.id).unwrap().state,
+            TaskState::Completed
+        );
+        assert!(!finished.cancelled.load(Ordering::Acquire));
+        assert_eq!(finished.view().result.unwrap().content, "Done");
+
+        let cancelled = tasks.begin_readonly_task(body).unwrap();
+        assert_eq!(
+            tasks.cancel(&cancelled.id).unwrap().state,
+            TaskState::Cancelling
+        );
+        assert_eq!(cancelled.finish(result), TaskState::Cancelled);
+        assert!(cancelled.cancelled.load(Ordering::Acquire));
+        assert!(cancelled.view().result.is_none());
+        assert_eq!(cancelled.activity().state, TaskState::Cancelled);
+    }
+
+    #[test]
+    fn capacity_evicts_directly_returned_results_before_older_background_results() {
+        let tasks = TaskManager::default();
+        let body = br#"{"prompt":"Review the handoff."}"#;
+        {
+            let mut records = tasks.records.lock().unwrap();
+            for index in 0..MAX_TASK_RECORDS - 1 {
+                let id = format!("{index:064x}");
+                let task = Arc::new(test_task(id.clone(), Some("context".into()), None));
+                task.finish(Err("Finished.".into()));
+                records.insert(id, task);
+            }
+        }
+        let direct = tasks.begin_readonly_task(body).unwrap();
+        direct.finish(Err("Finished.".into()));
+        let next = tasks.begin_readonly_task(body).unwrap();
+        let records = tasks.records.lock().unwrap();
+        assert_eq!(records.len(), MAX_TASK_RECORDS);
+        assert!(!records.contains_key(&direct.id));
+        assert!(records.contains_key(&next.id));
+        assert!(records.contains_key(&format!("{:064x}", 0)));
     }
 
     #[test]

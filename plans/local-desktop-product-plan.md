@@ -2,7 +2,7 @@
 
 Tauri is the target desktop host. Keep Electron runnable as the current product until Tauri reaches feature parity, passes installed host end-to-end checks, and can import all required user data through a versioned, backed-up, restart-safe migration with a tested rollback. Ship macOS first and verify Windows on its own hardware.
 
-Keep the AI-Worker homepage and its user-visible integrations during the migration, including chat, settings and MCP connections, voice, browser workflows, memory, and WhatsApp. Add a compact task and review window that opens only for an external-agent task or approval. The service stays available in the background when windows close.
+Keep the AI-Worker homepage and its user-visible integrations during the migration, including chat, settings and MCP connections, voice, browser workflows, memory, and WhatsApp. Starting an MCP host starts Tauri in headless worker mode; the compact activity window appears for a host session or task and closes after 20 seconds without active work. Opening AI-Worker normally opens the full app. A worker-only process exits after 30 seconds with no connected hosts, tasks, or main window.
 
 ## Task flow
 
@@ -23,7 +23,7 @@ flowchart TD
 ```
 
 - Accept a bounded task summary, constraints, source agent, active or selected workspace root, working directory when known, and relevant relative file paths. Validate these as hints. Native policy controls OS access. When a task needs workspace access and the host root is missing or unreliable, ask the user to choose one.
-- `run_agent_task` stays synchronous and read only. `start_agent_task` allows bounded reads and searches inside the validated workspace by default. A proposed file write pauses in `waiting_for_approval`; show the handoff context, path, current contents, and exact proposed contents in the compact Tauri window. Apply only the staged proposal after approval and revalidate the target immediately before commit. Decline, dismissal, expiry, cancellation, or stale target state must not write.
+- `run_agent_task` stays synchronous and read only; host cancellation is available through the asynchronous task lifecycle only. `start_agent_task` allows bounded reads and searches inside the validated workspace by default. A proposed file write pauses in `waiting_for_approval`; show the handoff context, path, current contents, and exact proposed contents in the compact Tauri window. Apply only the staged proposal after approval and revalidate the target immediately before commit. Decline, dismissal, expiry, cancellation, or stale target state must not write.
 - If the delegated agent cannot proceed without a missing fact, expose a structured question through task status and accept the answer only for that pending question as a continuation of the same task. Keep original workspace and capability scope. Task prompts, observations, and results stay in process memory and are lost when AI-Worker exits or restarts; do not claim durable recovery.
 - The host polls task status and explicitly retrieves the bounded result and sources after completion. Disclose that the configured MCP host may be remote and can process or forward returned questions and results.
 - Cancellation is cooperative. A task may remain `cancelling` while an in-progress local model generation finishes; report cancellation only after the worker has stopped.
@@ -58,6 +58,12 @@ Current storage inventory, checked 2026-11-27:
 - Complete memory export now reads the full server-memory graph, independent of the partial cache. Tauri validates the selected archive before preview, saves the exact archive atomically before import, and imports entities, relations, and its content-derived receipt in one SQLite transaction. Repeat import is idempotent across restart; imports are additive and never delete unrelated rows. Add a reviewed rollback/restore path and test process interruption before treating memory migration as cutover-ready. [M08 export](./luna-implementation-cards.md#m08--add-a-versioned-legacy-electron-export) · [M09 import](./luna-implementation-cards.md#m09--importexport-safely-in-tauri) · [M37 rollback](./luna-implementation-cards.md#m37--prove-update-recovery-and-rollback) · [M39 retirement](./luna-implementation-cards.md#m39--remove-electron-production-and-build-paths)
 
 ## Verified implementation status — 2026-11-27
+
+### Latest real-host recheck of `358a60e`
+
+- OpenCode 1.17.18 connects to the AI-Worker MCP server, but its local Qwen parent did not invoke a task. Codex CLI invoked the MCP status and async task lifecycle and answered an AI-Worker parent question; the task completed with a generic response that did not include the requested package metadata. Codex used its configured remote model, so the host processed the prompt, workspace path, and returned text.
+- A later process inspection found that the shared Tauri listener was an older executable than the checkout; its subsequent local-only snapshot reported `model.available=false`. That readiness value was not observed during the completed Codex call. No current-HEAD runtime test was run; restarting the shared worker could interrupt existing host sessions. Use a ready local model and an isolated app profile or an approved idle window for the next real host test.
+- These checks confirm host connection and task lifecycle, but do not pass result-quality verification or prove current-HEAD runtime behavior. See the earlier source-built and packaged tests below for their separate scope.
 
 - A source-built Tauri instance ran under a separate test identifier, leaving the installed app and its data untouched. The native bridge published an authenticated loopback endpoint in `local-only` mode.
 - A real stdio MCP client discovered all seven tools. `get_runtime_status` reported local-only operation; after loading the installed `qwen3-vl:4b`, `ask_local` returned `pong`. The asynchronous task flow read `src-tauri/Cargo.toml` and returned `ai-worker-tauri 0.1.2` with that relative source. The legacy synchronous `run_agent_task` also returned the same package metadata. A real cancellation returned `cancelling`, then `cancelled`.
