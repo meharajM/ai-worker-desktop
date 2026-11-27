@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './components/primitives/Button'
 import { TextArea } from './components/input/TextArea'
 import { LegacyDataImportPanel } from './components/LegacyDataImportPanel'
+import { useTauriTheme } from './hooks/useTauriTheme'
 import { DesktopBridgeError, desktopBridge, type DesktopPreferences, type ModelCatalog, type ModelImportProgress } from './desktop-bridge'
 import { HistoryError, openChatHistory, type ChatSession, type TerminalTurn } from './lib/chat-history'
 import { buildLocalChatPrompt, MAX_LOCAL_CHAT_PROMPT_LENGTH } from './lib/local-chat-context'
@@ -182,7 +183,7 @@ export function LocalApp() {
   const [preferences, setPreferences] = useState<DesktopPreferences>()
   const [selectedPreset, setSelectedPreset] = useState<PreferencePreset | ''>('')
   const [selectedAllowOnlineResearch, setSelectedAllowOnlineResearch] = useState(false)
-  const [selectedTheme, setSelectedTheme] = useState<ThemePreference>('dark')
+  const [selectedTheme, setSelectedTheme] = useState<ThemePreference>()
   const [preferenceError, setPreferenceError] = useState('')
   const [saveNotice, setSaveNotice] = useState('')
   const [saving, setSaving] = useState(false)
@@ -201,6 +202,8 @@ export function LocalApp() {
   const historyRef = useRef<Awaited<ReturnType<typeof openChatHistory>> | null>(null)
   const historyGeneration = useRef(0)
   const chatBusyRef = useRef(false)
+
+  useTauriTheme(selectedTheme)
 
   const checkStatus = useCallback(async () => {
     const generation = ++checkGeneration.current
@@ -249,14 +252,14 @@ export function LocalApp() {
   }, [])
 
   const savePreferences = useCallback(async () => {
-    if (saveBusy.current || preferenceLoadState !== 'ready' || !selectedPreset) return
+    if (saveBusy.current || preferenceLoadState !== 'ready' || !selectedPreset || !preferences) return
     saveBusy.current = true
     const generation = ++preferencesGeneration.current
     setSaving(true)
     setPreferenceError('')
     setSaveNotice('')
     try {
-      const result = await desktopBridge.updatePreferences(preferencesFor(selectedPreset, selectedAllowOnlineResearch, selectedTheme))
+      const result = await desktopBridge.updatePreferences(preferencesFor(selectedPreset, selectedAllowOnlineResearch, selectedTheme ?? preferences.theme))
       if (!mounted.current || generation !== preferencesGeneration.current) return
       setPreferences(result.preferences)
       setSelectedPreset(result.preferences.resourcePreset)
@@ -270,7 +273,7 @@ export function LocalApp() {
       saveBusy.current = false
       if (mounted.current) setSaving(false)
     }
-  }, [preferenceLoadState, selectedAllowOnlineResearch, selectedPreset, selectedTheme])
+  }, [preferenceLoadState, preferences, selectedAllowOnlineResearch, selectedPreset, selectedTheme])
 
   const loadModelCatalog = useCallback(async () => {
     if (!desktopBridge.isAvailable()) return
@@ -569,30 +572,6 @@ export function LocalApp() {
     }
   }, [loadModelCatalog, loadPreferences, view])
 
-  useEffect(() => {
-    const root = document.documentElement
-    if (selectedTheme !== 'system') {
-      root.setAttribute('data-theme', selectedTheme)
-      return
-    }
-    const colorScheme = window.matchMedia('(prefers-color-scheme: dark)')
-    const applySystemTheme = () => root.setAttribute('data-theme', colorScheme.matches ? 'dark' : 'light')
-    applySystemTheme()
-    colorScheme.addEventListener('change', applySystemTheme)
-    return () => colorScheme.removeEventListener('change', applySystemTheme)
-  }, [selectedTheme])
-
-  useEffect(() => {
-    if (!desktopBridge.isAvailable()) return
-    let current = true
-    void desktopBridge.getPreferences().then((result) => {
-      if (current && mounted.current) setSelectedTheme(result.preferences.theme)
-    }).catch(() => {
-      // Settings exposes any load error; the homepage keeps its dark default.
-    })
-    return () => { current = false }
-  }, [])
-
   return (
     <main className="flex min-h-screen bg-[var(--color-bg-dark)] text-[var(--color-text-primary)]">
       <nav aria-label="Main navigation" className="flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] p-5">
@@ -846,7 +825,7 @@ export function LocalApp() {
                     <label htmlFor="theme-preference" className="block text-sm font-medium">Color theme</label>
                     <select
                       id="theme-preference"
-                      value={selectedTheme}
+                      value={selectedTheme ?? preferences.theme}
                       disabled={saving}
                       onChange={(event) => setSelectedTheme(event.target.value as ThemePreference)}
                       className="mt-2 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-dark)] px-3 py-2 text-sm text-[var(--color-text-primary)] disabled:opacity-60"
@@ -882,7 +861,7 @@ export function LocalApp() {
                     </label>
                     <div className="mt-4 flex items-center justify-between gap-4">
                       <p className="text-sm text-[var(--color-text-secondary)]">Saved: {preferences.theme} theme · {preferences.resourcePreset === 'balanced' ? 'Balanced' : 'Low impact'} · web {preferences.allowOnlineResearch ? 'enabled' : 'off'}</p>
-                      <Button type="button" variant="secondary" onClick={() => void savePreferences()} disabled={saving || (selectedTheme === preferences.theme && selectedPreset === preferences.resourcePreset && selectedAllowOnlineResearch === preferences.allowOnlineResearch)}>
+                      <Button type="button" variant="secondary" onClick={() => void savePreferences()} disabled={saving || ((selectedTheme ?? preferences.theme) === preferences.theme && selectedPreset === preferences.resourcePreset && selectedAllowOnlineResearch === preferences.allowOnlineResearch)}>
                         {saving ? 'Saving…' : 'Save preferences'}
                       </Button>
                     </div>

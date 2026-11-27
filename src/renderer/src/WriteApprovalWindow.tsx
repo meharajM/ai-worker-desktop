@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from './components/primitives/Button'
 import { DesktopBridgeError, writeApprovalBridge, type PendingWriteApproval } from './desktop-bridge'
+import { useTauriTheme } from './hooks/useTauriTheme'
 
 function safeMessage(error: unknown) {
   return error instanceof DesktopBridgeError && error.code === 'unavailable'
@@ -25,6 +26,7 @@ function ContentPreview({ title, content }: { title: string; content: string }) 
 }
 
 export function WriteApprovalWindow() {
+  useTauriTheme()
   const [proposal, setProposal] = useState<PendingWriteApproval | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)

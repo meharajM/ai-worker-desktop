@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { useTauriTheme } from './hooks/useTauriTheme'
 
 const states = {
   queued: { label: 'Queued', color: 'var(--color-text-secondary)' },
@@ -87,6 +88,7 @@ function TaskRow({ task }: { task: ActivityTask }) {
 }
 
 export function TaskActivityWindow() {
+  useTauriTheme()
   const [tasks, setTasks] = useState<ActivityTask[] | null>(null)
   const [unavailable, setUnavailable] = useState(false)
 
