@@ -1,8 +1,8 @@
 import React from 'react';
-import { CheckCircle2, Circle, Clock, Loader2, BrainCircuit } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, BrainCircuit } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import { AgentStep, AgentPlanData } from '../lib/plan_manager';
+import type { AgentPlanData } from '../lib/plan_manager';
 
 interface AgentPlanProps {
   plan: AgentPlanData;
@@ -77,48 +77,5 @@ export function AgentPlan({ plan, className = '' }: AgentPlanProps) {
       </div>
     </motion.div>
   );
-}
-
-// Helper to parse plan from tool arguments or message content
-export function parseAgentPlan(content: string | any): AgentPlanData | null {
-  try {
-    // Case 1: Content is already a parsed object (from tool args)
-    if (typeof content === 'object' && content !== null) {
-      // Robust check for steps array
-      if (content.steps && Array.isArray(content.steps)) {
-        return {
-          goal: content.goal || '',
-          steps: content.steps.map((s: any, idx: number) => ({
-            id: s.id || idx + 1,
-            description: s.description || '', // Ensure string
-            status: s.status || 'pending',
-            assigned_agent: s.assigned_agent || s.agent || 'System'
-          }))
-        };
-      }
-      // Handle Self-Healing Wrapper
-      if (content.plan_content) {
-        return parseAgentPlan(content.plan_content);
-      }
-    }
-
-    // Case 2: Content is a string (legacy XML or JSON string)
-    if (typeof content === 'string') {
-      // Try parsing as JSON first
-      try {
-        const parsed = JSON.parse(content);
-        if (parsed.steps) {
-          return parseAgentPlan(parsed);
-        }
-      } catch (e) {
-        // Not JSON
-      }
-    }
-
-    return null;
-  } catch (e) {
-    console.error('Failed to parse agent plan:', e);
-    return null;
-  }
 }
 

@@ -120,7 +120,7 @@ function testLocalOnlyReadinessAndIntegrationGating() {
 
   const connections = read('src/renderer/src/components/ConnectionsPanel.tsx');
   assertIncludes(connections, "server.command === 'internal-memory' || server.command === 'internal-filesystem'", 'connections');
-  assertIncludes(connections, "connectedMode ? servers.filter((s) => s.name !== 'playwright') : localServers", 'connections');
+  assertIncludes(connections, 'const visibleServers = connectedMode ? servers : localServers;', 'connections');
   assertIncludes(connections, 'on-device memory and workspace file tools', 'connections');
   assertIncludes(connections, 'showManagementActions={connectedMode}', 'connections');
 
