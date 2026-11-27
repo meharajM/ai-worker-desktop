@@ -41,7 +41,8 @@ export async function serializeMemoryArchive(data: MemoryExportData): Promise<st
         relations: data.relations,
         metadata: data.metadata ?? {},
     }
-    const canonicalPayload = canonicalJson(payload)
+    // Export timestamps change on each save; hash graph content so repeat exports stay idempotent.
+    const canonicalPayload = canonicalJson({ entities: payload.entities, relations: payload.relations })
     const digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalPayload))
     const contentSha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
     const exportedAt = typeof payload.metadata.exportedAt === 'string'

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './components/primitives/Button'
 import { TextArea } from './components/input/TextArea'
 import { LegacyDataImportPanel } from './components/LegacyDataImportPanel'
+import { MemoryArchiveImportPanel } from './components/MemoryArchiveImportPanel'
 import { useTauriTheme } from './hooks/useTauriTheme'
 import { DesktopBridgeError, desktopBridge, type DesktopPreferences, type ModelCatalog, type ModelImportProgress } from './desktop-bridge'
 import { HistoryError, openChatHistory, type ChatSession, type TerminalTurn } from './lib/chat-history'
@@ -878,6 +879,7 @@ export function LocalApp() {
                   onRolledBack={handleLegacyRolledBack}
                 />
               )}
+              {desktopBridge.isAvailable() && <MemoryArchiveImportPanel />}
             </div>
           </>
         )}

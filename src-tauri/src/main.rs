@@ -6,6 +6,8 @@ mod bridge;
 mod chat;
 mod external_mcp;
 mod lifecycle;
+mod memory_migration;
+mod memory_store;
 mod model_runtime;
 mod model_setup;
 mod preferences;
@@ -97,6 +99,10 @@ fn main() {
                 _app.manage(options.state());
                 history_proof::setup(_app, options)?;
             }
+            let memory_root = _app.path().app_data_dir()?.join("memory");
+            let memory_store = memory_store::MemoryStore::open(memory_root.join("graph.sqlite3"))
+                .map_err(std::io::Error::other)?;
+            _app.manage(memory_store);
             lifecycle::setup(_app)?;
             _app.state::<external_mcp::ExternalMcp>()
                 .start(_app.handle())?;
@@ -125,6 +131,8 @@ fn main() {
             bridge::bridge_get_status,
             bridge::bridge_get_preferences,
             bridge::bridge_update_preferences,
+            memory_migration::memory_preview_archive,
+            memory_migration::memory_import_archive,
             chat::chat_local,
             model_setup::model_catalog,
             model_setup::model_import,

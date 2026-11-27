@@ -3,6 +3,7 @@ import { Channel, invoke, isTauri } from '@tauri-apps/api/core'
 const PROTOCOL_VERSION = 1
 const OWNER_ID = 'main'
 const MAX_ID_LENGTH = 64
+const MAX_MEMORY_ARCHIVE_BYTES = 64 * 1024 * 1024
 const ERROR_MESSAGES = {
   invalid_request: 'Native bridge rejected the request.',
   unauthorized: 'Native bridge caller is not authorized.',
@@ -18,8 +19,8 @@ export type DesktopBridgeErrorCode = keyof typeof ERROR_MESSAGES
 export class DesktopBridgeError extends Error {
   readonly code: DesktopBridgeErrorCode
 
-  constructor(code: DesktopBridgeErrorCode) {
-    super(ERROR_MESSAGES[code])
+  constructor(code: DesktopBridgeErrorCode, message: string = ERROR_MESSAGES[code]) {
+    super(message.length <= 256 ? message : ERROR_MESSAGES[code])
     this.code = code
     this.name = 'DesktopBridgeError'
   }
@@ -67,8 +68,8 @@ export type LocalChatReply = Identity & {
 type Identity = { protocolVersion: number; ownerId: string; sessionId: string; requestId: string }
 type OpenRequest = Omit<Identity, 'sessionId'>
 type NativeRequest = OpenRequest | Identity | (Identity & { preferences: DesktopPreferences })
-type NativeCommand = 'bridge_open_session' | 'bridge_get_status' | 'bridge_get_preferences' | 'bridge_update_preferences' | 'chat_local' | 'model_catalog' | 'model_import' | 'model_install' | 'model_cancel_import' | 'model_cancel_install'
-type Invoke = <T>(command: NativeCommand, args: { request: NativeRequest; prompt?: string; onProgress?: Channel<ModelImportProgress>; importRequestId?: string; installRequestId?: string; modelId?: string }) => Promise<T>
+type NativeCommand = 'bridge_open_session' | 'bridge_get_status' | 'bridge_get_preferences' | 'bridge_update_preferences' | 'chat_local' | 'model_catalog' | 'model_import' | 'model_install' | 'model_cancel_import' | 'model_cancel_install' | 'memory_preview_archive' | 'memory_import_archive'
+type Invoke = <T>(command: NativeCommand, args: { request: NativeRequest; prompt?: string; archiveJson?: string; onProgress?: Channel<ModelImportProgress>; importRequestId?: string; installRequestId?: string; modelId?: string }) => Promise<T>
 
 export type ModelCandidate = {
   id: string
@@ -132,6 +133,23 @@ export type PendingWriteApproval = {
   relativePath: string
   before: string | null
   proposed: string
+}
+
+export type MemoryArchivePreview = {
+  entities: number
+  relations: number
+  contentSha256: string
+  migrationId: string
+  alreadyImported: boolean
+}
+
+export type MemoryArchiveImportResult = {
+  entitiesImported: number
+  relationsImported: number
+  alreadyImported: boolean
+  contentSha256: string
+  migrationId: string
+  backupPath: string
 }
 
 type WriteApprovalCommand = 'get_pending_write_approval' | 'resolve_write_approval'
@@ -259,11 +277,31 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
       (value.resourcePreset === 'balanced' && value.idlePolicy === 'shortIdle')
   }
 
+  const validDigest = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+
+  function validateMemoryPreview(payload: unknown): payload is MemoryArchivePreview {
+    return object(payload) && Object.keys(payload).sort().join(',') === 'alreadyImported,contentSha256,entities,migrationId,relations' &&
+      Number.isSafeInteger(payload.entities) && (payload.entities as number) >= 0 && (payload.entities as number) <= 10_000 &&
+      Number.isSafeInteger(payload.relations) && (payload.relations as number) >= 0 && (payload.relations as number) <= 100_000 &&
+      validDigest(payload.contentSha256) && payload.migrationId === `sha256-${payload.contentSha256}` &&
+      typeof payload.alreadyImported === 'boolean'
+  }
+
   function nativeError(error: unknown): DesktopBridgeError {
     if (object(error) && typeof error.code === 'string' && Object.hasOwn(ERROR_MESSAGES, error.code) && error.code !== 'unavailable' && error.code !== 'protocol_error' && error.code !== 'transport_error') {
       return new DesktopBridgeError(error.code as DesktopBridgeErrorCode)
     }
     return new DesktopBridgeError('transport_error')
+  }
+
+  function memoryNativeError(error: unknown): DesktopBridgeError {
+    if (object(error) && typeof error.code === 'string' && Object.hasOwn(ERROR_MESSAGES, error.code) &&
+        ['invalid_request', 'internal', 'unauthorized', 'stale_session'].includes(error.code) &&
+        typeof error.message === 'string' && error.message.length > 0 && error.message.length <= 256 &&
+        !/[\u0000-\u001f\u007f]/.test(error.message)) {
+      return new DesktopBridgeError(error.code as DesktopBridgeErrorCode, error.message)
+    }
+    return nativeError(error)
   }
 
   function validateOpen(reply: unknown, requestId: string): string {
@@ -299,7 +337,8 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
     command: Exclude<NativeCommand, 'bridge_open_session'>,
     preferences: DesktopPreferences | undefined,
     validate: (reply: unknown, identity: Identity) => T,
-    extraArgs: { prompt?: string; onProgress?: Channel<ModelImportProgress>; importRequestId?: string; installRequestId?: string; modelId?: string } = {},
+    extraArgs: { prompt?: string; archiveJson?: string; onProgress?: Channel<ModelImportProgress>; importRequestId?: string; installRequestId?: string; modelId?: string } = {},
+    mapError: (error: unknown) => DesktopBridgeError = nativeError,
   ): Promise<T> {
     if (!platform.isTauri()) throw new DesktopBridgeError('unavailable')
     if (preferences !== undefined && !validPreferences(preferences)) throw new DesktopBridgeError('invalid_request')
@@ -310,7 +349,7 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
     try {
       reply = await platform.invoke(command, { request, ...extraArgs })
     } catch (error) {
-      const failure = nativeError(error)
+      const failure = mapError(error)
       if (failure.code === 'stale_session') opening = undefined
       throw failure
     }
@@ -370,6 +409,37 @@ export function createDesktopBridgeClient(platform: { isTauri: () => boolean; in
         }
         return reply as LocalChatReply
       }, { prompt })
+    },
+    previewMemoryArchive(archiveJson: string): Promise<MemoryArchivePreview> {
+      if (typeof archiveJson !== 'string' || archiveJson.length === 0 ||
+          new TextEncoder().encode(archiveJson).byteLength > MAX_MEMORY_ARCHIVE_BYTES) {
+        return Promise.reject(new DesktopBridgeError('invalid_request'))
+      }
+      return correlatedRequest('memory_preview_archive', undefined, (value, identity) => {
+        const reply = validateIdentity(value, identity)
+        if (Object.keys(reply).sort().join(',') !== 'ownerId,payload,protocolVersion,requestId,sessionId' ||
+            !validateMemoryPreview(reply.payload)) throw new DesktopBridgeError('protocol_error')
+        return reply.payload
+      }, { archiveJson }, memoryNativeError)
+    },
+    importMemoryArchive(archiveJson: string): Promise<MemoryArchiveImportResult> {
+      if (typeof archiveJson !== 'string' || archiveJson.length === 0 ||
+          new TextEncoder().encode(archiveJson).byteLength > MAX_MEMORY_ARCHIVE_BYTES) {
+        return Promise.reject(new DesktopBridgeError('invalid_request'))
+      }
+      return correlatedRequest('memory_import_archive', undefined, (value, identity) => {
+        const reply = validateIdentity(value, identity)
+        if (Object.keys(reply).sort().join(',') !== 'ownerId,payload,protocolVersion,requestId,sessionId' ||
+            !object(reply.payload) || Object.keys(reply.payload).sort().join(',') !== 'alreadyImported,backupPath,contentSha256,entitiesImported,migrationId,relationsImported' ||
+            !Number.isSafeInteger(reply.payload.entitiesImported) || (reply.payload.entitiesImported as number) < 0 ||
+            (reply.payload.entitiesImported as number) > 10_000 ||
+            !Number.isSafeInteger(reply.payload.relationsImported) || (reply.payload.relationsImported as number) < 0 ||
+            (reply.payload.relationsImported as number) > 100_000 ||
+            typeof reply.payload.alreadyImported !== 'boolean' || !validDigest(reply.payload.contentSha256) ||
+            reply.payload.migrationId !== `sha256-${reply.payload.contentSha256}` ||
+            !isSafePath(reply.payload.backupPath, 2_048)) throw new DesktopBridgeError('protocol_error')
+        return reply.payload as unknown as MemoryArchiveImportResult
+      }, { archiveJson }, memoryNativeError)
     },
     getModelCatalog(): Promise<ModelCatalog & Identity> {
       return correlatedRequest('model_catalog', undefined, (value, identity) => {

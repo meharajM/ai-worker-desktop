@@ -348,3 +348,60 @@ test('write approval bridge rejects unavailable, malformed, and stale-shaped req
   await assert.rejects(client.resolveWriteApproval('bad id', 'b'.repeat(64), true), { code: 'invalid_request' })
   assert.equal(calls, 1)
 })
+
+test('memory archive preview and import use correlated main-window calls', async () => {
+  const calls = []
+  const archiveJson = '{"synthetic":true}'
+  const digest = 'a'.repeat(64)
+  const client = createDesktopBridgeClient({
+    isTauri: () => true,
+    invoke: async (command, { request, archiveJson: input }) => {
+      calls.push({ command, request, archiveJson: input })
+      if (command === 'bridge_open_session') return opened(request)
+      const payload = command === 'memory_preview_archive'
+        ? { entities: 2, relations: 1, contentSha256: digest, migrationId: `sha256-${digest}`, alreadyImported: false }
+        : { entitiesImported: 2, relationsImported: 1, contentSha256: digest, migrationId: `sha256-${digest}`, alreadyImported: false, backupPath: '/local/app-data/memory-archives/archive.json' }
+      return { ...request, payload }
+    },
+  })
+
+  const preview = await client.previewMemoryArchive(archiveJson)
+  const result = await client.importMemoryArchive(archiveJson)
+  assert.equal(preview.entities, 2)
+  assert.equal(preview.relations, 1)
+  assert.equal(result.entitiesImported, 2)
+  assert.equal(result.backupPath, '/local/app-data/memory-archives/archive.json')
+  assert.deepEqual(calls.map(({ command }) => command), ['bridge_open_session', 'memory_preview_archive', 'memory_import_archive'])
+  assert.deepEqual(calls.slice(1).map(({ request }) => request.requestId), ['req-2', 'req-3'])
+  assert.ok(calls.slice(1).every(({ archiveJson: input }) => input === archiveJson))
+})
+
+test('memory archive bridge rejects malformed replies and preserves safe validation detail', async () => {
+  const digest = 'b'.repeat(64)
+  let corrupt = true
+  const client = createDesktopBridgeClient({
+    isTauri: () => true,
+    invoke: async (command, { request }) => {
+      if (command === 'bridge_open_session') return opened(request)
+      if (corrupt) return { ...request, payload: { entities: -1, relations: 0, contentSha256: digest, migrationId: `sha256-${digest}`, alreadyImported: false } }
+      throw { code: 'invalid_request', message: 'Invalid memory archive: content digest does not match.' }
+    },
+  })
+  await assert.rejects(client.previewMemoryArchive('{"ok":true}'), { code: 'protocol_error' })
+  corrupt = false
+  await assert.rejects(client.importMemoryArchive('{"ok":true}'), (error) =>
+    error instanceof DesktopBridgeError && error.code === 'invalid_request' && error.message.includes('content digest'))
+})
+
+test('memory archive operations remain unavailable in browser preview and reject empty input', async () => {
+  let calls = 0
+  const client = createDesktopBridgeClient({ isTauri: () => false, invoke: async () => { calls++ } })
+  await assert.rejects(client.previewMemoryArchive('{}'), { code: 'unavailable' })
+  await assert.rejects(client.importMemoryArchive('{}'), { code: 'unavailable' })
+  assert.equal(calls, 0)
+
+  const native = createDesktopBridgeClient({ isTauri: () => true, invoke: async () => { calls++ } })
+  await assert.rejects(native.previewMemoryArchive(''), { code: 'invalid_request' })
+  await assert.rejects(native.importMemoryArchive(''), { code: 'invalid_request' })
+  assert.equal(calls, 0)
+})

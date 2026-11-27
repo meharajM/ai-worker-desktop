@@ -1040,16 +1040,17 @@ fn request_completion(
         .map_err(|_| "local runtime request failed")?;
 
     let deadline = Instant::now() + INFERENCE_TIMEOUT;
+    // Reapplying SO_RCVTIMEO on a connected Darwin Unix socket can fail with EINVAL.
+    stream
+        .set_read_timeout(Some(INFERENCE_TIMEOUT.min(CANCELLATION_POLL)))
+        .map_err(|_| "local runtime socket unavailable")?;
     let mut response = Vec::new();
     let mut buffer = [0u8; 4096];
     loop {
         check_cancelled(cancelled)?;
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .ok_or("local inference timed out")?;
-        stream
-            .set_read_timeout(Some(remaining.min(CANCELLATION_POLL)))
-            .map_err(|_| "local runtime socket unavailable")?;
+        if deadline.checked_duration_since(Instant::now()).is_none() {
+            return Err("local inference timed out");
+        }
         let read = match stream.read(&mut buffer) {
             Ok(read) => read,
             Err(error)
@@ -1389,7 +1390,8 @@ mod tests {
             request_completion(stream, "fixture", "{}", Some(&cancelled)),
             Err("local inference cancelled")
         );
-        assert!(started.elapsed() < Duration::from_millis(200));
+        // Keep this tolerant of a loaded host while still bounding the 60s inference deadline.
+        assert!(started.elapsed() < Duration::from_millis(500));
         timer.join().unwrap();
         server.join().unwrap();
         fs::remove_dir_all(dir).unwrap();

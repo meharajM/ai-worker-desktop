@@ -63,6 +63,7 @@
         "test:mock": "node tests/e2e_ui_mocked.cjs",
         "test:playwright": "node tests/playwright_tools_test.cjs",
         "test:tauri:import": "npm run web:build && node tests/tauri_legacy_import_e2e.cjs",
+        "test:tauri:memory-import": "npm run web:build && node tests/tauri_memory_import_e2e.cjs",
         "test:speech": "node tests/speech_e2e.cjs",
         "test:regression:critical": "node tests/regression_critical_checks.cjs",
         "clean": "rm -rf out dist",

@@ -677,9 +677,12 @@ export class ServerMemoryAdapter implements UnifiedMemoryBackend {
         description,
         observations,
         metadata: {},
-        createdAt: exportedAt
+        // server-memory stores no timestamps; keep re-exports of the same graph stable.
+        createdAt: 'unknown'
       })
     }
+
+    entities.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
 
     const relations: Relation[] = []
     const relationIds = new Set<string>()
@@ -719,6 +722,8 @@ export class ServerMemoryAdapter implements UnifiedMemoryBackend {
         metadata: {}
       })
     }
+
+    relations.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
 
     addOutputString(exportedAt)
     addOutputString('1.0.0')
