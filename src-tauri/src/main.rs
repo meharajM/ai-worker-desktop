@@ -2,6 +2,7 @@ use tauri::{Manager, State, WebviewWindow};
 
 mod a2a;
 mod agent_task;
+mod agent_setup;
 mod bridge;
 mod chat;
 mod external_mcp;
@@ -144,6 +145,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             status,
+            agent_setup::list_agent_clients,
+            agent_setup::connect_agent_client,
+            agent_setup::disconnect_agent_client,
             bridge::bridge_open_session,
             bridge::bridge_get_status,
             bridge::bridge_get_preferences,

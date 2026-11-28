@@ -8,12 +8,13 @@ import { useSettingsStore } from '../../stores/settingsStore'
 interface EmptyStateProps {
   llmReady: boolean
   onOpenSettings?: () => void
+  onOpenAgentSettings?: () => void
 }
 
 /**
  * Co-Worker Hub Welcome Screen
  */
-export function EmptyState({ llmReady, onOpenSettings }: EmptyStateProps) {
+export function EmptyState({ llmReady, onOpenSettings, onOpenAgentSettings }: EmptyStateProps) {
   const { connectionState, openDialog, whatsappEnabled, setWhatsAppEnabled } = useWhatsAppStore()
   const connectedMode = useSettingsStore((state) => state.privacyMode === 'connected')
   const isConnected = connectionState.status === 'connected'
@@ -66,12 +67,33 @@ export function EmptyState({ llmReady, onOpenSettings }: EmptyStateProps) {
       </p>
 
       {!llmReady && onOpenSettings && (
+        <div className="mb-8 flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="rounded-lg bg-[var(--color-brand-teal)] px-4 py-2 text-sm font-medium text-[var(--color-bg-dark)] hover:bg-[var(--color-brand-teal-hover)]"
+          >
+            Set up a local model
+          </button>
+          {onOpenAgentSettings && (
+            <button
+              type="button"
+              onClick={onOpenAgentSettings}
+              className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]"
+            >
+              Connect an AI agent
+            </button>
+          )}
+        </div>
+      )}
+
+      {llmReady && onOpenAgentSettings && (
         <button
           type="button"
-          onClick={onOpenSettings}
-          className="mb-8 rounded-lg bg-[var(--color-brand-teal)] px-4 py-2 text-sm font-medium text-[var(--color-bg-dark)] hover:bg-[var(--color-brand-teal-hover)]"
+          onClick={onOpenAgentSettings}
+          className="mb-8 rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]"
         >
-          Open model settings
+          Connect an AI agent
         </button>
       )}
 

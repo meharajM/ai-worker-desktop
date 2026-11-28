@@ -46,7 +46,7 @@ import { setFirebaseEnabled } from "./lib/firebase/init";
 
 function App() {
   const [currentView, setCurrentView] = useState<View>("chat");
-  const [settingsInitialSection, setSettingsInitialSection] = useState<'privacy' | 'llm'>('privacy');
+  const [settingsInitialSection, setSettingsInitialSection] = useState<'privacy' | 'llm' | 'agents'>('privacy');
   const [chatDraft, setChatDraft] = useState('');
   const handleViewChange = (view: View) => {
     if (view === 'settings') setSettingsInitialSection('privacy');
@@ -54,6 +54,10 @@ function App() {
   };
   const openModelSettings = () => {
     setSettingsInitialSection('llm');
+    setCurrentView('settings');
+  };
+  const openAgentSettings = () => {
+    setSettingsInitialSection('agents');
     setCurrentView('settings');
   };
   const privacyMode = useSettingsStore((s) => s.privacyMode);
@@ -155,7 +159,7 @@ function App() {
           {currentView === "chat" && (
             <div className="flex-1 flex flex-col overflow-hidden min-w-0 relative">
               <div className="flex-1 overflow-hidden flex flex-col relative w-full h-full pb-0 bg-[var(--color-bg-dark)] z-0">
-                <ChatView llmReady={chatReady} localModelReady={localModelReady} onOpenSettings={openModelSettings} />
+                <ChatView llmReady={chatReady} localModelReady={localModelReady} onOpenSettings={openModelSettings} onOpenAgentSettings={openAgentSettings} />
               </div>
 
               <div className="pt-2 pb-6 px-6 flex justify-center w-full z-10 bg-[var(--color-bg-dark)] shrink-0 shadow-[var(--shadow-top)]">

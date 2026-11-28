@@ -31,9 +31,10 @@ interface ChatViewProps {
   llmReady?: boolean
   localModelReady?: boolean
   onOpenSettings?: () => void
+  onOpenAgentSettings?: () => void
 }
 
-export function ChatView({ onClearChat, llmReady = false, localModelReady = false, onOpenSettings }: ChatViewProps) {
+export function ChatView({ onClearChat, llmReady = false, localModelReady = false, onOpenSettings, onOpenAgentSettings }: ChatViewProps) {
   const {
     sessions,
     activeSessionId,
@@ -134,7 +135,7 @@ export function ChatView({ onClearChat, llmReady = false, localModelReady = fals
         className="flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-4 min-w-0"
       >
         {messages.length === 0 ? (
-          <EmptyState llmReady={llmReady} onOpenSettings={onOpenSettings} />
+          <EmptyState llmReady={llmReady} onOpenSettings={onOpenSettings} onOpenAgentSettings={onOpenAgentSettings} />
         ) : (
           messages.map((message, index) => (
             <MessageBubble

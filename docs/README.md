@@ -3,9 +3,10 @@
 Welcome to the documentation index for AI-Worker. Start here to install, configure, develop, or contribute.
 
 ## 🚀 Getting Started
-- **[Quick Start](./QUICK_START.md)** — Get up and running in 5 minutes.
-- **[Setup Guide](./setup.md)** — Detailed system setup, prerequisites, and developer configurations.
-- **[Usage Guide](./usage.md)** — Learn about voice inputs, provider setup, and MCP tool bindings.
+- **[Install AI-Worker](./INSTALLATION.md)** — Terminal install commands, native installers, and first launch.
+- **[Quick Start](./QUICK_START.md)** — Connect an MCP-capable agent and make your first handoff.
+- **[Use from an AI agent](./usage.md)** — Privacy, workspace scope, and approved writes.
+- **[Developer setup](./setup.md)** — Run the Tauri app or build a local installer.
 
 ## 🧠 Architecture & Technical Guides
 - **[System Architecture](./ARCHITECTURE.md)** — The 3 core engineering paradigms of AI-Worker.

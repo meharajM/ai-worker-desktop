@@ -1,324 +1,116 @@
-# AI-Worker 🎯
+# AI-Worker
 
-[![CI/CD](https://github.com/meharajM/ai-worker.app/actions/workflows/ci.yml/badge.svg)](https://github.com/meharajM/ai-worker.app/actions/workflows/ci.yml)
+[![CI](https://github.com/meharajM/ai-worker-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/meharajM/ai-worker-desktop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.12.0-green.svg)](https://nodejs.org/)
-[![Platform Support](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Stars](https://img.shields.io/github/stars/meharajM/ai-worker-desktop?style=social)](https://github.com/meharajM/ai-worker-desktop/stargazers)
 
-**AI-Worker** is a **voice-first desktop agent workspace** built on the **Model Context Protocol (MCP)**. A unified hub for chat, files, browser automation, voice commands, and local-first LLM workflows — everything stays on your machine and under your control.
+**A local-first desktop subagent for MCP-compatible AI agents.** Hand off a bounded project task to an on-device model, get back a concise result with source paths, and review every proposed file write before it happens.
 
-> *Most AI tools stop at chat. AI-Worker is built around the next step: connecting the assistant to useful local capabilities while keeping the workspace understandable, inspectable, and desktop-native.*
-
----
-
-## Reusable operation journal
-
-The [MIT Rust journal](./crates/local-operation-journal/) and [TypeScript bridge](./packages/local-operation-journal-bridge/)
-provide immutable proposals, expiring approvals, single-use execution claims and
-explicit crash reconciliation for other local applications. Both packages are
-provisional and unpublished. The TypeScript runtime has no dependencies; Rust is
-independent of Tauri. Integration into the desktop app remains planned in the
-[current migration cards](./plans/operation-journal-integration.md).
-
-## ✨ Why AI-Worker?
-
-Unlike browser-based AI tools or cloud-dependent agents:
-
-- **🎤 Voice-First** — Push-to-talk speech input with offline recognition (Vosk). Hands-free, privacy-first interactions.
-- **🏠 Desktop-Native** — Built with Electron. Works offline, integrates with your local files, no API dependency.
-- **🔌 Extensible via MCP** — Model Context Protocol integration for memory, filesystem, browser automation, and custom tools.
-- **🌐 Local AI Ready** — On-device model execution with WebGPU acceleration. Bring your own LLM (OpenAI, Gemini, Ollama, OpenRouter).
-- **⚡ Agent Orchestration** — Coordinate research, document extraction, file work, browser tasks, and WhatsApp workflows from one app.
-- **🔒 Security & Control** — Electron sandboxing, validated IPC, no external services required.
-
----
-
-## 🎬 Screenshots
-
-### Hub Chat — Voice & Text Workspace
-![AI-Worker hub chat](./docs/screenshots/chat-home.png)
-
-### MCP Connections — Extensible Tool Ecosystem  
-![AI-Worker MCP connections](./docs/screenshots/mcp-connections.png)
-
-### LLM Provider Settings — Multi-Model Support
-![AI-Worker hub settings](./docs/screenshots/settings-llm.png)
-
-### Speech Recognition Settings — Voice Configuration
-![AI-Worker speech settings](./docs/screenshots/settings-voice.png)
-
----
-
-## 🎯 Core Features
-
-### Desktop Chat Workspace
-- Text and voice input (speech-to-text with Vosk)
-- File drag-and-drop for context
-- Workflow starter tiles for common tasks
-- Rich conversation history with semantic search
-
-### Model Context Protocol (MCP) Integration
-- Built-in MCP clients for stdio and SSE connections
-- Pre-configured servers: memory, filesystem, MarkItDown, browser automation
-- Easy integration of custom MCP servers
-- Real-time connection status and debugging
-
-### LLM Provider Flexibility
-- **OpenAI** — GPT-4, GPT-3.5
-- **Gemini** — Full API support
-- **Ollama** — Local model hosting
-- **OpenRouter** — 100+ models on one API
-- **Web-LLM** — On-device WebGPU execution
-- Auto-mode for intelligent provider routing
-
-### Voice & Speech Recognition
-- **Push-to-talk microphone** — Click to record, auto-detect end
-- **Offline Vosk** — Private speech recognition, no cloud dependency
-- **Voice command routing** — Intent detection for hands-free workflows
-
-### Browser Automation
-- **Playwright-backed** — Full web automation (click, type, extract, screenshot)
-- **Secure sandboxing** — Isolated browser context
-- **Form filling & navigation** — Automate data entry and research workflows
-
-### WhatsApp Integration  
-- Direct phone messaging via Baileys library
-- Approval workflows ("ask for permission via WhatsApp")
-- Multi-user task delegation
-
-### Native Cross-Platform Packaging
-- **macOS** — Universal (Intel + Apple Silicon)
-- **Linux** — AppImage and deb support
-- **Windows** — EXE installer
-
----
-
-## 🛠️ Architecture: The Three Engineering Paradigms
-
-AI-Worker is engineered around three foundational pillars for modern agentic systems:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      AI-Worker Architecture                     │
-├───────────────────┬──────────────────────┬──────────────────────┤
-│ Prompt Engineering │ Context Engineering  │  Harness Engineering │
-│                   │                      │                      │
-│ ∙ System Intent   │ ∙ Semantic Memory    │ ∙ Browser Sandboxing │
-│ ∙ On-Device LLMs  │ ∙ Context Pruning    │ ∙ Secure IPC Bridges │
-│ ∙ Tool Validation │ ∙ MCP Server Binding │ ∙ WhatsApp Gateway   │
-└───────────────────┴──────────────────────┴──────────────────────┘
+```mermaid
+flowchart LR
+  H[Host agent] -->|Task + selected workspace| W[AI-Worker background service]
+  W -->|On-device inference| L[Local Ollama model]
+  W -->|Bounded list, read, search| F[Selected project files]
+  W -->|Proposed write| A[User reviews exact change]
+  A -->|Approve| F
+  W -->|Result + source paths| H
 ```
 
-### 1. Prompt Engineering
-- **System Instruction Alignment** — Structured prompts enforcing tool-use validation
-- **On-Device Inference** — WebGPU-accelerated local model execution
-- **Dynamic Templates** — Real-time variable injection for user directives and tool outputs
+## What it does
 
-### 2. Context Engineering
-- **Semantic Memory** — Persistent entity & relationship database (MCP server-backed)
-- **Context Pruning** — Algorithmic token reduction preserving workspace metadata
-- **Multi-Source Fusion** — Unified context from files, browser state, terminal sessions, and memory
+- **Local inference:** MCP task inference uses an on-device Ollama model and never falls back to a cloud model. Apple Silicon development builds also expose an experimental pinned llama.cpp candidate; release installers currently rely on Ollama.
+- **Scoped workspace access:** The host passes the active project path and explicitly grants workspace access. Reads are bounded; each file read is limited to 16 KB.
+- **Useful handoffs:** Start a task, poll progress, answer a question, cancel work, and receive the result with source paths. Multiple host sessions can use the worker independently.
+- **Approved writes:** A proposed file change pauses while AI-Worker shows the target, current contents, and exact proposed contents. No write happens before approval.
+- **Optional public research:** Requires both the AI-Worker Settings opt-in and the host's `web` capability. Search terms and requested URLs leave the device; fetched results return to the host.
+- **Two interfaces:** Open AI-Worker for the full desktop app. MCP hosts can start or reuse its background service; the compact task window appears during host activity and can sleep when idle.
 
-### 3. Harness & Tool Engineering
-- **Playwright Browser Harness** — Secure web automation for extraction, forms, navigation
-- **Process Isolation** — Electron sandbox + validated IPC boundaries
-- **Communication Bridges** — Baileys/WhatsApp integration for approval workflows
+## Privacy boundary
 
----
+In **local-only** mode, AI-Worker inference stays on this device, cloud fallback is disabled, and Tauri public research is off. The MCP host still receives the task prompt and completed result; a remote host may process or transmit that text. Use a local host agent too when workspace data must remain on-device end to end.
 
-## 🚀 Quick Start
+Model downloads are network activity when you request them. Public research is a separate opt-in. MCP communicates with the app over loopback. AI-Worker's Tauri worker does not provide shell access, browser automation, or connected account services.
 
-### Prerequisites
+## Install when the first desktop release is published
 
-- **Node.js** ≥ 22.12.0 — [Install Node.js](https://nodejs.org/)
-- **npm** — Included with Node.js
-- **Python 3** + **uv** — For Python-based MCP servers (optional but recommended)
+The Tauri release workflow is ready, but this repository does not have a published Tauri installer release yet. Once the first `tauri-v*` release is available, the commands below will install it. Until then, follow **Run from source**.
 
-### Installation & Running (5 Steps)
+macOS or Linux:
 
-**1. Clone the repository**
-```bash
-git clone https://github.com/meharajM/ai-worker.app.git
-cd ai-worker.app
+```sh
+curl -fsSL https://raw.githubusercontent.com/meharajM/ai-worker-desktop/main/scripts/install.sh | bash
 ```
 
-**2. Install dependencies**
-```bash
-npm install
-```
+Windows PowerShell:
 
-**3. Bootstrap MCP and system dependencies**
-
-**For macOS & Linux:**
-```bash
-chmod +x ./scripts/setup-dependencies.sh
-./scripts/setup-dependencies.sh
-```
-
-**For Windows (run PowerShell as Administrator):**
 ```powershell
-.\\scripts\\setup-dependencies.ps1
+irm https://raw.githubusercontent.com/meharajM/ai-worker-desktop/main/scripts/install.ps1 | iex
 ```
 
-**4. Start development server**
-```bash
-npm run dev
+After that release, download a native installer (`.dmg`, per-user `.exe`, `.AppImage`, or `.deb`) from the [Tauri releases](https://github.com/meharajM/ai-worker-desktop/releases?q=tauri-v&expanded=true). The installer includes the MCP adapter and its Node runtime.
+
+On first launch, install or start Ollama and choose **Set up a local model** if needed, then choose **Connect an AI agent**. Release builds currently use Ollama for local inference. The **Settings → AI Agents** page detects and can add AI-Worker to Codex, Claude Desktop, Claude Code, Cursor, VS Code editor MCP, GitHub Copilot CLI, OpenCode, Gemini CLI, Windsurf, or Cline (CLI or VS Code). Restart the host agent after connecting it. See [Install AI-Worker](./docs/INSTALLATION.md) for platform details.
+
+ChatGPT web requires a remote HTTPS MCP endpoint. The local installer does not create or expose a tunnel.
+
+## Run from source
+
+Requires Node.js 22.12+, Rust, and the platform prerequisites for [Tauri](https://v2.tauri.app/start/prerequisites/).
+
+```sh
+git clone https://github.com/meharajM/ai-worker-desktop.git
+cd ai-worker-desktop
+npm install
+npm run tauri:dev
 ```
 
-The app opens at `http://localhost:5173` with hot-reload. If Electron shell fails, the renderer is still available at that address.
+Install Ollama and a local completion model if you want to use Ollama. To select a specific installed model for this run:
 
-**5. Build native installers (optional)**
-
-```bash
-# macOS (Intel + Apple Silicon)
-npm run build:mac
-
-# Linux  
-npm run build:linux
-
-# Windows
-npm run build:win
+```sh
+AI_WORKER_OLLAMA_MODEL=qwen3-vl:4b npm run tauri:dev
 ```
 
-For detailed setup help, see **[Setup Guide](./docs/setup.md)**.
+`ollama pull qwen3-vl:4b` is an optional model download. AI-Worker does not download Ollama models automatically. If no compatible local runtime is ready, inference reports a recoverable setup error and does not switch to a cloud provider.
 
----
+## Use an AI agent
 
-## 📖 Usage & Configuration
+After connecting, ask the host agent to call `start_agent_task` with the active project root as `workspaceRoot`, `capabilities:["workspace"]`, and your full request. Ask it to poll `get_agent_task`, relay questions, wait for AI-Worker approval when needed, and return the result with source paths.
 
-### First Launch
+The host sends task prompts and results through MCP. AI-Worker runs task inference on-device and pauses proposed writes for desktop approval. If the host itself uses a remote model, it may process the handoff text remotely. The [MCP and host guide](./docs/AI_WORKER_READINESS_MCP.md) covers task behavior and other MCP clients.
 
-1. Start in **Hub Chat** — Type or use voice input
-2. Go to **Hub Settings** → **LLM Providers** → Choose your model source (OpenAI, Ollama, etc.)
-3. Configure **MCP Connections** — Inspect built-in tools or add custom servers
-4. (Optional) Enable **Speech Settings** → Configure Vosk or cloud speech services
+Tauri also has a loopback A2A JSON-RPC endpoint. MCP is the documented, tested connection path; see the guide for A2A setup and its current limitations.
 
-The default local setup includes:
-- Internal semantic memory (local SQLite)
-- Filesystem access and watching
-- MarkItDown document parsing
-- Playwright-backed browser automation
+## Handoff token benchmark
 
-### Comprehensive Guides
+The checked-in benchmark runs one read-only task against `src-tauri/Cargo.toml`, checks the returned package name and version against the file, then counts the host-facing text before and after handoff with the same local Ollama tokenizer:
 
-- **[Setup Guide](./docs/setup.md)** — Environment configuration, dependencies, troubleshooting
-- **[Usage Guide](./docs/usage.md)** — Voice controls, provider setup, MCP configuration, workflows
-- **[MCP Integration](./docs/MCP_GUIDE.md)** — Build and connect custom MCP servers
-- **[Docs Index](./docs/README.md)** — Full documentation map
-
----
-
-## 🔧 Command Reference
-
-```bash
-# Development
-npm run dev              # Start dev server with hot-reload (HMR)
-npm run dev:clean       # Clear cache and cold-start dev
-
-# Quality & Validation  
-npm run lint            # Check code style (ESLint)
-npm run lint:fix        # Auto-fix linting issues
-npm run typecheck       # Verify TypeScript compilation
-npm run build           # Build Electron app
-npm run test:mock       # Run mocked E2E tests
-
-# Production
-npm run build:mac       # Build macOS universal binary
-npm run build:linux     # Build Linux AppImage
-npm run build:win       # Build Windows installer
-npm run publish:all     # Publish to Cloudflare R2
+```sh
+ollama pull gemma3:1b # only if the model is not already installed
+AI_WORKER_OLLAMA_MODEL=gemma3:1b npm run tauri:dev
+# In another terminal, after the app reports the model ready:
+npm run benchmark:handoff
 ```
 
-For full command docs, see **[Scripts README](./scripts/README.md)**.
+### Latest measured result
 
----
+| Local task (Gemma 3 1B) | Host reads full `src-tauri/Cargo.toml` | Host receives AI-Worker handoff | Estimated context reduction |
+| --- | ---: | ---: | ---: |
+| Return package name and version | 521 tokens | 183 tokens | **338 tokens (64.9%)** |
 
-## 📂 Project Structure
+Measured on 2026-11-28 with one parent clarification included in the handoff. This is one successful task, not an average across models or repositories. The runner rejects the measurement if the returned package name, version, or source path is wrong.
 
+This estimates only the task prompt and selected-file context. It excludes host system prompts and tool schemas, may differ from the host model's tokenizer, is not a provider-billing estimate, and does not subtract the local inference tokens used by AI-Worker. The benchmark uses the MCP task lifecycle and sends token-count requests only to Ollama at `127.0.0.1`.
+
+## Development
+
+```sh
+npm run web:typecheck
+npm run web:build
+cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
-ai-worker.app/
-├── src/
-│   ├── main/                # Electron backend, native drivers, SQLite  
-│   ├── preload/             # IPC security bridges (isolated context)
-│   ├── renderer/            # React UI and local LLM controllers
-│   └── renderer/src/lib/agent/  # Intent analysis, orchestration, tool execution
-├── docs/                    # Guides, architecture, screenshots, proposals
-├── tests/                   # Playwright E2E tests, mocks, validation
-├── scripts/                 # Platform-specific setup and build scripts
-└── build/                   # Package assets (icons, splashscreens)
-```
+
+See [MCP readiness and host setup](./docs/AI_WORKER_READINESS_MCP.md) and the [docs index](./docs/README.md). The Tauri desktop app is the supported installer path; Electron sources remain in the repository during the migration.
 
 ---
 
-## 🤝 Contributing
-
-We love contributions! Start with **[CONTRIBUTING.md](./CONTRIBUTING.md)** to understand our process.
-
-### Quick Links
-
-- **[Bug Report](https://github.com/meharajM/ai-worker.app/issues/new?template=bug_report.md)** — Found an issue?
-- **[Feature Request](https://github.com/meharajM/ai-worker.app/issues/new?template=feature_request.md)** — Have an idea?
-- **[Security Policy](./SECURITY.md)** — Report vulnerabilities responsibly
-- **[Code of Conduct](./CODE_OF_CONDUCT.md)** — Community standards
-
-### How to Help
-
-- **Contribute code** — See good-first-issues or open a discussion
-- **Improve docs** — Setup guides, tutorials, examples
-- **Build MCP servers** — Extend capabilities via protocol
-- **Provider integrations** — Add new LLM providers or speech backends
-- **Share workflows** — Post use cases in Discussions
-
----
-
-## 📊 Project Status
-
-**AI-Worker is early-stage open-source software.**
-
-    ✅ **Production-ready:**
-- Electron app with native packaging (macOS, Linux, Windows)
-- React renderer UI with hot-reload
-- MCP connection surface and configuration
-- LLM provider settings and routing
-- Speech recognition setup
-- Browser automation via Playwright
-- Release and publishing scripts
-
-⚠️ **In development:**
-- Hardening for first-time contributors
-- Dependency audit and security triaging
-- GitHub repository settings review
-
-**Known:** If Electron shell fails during development, the renderer is available at `http://localhost:5173`.
-
----
-
-## 🌟 Show Your Support
-
-Help other builders discover AI-Worker:
-
-- **⭐ Star the repository** — Boosts GitHub search ranking
-- **🔗 Share** — Link to this repo with developers working on AI agents, browser automation, voice interfaces, or local-first workflows
-- **💬 Join Discussions** — Share your workflows, questions, and examples
-- **🐛 Open Issues** — Report bugs or request features
-- **📝 Contribute** — Code, docs, examples, integrations
-
----
-
-## 📄 License
-
-AI-Worker is open-source software licensed under the **[MIT License](LICENSE)**.
-
----
-
-## 📞 Get in Touch
-
-- **Homepage:** https://ai-worker.tech
-- **GitHub:** https://github.com/meharajM/ai-worker.app
-- **Author:** AI-Worker Team <team@aiworker.app>
-
----
-
-*Built with ❤️ for developers and power users who want to reclaim control of their AI workflows.*
+If AI-Worker is useful to your workflow, [give the repository a star](https://github.com/meharajM/ai-worker-desktop/stargazers) and share the host/model combination you tested.

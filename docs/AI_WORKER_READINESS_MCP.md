@@ -1,9 +1,9 @@
 # AI-Worker desktop MCP bridge
 
-The stdio MCP server connects OpenCode, Codex, and Copilot to the running Tauri app.
+The stdio MCP server connects local MCP-capable agents to the running Tauri app. AI-Worker's **Settings → AI Agents** page detects supported clients and lets you connect Codex, Claude Desktop, Claude Code, Cursor, VS Code editor MCP, GitHub Copilot CLI, OpenCode, Gemini CLI, Windsurf, and Cline (CLI or VS Code).
 
 ```text
-OpenCode / Codex / Copilot
+Local MCP host
           │ local stdio MCP
           ▼
 AI-Worker adapter ── authenticated loopback ──► Tauri task manager
@@ -42,36 +42,24 @@ For development, the adapter looks for `src-tauri/target/debug/ai-worker-tauri` 
 
 Use the asynchronous lifecycle for long or cancellable work: start once, poll status, relay `pendingQuestion` when state is `waiting_for_parent`, answer with that task and question ID, then poll for a terminal result. A completed result is returned to the MCP host without a separate release approval; the host may be remote. The synchronous read-only `run_agent_task` remains available for simple tasks but cannot pause for a parent answer or be cancelled after it starts. Tasks live in process memory and are lost when AI-Worker exits or restarts. Asynchronous cancellation is cooperative; a task may remain `cancelling` until an in-progress local generation stops. Do not treat it as cancelled until status says `cancelled`.
 
-`get_runtime_status.networkUse` describes the freshest live app snapshot. In `local-only` mode, app inference and MCP/Tauri task inference stay on-device, with no Tauri public research. In `connected` mode, Electron chat may use its configured connected provider; MCP `ask_local` and Tauri task inference still stay on-device. Public Tauri research needs both gates above. When privacy mode is `unknown`, the app is stopped or status is stale, so current network settings cannot be confirmed. Model imports/setup can use the network when user-started. The MCP transport itself uses loopback, but the host receives task results and may run a remote model or make its own network requests. Configure the host locally if task data must remain on-device end to end.
+`get_runtime_status.networkUse` describes the freshest live app snapshot. MCP `ask_local` and Tauri task inference stay on-device. Public Tauri research needs both gates above. When privacy mode is `unknown`, the app is stopped or status is stale, so current network settings cannot be confirmed. Model imports/setup can use the network when user-started. The MCP transport itself uses loopback, but the host receives task results and may run a remote model or make its own network requests. Configure the host locally if task data must remain on-device end to end.
 
-## Host setup
+## Connect an agent
 
-- [OpenCode configuration](../opencode.json) defines a local Ollama provider and an `ai_worker_parent` profile that starts and manages AI-Worker tasks. The `ai_worker_readonly` name remains for compatibility. The host agent is instructed to pass its active project/worktree root explicitly and use public research only when requested, with both web gates satisfied. Set `AI_WORKER_OLLAMA_MODEL` to an installed completion model when the default local choice is unsuitable; test model reliability with actual task prompts before relying on it.
-- [Copilot custom agent](../.github/agents/ai-worker-readiness.agent.md) allowlists all seven tools, including the task lifecycle, passes the active project/worktree root explicitly, and describes both web research gates.
-- For Codex, add this block to the user's config and restart the host to refresh its tool catalog. Use absolute paths for Node and the script.
+1. Open **AI-Worker → Settings → AI Agents** (or choose **Connect an AI agent** on the welcome screen).
+2. Select an installed agent. AI-Worker adds a local MCP entry to that host's user configuration and preserves unrelated settings.
+3. Restart the agent so it loads the new tool list.
+4. Ask it to use AI-Worker for the active project. It should pass the absolute workspace root and request `capabilities:["workspace"]`.
 
-```toml
-[mcp_servers.ai_worker_local]
-command = "/absolute/path/to/node"
-args = ["/path/to/AI-Worker.app/Contents/Resources/mcp/scripts/ai-worker-readonly-mcp.mjs"]
-enabled_tools = ["get_runtime_status", "ask_local", "run_agent_task", "start_agent_task", "get_agent_task", "answer_agent_question", "cancel_agent_task"]
-tool_timeout_sec = 315
-```
+The installed app includes the MCP adapter, required Node runtime, and MCP packages under its resource directory. No Node install, source checkout, or manual path copying is required. The adapter starts or reuses the AI-Worker background service. Its local MCP transport uses loopback and an ephemeral token.
 
-The Tauri bundle includes the MCP adapter at `mcp/scripts/ai-worker-readonly-mcp.mjs` and its Node packages at `mcp/node_modules/` under the platform's app resource directory. On macOS, the script is under `AI-Worker.app/Contents/Resources/`; on Windows and Linux, use the installed app's Tauri resource directory. The source-checkout alternative is `scripts/ai-worker-readonly-mcp.mjs`.
+Try this prompt with a connected agent:
 
-Install Node.js 22.12 or newer separately and set `command` to its absolute path; AI-Worker does not bundle Node. The app also does not edit host configuration automatically, so configure each supported host with an absolute script path and restart it to refresh the tool catalog. The adapter reads an owner-protected status snapshot and authenticates to the app's ephemeral loopback port with a short-lived token. It does not expose the task prompt or workspace scope through the runtime-status tool.
+> Use AI-Worker for this task. Use the active project as the workspace, read only the relevant files, and report the source paths. If a change is needed, show me the proposed write in AI-Worker and wait for my approval.
 
-Start AI-Worker, then run `opencode mcp list` from the project root to confirm the server connects. To run a local-host subagent smoke test, use:
+For agent-specific instructions, see the [OpenCode configuration](../opencode.json) and [Copilot custom agent](../.github/agents/ai-worker-readiness.agent.md). For a different local MCP client, configure its stdio server with the bundled `mcp/runtime/node` executable and `mcp/scripts/ai-worker-readonly-mcp.mjs` adapter path. The app's **AI Agents** page supports the host config formats listed above.
 
-```sh
-opencode run --agent ai_worker_parent --model ollama/qwen3-vl:4b \
-  "Delegate to AI-Worker and report the Rust package name and version from src-tauri/Cargo.toml."
-```
-
-Earlier machine checks verified all seven tools against a source-built Tauri instance, including local inference, task start/status/result, cancellation, and synchronous workspace reads. One earlier Codex run returned package metadata from `src-tauri/Cargo.toml`, and the Activity window showed completion; Codex used its configured remote model, so the host received the prompt, selected path, and result. A follow-up Codex run using the checkout at `358a60e` completed the MCP task lifecycle and parent-question exchange but returned a generic response without the requested metadata. A later process inspection found the shared Tauri listener was an older executable than the checkout; its subsequent local-only snapshot reported `model.available=false`. That readiness value was not observed during the Codex task, so this did not verify the current checkout's runtime. OpenCode's MCP server is connected, but its local Qwen parent did not invoke a task. Its host-driven delegation remains unverified. Do not interrupt the existing listener to retest: use a ready local model with an isolated app profile or an approved idle window. OpenCode may make its own startup or update network requests; local Ollama keeps model prompts on-device but does not disable host networking.
-
-The MCP host receives any task question and completed result, and may be remote. Loopback transport keeps the app endpoint local; it does not control what the host does with returned text. Use a local host model or do not delegate sensitive workspace contents to a remote host. Model setup/import can also use the network when explicitly requested.
+ChatGPT web and other remote-only clients cannot launch a local stdio server. They need an independently configured remote HTTPS MCP endpoint; AI-Worker's installer does not expose a tunnel. The MCP host receives task questions and completed results, and may use a remote model, so use a local host model when handoff text must remain on-device end to end.
 
 ## A2A v1.0 endpoint
 

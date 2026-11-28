@@ -5,6 +5,9 @@
   "windows": ["main"],
   "permissions": [
     "allow-status",
+    "allow-list-agent-clients",
+    "allow-connect-agent-client",
+    "allow-disconnect-agent-client",
     "allow-bridge-open-session",
     "allow-bridge-get-status",
     "allow-bridge-get-preferences",

@@ -24,6 +24,7 @@ node_modules/
 out/
 dist/
 target/
+/.build/
 /src-tauri/gen/
 /src-tauri/static/assets/
 /src-tauri/static-proof/

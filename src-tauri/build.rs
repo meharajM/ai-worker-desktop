@@ -1,6 +1,9 @@
 fn main() {
     const BASE: &[&str] = &[
         "status",
+        "list_agent_clients",
+        "connect_agent_client",
+        "disconnect_agent_client",
         "bridge_open_session",
         "bridge_get_status",
         "bridge_get_preferences",
@@ -15,6 +18,9 @@ fn main() {
     ];
     const WITH_PROOF: &[&str] = &[
         "status",
+        "list_agent_clients",
+        "connect_agent_client",
+        "disconnect_agent_client",
         "bridge_open_session",
         "bridge_get_status",
         "bridge_get_preferences",
@@ -32,6 +38,9 @@ fn main() {
     ];
     const WITH_HISTORY: &[&str] = &[
         "status",
+        "list_agent_clients",
+        "connect_agent_client",
+        "disconnect_agent_client",
         "bridge_open_session",
         "bridge_get_status",
         "bridge_get_preferences",
@@ -48,6 +57,9 @@ fn main() {
     ];
     const ALL: &[&str] = &[
         "status",
+        "list_agent_clients",
+        "connect_agent_client",
+        "disconnect_agent_client",
         "bridge_open_session",
         "bridge_get_status",
         "bridge_get_preferences",

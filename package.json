@@ -1,42 +1,35 @@
 {
     "name": "ai-worker",
     "version": "0.1.2",
-    "description": "Open-source desktop AI workspace for MCP tools, local files, browser automation, and provider-agnostic LLM workflows.",
+    "description": "Local-first desktop subagent for MCP-compatible AI agents, with on-device inference and approval-gated workspace writes.",
     "main": "./out/main/index.js",
     "author": "AI-Worker Team <team@aiworker.app>",
     "homepage": "https://ai-worker.tech",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/meharajM/ai-worker.app.git"
+        "url": "git+https://github.com/meharajM/ai-worker-desktop.git"
     },
     "bugs": {
-        "url": "https://github.com/meharajM/ai-worker.app/issues"
+        "url": "https://github.com/meharajM/ai-worker-desktop/issues"
     },
     "keywords": [
         "ai-worker",
-        "ai-assistant",
-        "desktop-ai",
-        "electron",
-        "model-context-protocol",
-        "mcp",
-        "llm",
-        "agent-workspace",
-        "voice-interface",
-        "prompt-engineering",
-        "context-engineering",
-        "harness-engineering",
-        "ai-agents",
-        "electron-app",
+        "ai-agent",
         "desktop-agent",
+        "model-context-protocol",
+        "mcp-server",
+        "mcp",
+        "subagent",
+        "agent-handoff",
+        "coding-assistant",
         "local-llm",
         "on-device-ai",
         "local-first",
-        "browser-automation",
-        "playwright",
-        "whatsapp-integration",
-        "openai",
-        "ollama"
+        "privacy-first",
+        "ollama",
+        "tauri",
+        "rust"
     ],
     "engines": {
         "node": ">=22.12.0"
@@ -46,6 +39,9 @@
         "build": "electron-vite build",
         "preview": "electron-vite preview",
         "tauri:dev": "tauri dev",
+        "tauri": "tauri",
+        "benchmark:handoff": "node scripts/benchmark-handoff-tokens.mjs",
+        "tauri:prepare-runtime": "node scripts/prepare-tauri-runtime.mjs",
         "tauri:proof": "tauri dev --features proof --config src-tauri/tauri.proof.conf.json",
         "tauri:build": "tauri build",
         "web:typecheck": "tsc --noEmit --project tsconfig.web.json",

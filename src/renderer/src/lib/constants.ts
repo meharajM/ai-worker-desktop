@@ -89,7 +89,7 @@ export const VOICE_CONFIG = {
 // App Info
 export const APP_INFO = {
     NAME: 'AI-Worker',
-    VERSION: '0.1.0',
+    VERSION: '0.1.2',
     CLIENT_ID: 'AI-Worker-Client',
 }
 

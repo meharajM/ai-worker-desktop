@@ -1,79 +1,34 @@
-# Setup Scripts
+# Installer and build scripts
 
-This directory contains automated setup scripts to install dependencies required for AI Worker's MCP servers.
+## User installers
 
-## What Gets Installed
+- `install.sh` downloads the latest Tauri installer for macOS or Linux, verifies its SHA-256 sidecar, installs it, and launches AI-Worker.
+- `install.ps1` does the same for the per-user Windows installer.
+- `install-mac.sh`, `install-linux.sh`, and `install-windows.ps1` are platform-specific aliases for those two scripts.
+- `prepare-tauri-runtime.mjs` adds the matching Node.js executable and license to the Tauri app resources. Cross-target macOS builds download the matching official Node archive and verify its published SHA-256 before bundling.
 
-These scripts install:
-- **Node.js** - Required for the app and some MCP servers
-- **Python 3** - Required for MarkItDown and other Python-based MCP servers
-- **uv** - Fast Python package runner for MCP servers
+Developer install commands:
 
-## Usage
-
-### macOS / Linux
-
-```bash
-cd /path/to/ai-worker-app
-./scripts/setup-dependencies.sh
+```sh
+curl -fsSL https://raw.githubusercontent.com/meharajM/ai-worker-desktop/main/scripts/install.sh | bash
 ```
 
-### Windows
+```powershell
+irm https://raw.githubusercontent.com/meharajM/ai-worker-desktop/main/scripts/install.ps1 | iex
+```
 
-1. **Right-click PowerShell** and select **"Run as Administrator"**
-2. Run the script:
-   ```powershell
-   cd C:\path\to\ai-worker-app
-   .\scripts\setup-dependencies.ps1
-   ```
+The app's **Settings → AI Agents** page configures supported local MCP hosts. Neither installer requires Node.js, Python, or `uv` on the end user's machine.
 
-## What the Scripts Do
+## Package locally
 
-### macOS (`setup-dependencies.sh`)
-- Installs Homebrew (if not present)
-- Installs Node.js via Homebrew
-- Installs Python 3 via Homebrew
-- Installs uv via official installer
+Install Node.js 22.12+ and Rust 1.90+, then:
 
-### Linux (`setup-dependencies.sh`)
-- Detects package manager (apt, yum, or dnf)
-- Installs Node.js (uses NodeSource for latest version on Debian/Ubuntu)
-- Installs Python 3 and pip
-- Installs uv via official installer
+```sh
+npm ci
+npm run tauri:dev
+npm run tauri:build
+```
 
-### Windows (`setup-dependencies.ps1`)
-- Installs Chocolatey (Windows package manager)
-- Installs Node.js via Chocolatey
-- Installs Python 3 via Chocolatey
-- Installs uv via official installer
-- **Requires Administrator privileges**
+Tauri's build hooks prepare the bundled MCP runtime and build the frontend. Release builds run in [release-tauri.yml](../.github/workflows/release-tauri.yml) on macOS, Windows, Linux x64, and Linux ARM64 runners. Create and push `tauri-v<package-version>` to start a Tauri prerelease build.
 
-## After Installation
-
-1. **Restart your terminal** (or source your shell config)
-2. **Restart the AI Worker app**
-3. **Enable MCP servers** in Settings → MCP Servers
-4. **Test it out** by asking the AI to convert a document!
-
-## Manual Installation
-
-If you prefer to install manually or the script doesn't work for your system:
-
-- **Node.js**: https://nodejs.org
-- **Python**: https://www.python.org
-- **uv**: https://astral.sh/uv
-
-## Troubleshooting
-
-**"Command not found" after installation**
-- Restart your terminal/PowerShell
-- On macOS/Linux: Run `source ~/.bashrc` or `source ~/.zshrc`
-- On Windows: Close and reopen PowerShell
-
-**Windows: "Execution policy" error**
-- Run PowerShell as Administrator
-- Run: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`
-
-**Linux: Permission denied**
-- Make the script executable: `chmod +x scripts/setup-dependencies.sh`
-- Run with: `./scripts/setup-dependencies.sh`
+The older Electron build and Cloudflare publication scripts remain for the in-progress migration; they are not the user installer path documented here.

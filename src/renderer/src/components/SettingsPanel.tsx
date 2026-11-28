@@ -53,12 +53,13 @@ import { SidebarHeader } from './sidebar/SidebarHeader'
 import { ArrowLeft } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import { buildLegacyDataExport } from '../lib/legacy-data-export'
+import { AgentConnectionsSettings } from './settings/AgentConnectionsSettings'
 
-type SettingsSection = 'privacy' | 'account' | 'llm' | 'voice' | 'memory' | 'browser' | 'appearance' | 'logs' | 'flags' | 'about'
+type SettingsSection = 'privacy' | 'account' | 'llm' | 'agents' | 'voice' | 'memory' | 'browser' | 'appearance' | 'logs' | 'flags' | 'about'
 
 interface SettingsPanelProps {
     onClose: () => void;
-    initialSection?: 'privacy' | 'llm';
+    initialSection?: 'privacy' | 'llm' | 'agents';
 }
 
 export function SettingsPanel({ onClose, initialSection = 'privacy' }: SettingsPanelProps) {
@@ -148,6 +149,7 @@ export function SettingsPanel({ onClose, initialSection = 'privacy' }: SettingsP
         { id: 'privacy', label: 'Privacy & Mode', icon: <Shield size={20} /> },
         ...(FEATURE_FLAGS.AUTH_ENABLED && settings.privacyMode === 'connected' ? [{ id: 'account' as const, label: 'Account', icon: <User size={20} /> }] : []),
         { id: 'llm', label: 'LLM Provider', icon: <Cpu size={20} /> },
+        { id: 'agents', label: 'AI Agents', icon: <Sparkles size={20} /> },
         { id: 'voice', label: 'Speech Recognition', icon: <Mic size={20} /> },
         { id: 'memory', label: 'Memory', icon: <HardDrive size={20} /> },
         { id: 'browser', label: 'Browser Automation', icon: <Globe size={20} /> },
@@ -270,6 +272,12 @@ export function SettingsPanel({ onClose, initialSection = 'privacy' }: SettingsP
                 {activeSection === 'llm' && (
                     <ErrorBoundary>
                         <LLMProviderSettings />
+                    </ErrorBoundary>
+                )}
+
+                {activeSection === 'agents' && (
+                    <ErrorBoundary>
+                        <AgentConnectionsSettings />
                     </ErrorBoundary>
                 )}
 
@@ -485,7 +493,7 @@ export function SettingsPanel({ onClose, initialSection = 'privacy' }: SettingsP
                                 </p>
                                 <div className="mt-[var(--space-6)] pt-[var(--space-4)] border-t border-[var(--color-border)]">
                                     <p className="text-[var(--text-xs)] text-[var(--color-text-dim)]">
-                                        Built with Electron, React, and TypeScript
+                                        Built with Tauri, Rust, React, and TypeScript
                                     </p>
                                 </div>
                             </Card>
@@ -506,7 +514,7 @@ export function SettingsPanel({ onClose, initialSection = 'privacy' }: SettingsP
                                     </div>
                                     <div>
                                         <p className="text-[var(--text-xs)] text-[var(--color-text-dim)]">Platform</p>
-                                        <p className="text-[var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--color-text-primary)]">Electron</p>
+                                        <p className="text-[var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--color-text-primary)]">Tauri</p>
                                     </div>
                                 </Card>
                                 <Card variant="default" padding="md" className="flex items-center gap-3">

@@ -1,46 +1,30 @@
-# Quick Start — 5 Minutes to First Chat
+# Quick start
 
-Follow this express guide to get AI-Worker running on your local machine quickly. For detailed configuration options and platform requirements, see the full [Setup Guide](./setup.md).
+## Install
 
-## 🚀 Express Install
+No Tauri installer release has been published yet. These commands and links will work after the first tagged build completes; until then, use [Developer setup](./setup.md).
 
-**1. Clone the repository**
-```bash
-git clone https://github.com/meharajM/ai-worker.app.git
-cd ai-worker.app
+macOS/Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/meharajM/ai-worker-desktop/main/scripts/install.sh | bash
 ```
 
-**2. Install dependencies**
-```bash
-npm install
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/meharajM/ai-worker-desktop/main/scripts/install.ps1 | iex
 ```
 
-**3. Bootstrap system dependencies & MCP bindings**
+Or download a `.dmg`, `.exe`, `.AppImage`, or `.deb` from the [Tauri releases](https://github.com/meharajM/ai-worker-desktop/releases?q=tauri-v&expanded=true).
 
-* **On macOS & Linux:**
-  ```bash
-  chmod +x ./scripts/setup-dependencies.sh
-  ./scripts/setup-dependencies.sh
-  ```
+## Connect your agent
 
-* **On Windows (run PowerShell as Administrator):**
-  ```powershell
-  .\\scripts\\setup-dependencies.ps1
-  ```
+1. Open AI-Worker and choose **Connect an AI agent**.
+2. Select Codex, Claude Desktop, Claude Code, Cursor, VS Code editor MCP, GitHub Copilot CLI, OpenCode, Gemini CLI, Windsurf, or Cline (CLI or VS Code).
+3. Restart the selected agent.
+4. Ask it: **“Use AI-Worker's `start_agent_task` for this request. Pass the active project root as `workspaceRoot`, include `capabilities:["workspace"]`, and send my full request. Poll `get_agent_task` until it finishes. Relay any question. If it waits for approval, ask me to review AI-Worker. Return the result and source paths.”**
 
-**4. Start the workspace**
-```bash
-npm run dev
-```
+If no on-device model is ready, follow **Set up a local model** in AI-Worker first. MCP task inference does not use cloud fallback. Your host agent may still use a remote model, and it receives the handoff prompt and result.
 
----
-
-## 🏁 Your First Conversation
-
-1. When the app launches, it opens in your web browser at `http://localhost:5173`.
-2. Go to **Hub Settings** (gear icon in sidebar).
-3. Under **LLM Providers**, choose your preferred brain:
-   * Select **Ollama** if you want to run completely locally (ensure Ollama is running on your machine with `qwen2.5:3b` pulled).
-   * Or enter your API key for **OpenAI** or **Gemini**.
-4. Go back to **Hub Chat** and type a message, or click the microphone icon to use **voice commands**.
-5. Explore **MCP Connections** in the sidebar to view your connected tools (like local memory, browser automation, and filesystem).
+ChatGPT web requires a remote HTTPS MCP endpoint, which the local installer does not expose. See the [installation guide](./INSTALLATION.md) for platform details and troubleshooting.

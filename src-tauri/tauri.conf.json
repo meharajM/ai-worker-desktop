@@ -5,10 +5,14 @@
   "identifier": "com.aiworker.app.tauri",
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": ["dmg", "nsis", "appimage", "deb"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    },
     "resources": {
       "../scripts/ai-worker-readonly-mcp.mjs": "mcp/scripts/ai-worker-readonly-mcp.mjs",
+      "../.build/tauri-runtime/": "mcp/runtime/",
       "../node_modules/@modelcontextprotocol/sdk/": "mcp/node_modules/@modelcontextprotocol/sdk/",
       "../node_modules/zod/": "mcp/node_modules/zod/",
       "../node_modules/zod-to-json-schema/": "mcp/node_modules/zod-to-json-schema/",
@@ -23,8 +27,8 @@
   },
   "build": {
     "frontendDist": "static",
-    "beforeBuildCommand": "npm run web:build",
-    "beforeDevCommand": "npm run web:build"
+    "beforeBuildCommand": "npm run tauri:prepare-runtime && npm run web:build",
+    "beforeDevCommand": "npm run tauri:prepare-runtime && npm run web:build"
   },
   "app": {
     "withGlobalTauri": false,
